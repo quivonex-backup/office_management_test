@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Invoice {{ invoice_number }}</title>
+    <style>
+        /* ============================================================
+           PAGE SETUP
+        ============================================================ */
+        @page {
+            size: A4;
+            margin: 1.8cm 1.8cm 2.2cm 1.8cm;
+
+            @bottom-center {
+                content: "Page " counter(page) " of " counter(pages);
+                font-size: 7.5pt;
+                color: #999999;
+            }
+        }
+
+        /* ============================================================
+           BASE
+        ============================================================ */
+        body {
+            font-family: 'Helvetica', 'Arial', sans-serif;
+            font-size: 9.5pt;
+            line-height: 1.5;
+            color: #222222;
+            background: #ffffff;
+            margin: 0;
+            padding: 0;
+        }
+
+        .text-right   { text-align: right; }
+        .text-center  { text-align: center; }
+        .text-left    { text-align: left; }
+        .fw-bold      { font-weight: 700; }
+        .fw-normal    { font-weight: 400; }
+        .muted        { color: #666666; }
+        .mt-1         { margin-top: 4px; }
+        .mt-2         { margin-top: 10px; }
+        .mt-3         { margin-top: 18px; }
+        .mb-1         { margin-bottom: 4px; }
+        .mb-2         { margin-bottom: 10px; }
+        .mb-3         { margin-bottom: 18px; }
+
+        /* ============================================================
+           HEADER
+        ============================================================ */
+        .header-table {
+            width: 100%;
+            border-collapse: collapse;
+            border-bottom: 2px solid #222222;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+        }
+
+        .header-table td {
+            vertical-align: top;
+            padding: 0 0 10px 0;
+        }
+
+        .header-left {
+            width: 50%;
+        }
+
+        .header-right {
+            width: 50%;
+            text-align: right;
+        }
+
+        .logo {
+            max-width: 160px;
+            max-height: 55px;
+            object-fit: contain;
+        }
+
+        .company-name {
+            font-size: 16pt;
+            font-weight: 700;
+            color: #111111;
+            letter-spacing: -0.2px;
+        }
+
+        .company-details {
+            font-size: 8pt;
+            color: #444444;
+            line-height: 1.6;
+            margin-top: 3px;
+        }
+
+        .invoice-label {
+            font-size: 24pt;
+            font-weight: 700;
+            color: #111111;
+            letter-spacing: 1px;
+            line-height: 1.2;
+        }
+
+        .invoice-sub {
+            font-size: 8pt;
+            font-weight: 400;
+            color: #777777;
+            letter-spacing: 0.5px;
+        }
+
+        /* ============================================================
+           META
+        ============================================================ */
+        .meta-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+        }
+
+        .meta-table td {
+            padding: 4px 0;
+            vertical-align: top;
+        }
+
+        .meta-table .meta-left {
+            width: 50%;
+        }
+
+        .meta-table .meta-right {
+            width: 50%;
+            text-align: right;
+        }
+
+        .meta-label {
+            display: inline-block;
+            min-width: 95px;
+            color: #555555;
+            font-weight: 600;
+            font-size: 8.5pt;
+        }
+
+        .meta-value {
+            font-weight: 600;
+            color: #222222;
+        }
+
+        .meta-value.inv-number {
+            font-size: 11pt;
+            color: #1a3e60;
+        }
+
+        /* ============================================================
+           SECTIONS – PAGE BREAK CONTROL
+        ============================================================ */
+        /*
+          Wrap each logical block (heading + content) in a div with this class.
+          The PDF engine will try to keep it together on one page.
+        */
+        .section-wrapper {
+            page-break-inside: avoid;
+            margin-bottom: 14px;
+        }
+
+        .section-heading {
+            font-size: 9pt;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #111111;
+            border-bottom: 1px solid #cccccc;
+            padding-bottom: 4px;
+            margin: 16px 0 8px 0;
+            /* Keep heading with the next element (table/box) */
+            page-break-after: avoid;
+        }
+
+        /* ============================================================
+           BILL TO
+        ============================================================ */
+        .bill-to-box {
+            border: 1px solid #cccccc;
+            padding: 10px 14px;
+            margin-bottom: 16px;
+            background: #fafafa;
+            page-break-inside: avoid;
+        }
+
+        .bill-to-name {
+            font-size: 12pt;
+            font-weight: 700;
+            color: #111111;
+        }
+
+        .bill-to-company {
+            font-size: 10pt;
+            font-weight: 600;
+            color: #333333;
+            margin-top: 2px;
+        }
+
+        .bill-to-details {
+            font-size: 8.5pt;
+            color: #444444;
+            line-height: 1.6;
+            margin-top: 5px;
+        }
+
+        /* ============================================================
+           DATA TABLES
+        ============================================================ */
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 8.8pt;
+            margin-bottom: 4px;
+            page-break-inside: auto; /* allow long tables to break inside */
+        }
+
+        .data-table th {
+            background: #eeeeee;
+            border: 1px solid #bbbbbb;
+            padding: 6px 8px;
+            text-align: left;
+            font-weight: 700;
+            font-size: 7.5pt;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+            color: #111111;
+        }
+
+        .data-table td {
+            border: 1px solid #bbbbbb;
+            padding: 6px 8px;
+            vertical-align: middle;
+        }
+
+        .data-table tbody tr:nth-child(even) {
+            background: #f9f9f9;
+        }
+
+        .data-table .text-right {
+            text-align: right;
+        }
+
+        .data-table .text-center {
+            text-align: center;
+        }
+
+        /* ============================================================
+           TOTALS
+        ============================================================ */
+        .totals-wrapper {
+            display: flex;
+            justify-content: flex-end;
+            margin: 10px 0 18px 0;
+            page-break-inside: avoid;
+        }
+
+        .totals-table {
+            width: 46%;
+            min-width: 200px;
+            border-collapse: collapse;
+            border: 1px solid #cccccc;
+        }
+
+        .totals-table td {
+            padding: 6px 12px;
+            border-bottom: 1px solid #dddddd;
+            font-size: 9pt;
+        }
+
+        .totals-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .totals-table .label {
+            font-weight: 600;
+            color: #444444;
+        }
+
+        .totals-table .value {
+            text-align: right;
+            font-weight: 600;
+        }
+
+        .totals-table .balance-row td {
+            background: #1a3e60;
+            color: #ffffff;
+            font-weight: 700;
+            font-size: 11pt;
+            border-top: 2px solid #111111;
+        }
+
+        .totals-table .balance-row .label {
+            color: #ffffff;
+        }
+
+        .totals-table .balance-row .value {
+            color: #ffffff;
+        }
+
+        /* ============================================================
+           STATUS
+        ============================================================ */
+        .status-bar {
+            background: #f5f5f5;
+            border: 1px solid #dddddd;
+            padding: 6px 14px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px 40px;
+            margin: 6px 0 16px 0;
+            page-break-inside: avoid;
+        }
+
+        .status-item .label {
+            font-size: 7.5pt;
+            font-weight: 600;
+            color: #666666;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+            display: block;
+        }
+
+        .status-item .value {
+            font-weight: 700;
+            font-size: 10pt;
+            color: #111111;
+        }
+
+        .status-item .value.paid     { color: #1e7e34; }
+        .status-item .value.partial  { color: #0066cc; }
+        .status-item .value.pending  { color: #b3730a; }
+        .status-item .value.overdue  { color: #b22222; }
+
+        /* ============================================================
+           NOTES / TERMS
+        ============================================================ */
+        .notes-box {
+            border: 1px solid #dddddd;
+            background: #fafafa;
+            padding: 10px 14px;
+            font-size: 8.5pt;
+            color: #444444;
+            line-height: 1.6;
+            margin: 8px 0 12px 0;
+            page-break-inside: avoid;
+        }
+
+        .notes-box .notes-title {
+            font-weight: 700;
+            color: #111111;
+            display: block;
+            margin-bottom: 2px;
+        }
+
+        .terms-box {
+            font-size: 8pt;
+            color: #555555;
+            line-height: 1.6;
+            border-top: 1px solid #dddddd;
+            padding-top: 10px;
+            margin-top: 8px;
+        }
+
+        .terms-box strong {
+            color: #111111;
+        }
+
+        /* ============================================================
+           FOOTER
+        ============================================================ */
+        .footer {
+            margin-top: 25px;
+            padding-top: 10px;
+            border-top: 1px solid #cccccc;
+            text-align: center;
+            font-size: 7.5pt;
+            color: #777777;
+            line-height: 1.5;
+        }
+
+        .footer strong {
+            color: #111111;
+            font-weight: 600;
+        }
+
+        /* ============================================================
+           PRINT
+        ============================================================ */
+        @media print {
+            body { background: #fff; }
+            .bill-to-box { background: #fafafa; }
+            .status-bar { background: #f5f5f5; }
+            .notes-box { background: #fafafa; }
+            .data-table th { background: #eeeeee; }
+            .data-table tbody tr:nth-child(even) { background: #f9f9f9; }
+            .totals-table .balance-row td { background: #1a3e60 !important; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- =============================================================
+     HEADER
+============================================================== -->
+<table class="header-table">
+    <tr>
+        <td class="header-left">
+            {% if logo_data %}
+                <img src="data:image/png;base64,{{ logo_data }}" alt="Logo" class="logo">
+            {% else %}
+                <div class="company-name">{{ company_name }}</div>
+            {% endif %}
+            <div class="company-details">
+                {% if company_address %}{{ company_address }}<br>{% endif %}
+                {% if company_email %}{{ company_email }}<br>{% endif %}
+                {% if company_phone %}{{ company_phone }}<br>{% endif %}
+                {% if company_gst %}GSTIN: {{ company_gst }}{% endif %}
+            </div>
+        </td>
+        <td class="header-right">
+            <div class="invoice-label">INVOICE</div>
+            <div class="invoice-sub">Tax / Commercial</div>
+        </td>
+    </tr>
+</table>
+
+<!-- =============================================================
+     INVOICE META
+============================================================== -->
+<table class="meta-table">
+    <tr>
+        <td class="meta-left">
+            <!-- <div>
+                <span class="meta-label">Invoice Number</span>
+                <span class="meta-value inv-number">{{ invoice_number }}</span>
+            </div> -->
+            <div class="mt-1">
+                <span class="meta-label">Project Code</span>
+                <span class="meta-value">{{ project.project_code }}</span>
+            </div>
+        </td>
+        <td class="meta-right">
+            <div>
+                <span class="meta-label">Invoice Date</span>
+                <span class="meta-value">{{ invoice_date }}</span>
+            </div>
+            {% if project.due_date %}
+            <div class="mt-1">
+                <span class="meta-label">Due Date</span>
+                <span class="meta-value">{{ project.due_date }}</span>
+            </div>
+            {% endif %}
+        </td>
+    </tr>
+</table>
+
+<!-- =============================================================
+     BILL TO
+============================================================== -->
+<div class="bill-to-box">
+    <div class="bill-to-name">{{ client.client_name }}</div>
+    {% if client.company_name %}
+        <div class="bill-to-company">{{ client.company_name }}</div>
+    {% endif %}
+    <div class="bill-to-details">
+        {% if client.address %}{{ client.address }}<br>{% endif %}
+        {% if client.state %}
+            {{ client.state }}
+            {% if client.district %}, {{ client.district }}{% endif %}
+            {% if client.taluka %}, {{ client.taluka }}{% endif %}
+            {% if client.pincode %} - {{ client.pincode }}{% endif %}
+            <br>
+        {% endif %}
+        {% if client.email %}Email: {{ client.email }}<br>{% endif %}
+        {% if client.mobile %}Phone: {{ client.mobile }}<br>{% endif %}
+        {% if client.gst_number %}GSTIN: {{ client.gst_number }}{% endif %}
+    </div>
+</div>
+
+<!-- =============================================================
+     PROJECT DETAILS  (wrapped)
+============================================================== -->
+<div class="section-wrapper">
+    <div class="section-heading">Project Details</div>
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th style="width:30%;">Project Name</th>
+                <th style="width:18%;">Type</th>
+                <th style="width:18%;">Start Date</th>
+                <th style="width:18%;">End Date</th>
+                <th style="width:16%;">Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>{{ project.project_name }}</td>
+                <td>{{ project.project_type|default:"-" }}</td>
+                <td>{{ project.start_date|default:"-" }}</td>
+                <td>{{ project.end_date|default:"-" }}</td>
+                <td>{{ project.get_status_display }}</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+
+<!-- =============================================================
+     PAYMENT SCHEDULE  (wrapped)
+============================================================== -->
+<div class="section-wrapper">
+    <div class="section-heading">Payment Schedule</div>
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th style="width:6%;">#</th>
+                <th style="width:20%;">Payment Type</th>
+                <th style="width:24%;">Title</th>
+                <th style="width:14%;">Due Date</th>
+                <th class="text-right" style="width:12%;">Amount</th>
+                <th class="text-right" style="width:12%;">Paid</th>
+                <th class="text-right" style="width:12%;">Balance</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for payment in payments %}
+            <tr>
+                <td class="text-center">{{ forloop.counter }}</td>
+                <td>
+                    {{ payment.get_payment_type_display }}
+                    {% if payment.installment_number %}#{{ payment.installment_number }}{% endif %}
+                </td>
+                <td>{{ payment.title|default:"-" }}</td>
+                <td>{{ payment.due_date|default:"-" }}</td>
+                <td class="text-right">₹{{ payment.amount|floatformat:2 }}</td>
+                <td class="text-right">₹{{ payment.paid_amount|floatformat:2 }}</td>
+                <td class="text-right">₹{{ payment.outstanding_amount|floatformat:2 }}</td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="7" class="text-center muted">No payment records found.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- =============================================================
+     TOTALS
+============================================================== -->
+<div class="totals-wrapper">
+    <table class="totals-table">
+        <tr>
+            <td class="label">Invoice Total</td>
+            <td class="value">₹{{ project_total|floatformat:2 }}</td>
+        </tr>
+        <tr>
+            <td class="label">Total Paid</td>
+            <td class="value">₹{{ total_paid|floatformat:2 }}</td>
+        </tr>
+        <tr class="balance-row">
+            <td class="label">Balance Due</td>
+            <td class="value">₹{{ outstanding_amount|floatformat:2 }}</td>
+        </tr>
+    </table>
+</div>
+
+<!-- =============================================================
+     PAYMENT STATUS
+============================================================== -->
+<div class="status-bar">
+    <div class="status-item">
+        <span class="label">Payment Status</span>
+        <span class="value
+            {% if payment_status == 'PAID' %}paid
+            {% elif payment_status == 'PARTIALLY PAID' %}partial
+            {% elif payment_status == 'OVERDUE' %}overdue
+            {% else %}pending{% endif %}
+        ">
+            {{ payment_status }}
+        </span>
+    </div>
+    <div class="status-item">
+        <span class="label">
+            {% if outstanding_amount == 0 %}Payment Complete{% else %}Amount Outstanding{% endif %}
+        </span>
+        <span class="value
+            {% if outstanding_amount == 0 %}paid{% else %}pending{% endif %}
+        ">
+            {% if outstanding_amount == 0 %}PAID IN FULL{% else %}₹{{ outstanding_amount|floatformat:2 }}{% endif %}
+        </span>
+    </div>
+</div>
+
+<!-- =============================================================
+     TRANSACTION HISTORY  (wrapped)
+============================================================== -->
+{% if transactions %}
+<div class="section-wrapper">
+    <div class="section-heading">Transaction History</div>
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th style="width:5%;">#</th>
+                <th style="width:12%;">Date</th>
+                <th style="width:18%;">Payment</th>
+                <th style="width:14%;">Method</th>
+                <th style="width:20%;">Reference / UTR</th>
+                <th style="width:13%;">Bank</th>
+                <th class="text-right" style="width:10%;">Amount</th>
+                <th style="width:8%;">Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for transaction in transactions %}
+            <tr>
+                <td class="text-center">{{ forloop.counter }}</td>
+                <td>{{ transaction.transaction_date }}</td>
+                <td>
+                    {{ transaction.payment.get_payment_type_display }}
+                    {% if transaction.payment.installment_number %}#{{ transaction.payment.installment_number }}{% endif %}
+                </td>
+                <td>{{ transaction.get_payment_method_display }}</td>
+                <td>
+                    {% if transaction.payment_method == "CASH" %}     
+                        {% if transaction.reference_number %}
+                            Receipt / Ref: {{ transaction.reference_number }}
+                        {% endif %}
+                    {% elif transaction.payment_method == "UPI" %}
+                        {% if transaction.utr_number %}
+                            UTR: {{ transaction.utr_number }}
+                        {% endif %}
+                    {% elif transaction.payment_method == "BANK_TRANSFER" %}
+                        {% if transaction.utr_number %}
+                            UTR: {{ transaction.utr_number }}
+                        {% endif %}
+                    {% elif transaction.payment_method == "CHEQUE" %}
+                        {% if transaction.cheque_number %}
+                            Cheque No: {{ transaction.cheque_number }}
+                        {% endif %}
+                        {% if transaction.cheque_date %}
+                            <br>Cheque Date: {{ transaction.cheque_date }}
+                        {% endif %}
+                    {% elif transaction.payment_method == "CARD" or transaction.payment_method == "ONLINE" %}
+                        {% if transaction.gateway_transaction_id %}
+                            Transaction ID: {{ transaction.gateway_transaction_id }}
+                        {% endif %}
+                    {% elif transaction.payment_method == "OTHER" %}
+                        {% if transaction.reference_number %}
+                            Reference: {{ transaction.reference_number }}
+                        {% endif %}
+                    {% endif %}
+                </td>
+                <td>{{ transaction.bank_name|default:"-" }}</td>
+                <td class="text-right">₹{{ transaction.amount|floatformat:2 }}</td>
+                <td>{{ transaction.get_status_display }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<!-- =============================================================
+     NOTES
+============================================================== -->
+{% if project.description %}
+<div class="notes-box">
+    <span class="notes-title">Project Description</span>
+    {{ project.description }}
+</div>
+{% endif %}
+
+{% if payment_notes %}
+<div class="notes-box">
+    <span class="notes-title">Payment Notes</span>
+    {{ payment_notes|linebreaksbr }}
+</div>
+{% endif %}
+
+<!-- =============================================================
+     TERMS
+============================================================== -->
+<div class="terms-box">
+    <strong>Terms &amp; Information</strong><br>
+    This invoice is issued against the project/services mentioned above.
+    Please retain this invoice for your records.
+    For any billing queries, contact {{ company_name }}.
+</div>
+
+<!-- =============================================================
+     FOOTER
+============================================================== -->
+<div class="footer">
+    <strong>{{ company_name }}</strong>
+    {% if company_email %} &nbsp;|&nbsp; {{ company_email }}{% endif %}
+    {% if company_phone %} &nbsp;|&nbsp; {{ company_phone }}{% endif %}
+    <br>
+    System‑generated invoice &bull; No. {{ invoice_number }} &bull; {{ generated_at }}
+</div>
+
+</body>
+</html>

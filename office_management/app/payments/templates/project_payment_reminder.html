@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Payment Reminder</title>
+    <style>
+        /* ----- Reset & Base ----- */
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #f3f4f6;
+            font-family: Arial, Helvetica, sans-serif;
+            color: #1f2937;
+        }
+
+        /* ----- Outer Table ----- */
+        .outer-table {
+            width: 100%;
+            margin: 0;
+            padding: 0;
+            background-color: #f3f4f6;
+        }
+        .outer-td {
+            padding: 40px 15px;
+            text-align: center;
+        }
+
+        /* ----- Main Container ----- */
+        .main-container {
+            width: 100%;
+            max-width: 700px;
+            background-color: #ffffff;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid #e5e7eb;
+        }
+
+        /* ----- Header ----- */
+        .header-td {
+            background-color: #111827;
+            padding: 28px 30px;
+            text-align: center;
+        }
+        .logo-img {
+            display: block;
+            max-width: 230px;
+            max-height: 80px;
+            width: auto;
+            height: auto;
+            margin: 0 auto;
+        }
+
+        /* ----- Introduction ----- */
+        .intro-td {
+            padding: 35px 40px 10px 40px;
+        }
+        .main-heading {
+            margin: 0;
+            padding: 0;
+            font-size: 25px;
+            line-height: 34px;
+            font-weight: 700;
+            color: #111827;
+        }
+        .intro-text {
+            margin: 18px 0 0 0;
+            padding: 0;
+            font-size: 15px;
+            line-height: 24px;
+            color: #374151;
+        }
+        .intro-sub {
+            margin: 10px 0 0 0;
+            padding: 0;
+            font-size: 15px;
+            line-height: 24px;
+            color: #4b5563;
+        }
+
+        /* ----- Summary Heading ----- */
+        .summary-heading-td {
+            padding: 25px 40px 12px 40px;
+        }
+        .summary-heading {
+            margin: 0;
+            padding: 0;
+            font-size: 18px;
+            line-height: 26px;
+            color: #111827;
+        }
+
+        /* ----- Summary Cards ----- */
+        .summary-cards-td {
+            padding: 0 40px 20px 40px;
+        }
+        .summary-card {
+            background-color: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+        }
+        .summary-card-green {
+            background-color: #f0fdf4;
+            border: 1px solid #bbf7d0;
+            border-radius: 8px;
+        }
+        .summary-card-red {
+            background-color: #fef2f2;
+            border: 1px solid #fecaca;
+            border-radius: 8px;
+        }
+        .card-padding {
+            padding: 16px;
+        }
+        .card-label {
+            font-size: 11px;
+            line-height: 16px;
+            font-weight: 700;
+        }
+        .card-label-gray {
+            color: #6b7280;
+        }
+        .card-label-green {
+            color: #166534;
+        }
+        .card-label-red {
+            color: #991b1b;
+        }
+        .card-value {
+            margin-top: 7px;
+            font-size: 18px;
+            line-height: 26px;
+            font-weight: 700;
+        }
+        .card-value-dark {
+            color: #111827;
+        }
+        .card-value-green {
+            color: #15803d;
+        }
+        .card-value-red {
+            color: #dc2626;
+        }
+        .card-cell {
+            padding: 10px 6px 10px 0;
+            vertical-align: top;
+            width: 33.33%;
+        }
+        .card-cell-mid {
+            padding: 10px 3px;
+        }
+        .card-cell-right {
+            padding: 10px 0 10px 6px;
+        }
+
+        /* ----- Overdue Notice ----- */
+        .overdue-td {
+            padding: 0 40px 20px 40px;
+        }
+        .overdue-box {
+            background-color: #fff7ed;
+            border: 1px solid #fed7aa;
+            border-radius: 8px;
+        }
+        .overdue-padding {
+            padding: 15px 18px;
+        }
+        .overdue-title {
+            font-size: 14px;
+            line-height: 21px;
+            font-weight: 700;
+            color: #9a3412;
+        }
+        .overdue-amount {
+            margin-top: 4px;
+            font-size: 16px;
+            line-height: 24px;
+            font-weight: 700;
+            color: #c2410c;
+        }
+        .overdue-note {
+            margin-top: 4px;
+            font-size: 13px;
+            line-height: 20px;
+            color: #7c2d12;
+        }
+
+        /* ----- Project Section ----- */
+        .project-heading-td {
+            padding: 20px 40px 10px 40px;
+        }
+        .project-name {
+            margin: 0;
+            padding: 0;
+            font-size: 19px;
+            line-height: 27px;
+            color: #111827;
+        }
+        .project-type {
+            margin: 4px 0 0 0;
+            padding: 0;
+            font-size: 13px;
+            line-height: 20px;
+            color: #6b7280;
+        }
+        .project-summary-td {
+            padding: 5px 40px 15px 40px;
+        }
+        .project-summary-row {
+            padding: 8px 0;
+            font-size: 13px;
+            color: #6b7280;
+        }
+        .project-summary-value {
+            padding: 8px 0;
+            font-size: 13px;
+            font-weight: 700;
+            text-align: right;
+        }
+        .project-summary-value-dark {
+            color: #111827;
+        }
+        .project-summary-value-green {
+            color: #15803d;
+        }
+        .project-summary-value-red {
+            color: #dc2626;
+        }
+
+        /* ----- Payment Schedule Table ----- */
+        .schedule-td {
+            padding: 0 40px 25px 40px;
+        }
+        .schedule-heading {
+            margin: 0 0 10px 0;
+            padding: 0;
+            font-size: 15px;
+            line-height: 22px;
+            color: #374151;
+        }
+        .schedule-table {
+            border-collapse: collapse;
+            width: 100%;
+            font-size: 12px;
+        }
+        .schedule-th {
+            padding: 11px 8px;
+            border: 1px solid #111827;
+            color: #ffffff;
+            font-size: 11px;
+            font-weight: 700;
+        }
+        .schedule-th-left {
+            text-align: left;
+        }
+        .schedule-th-right {
+            text-align: right;
+        }
+        .schedule-th-center {
+            text-align: center;
+        }
+        .schedule-td-cell {
+            padding: 11px 8px;
+            border: 1px solid #e5e7eb;
+            color: #111827;
+        }
+        .schedule-td-cell-light {
+            color: #4b5563;
+        }
+        .schedule-td-cell-green {
+            color: #15803d;
+        }
+        .schedule-td-cell-red {
+            color: #dc2626;
+            font-weight: 700;
+        }
+        .schedule-td-cell-center {
+            text-align: center;
+        }
+        .schedule-td-cell-right {
+            text-align: right;
+        }
+        .schedule-td-nowrap {
+            white-space: nowrap;
+        }
+        .schedule-total-row {
+            background-color: #f9fafb;
+        }
+        .schedule-total-cell {
+            padding: 12px 8px;
+            border: 1px solid #e5e7eb;
+            font-weight: 700;
+            color: #111827;
+        }
+        .schedule-total-cell-green {
+            color: #15803d;
+        }
+        .schedule-total-cell-red {
+            color: #dc2626;
+        }
+        .schedule-total-empty {
+            border: 1px solid #e5e7eb;
+        }
+
+        /* Row background classes for payment status */
+        .row-overdue { background-color: #fff7ed; }
+        .row-paid    { background-color: #f0fdf4; }
+        .row-partial { background-color: #fffbeb; }
+        .row-pending { background-color: #ffffff; }
+
+        /* ----- Transaction History ----- */
+        .divider-td {
+            padding: 10px 40px 10px 40px;
+        }
+        .divider-line {
+            height: 1px;
+            background-color: #e5e7eb;
+            line-height: 1px;
+            font-size: 1px;
+        }
+        .transaction-heading-td {
+            padding: 25px 40px 10px 40px;
+        }
+        .transaction-heading {
+            margin: 0;
+            padding: 0;
+            font-size: 19px;
+            line-height: 27px;
+            color: #111827;
+        }
+        .transaction-sub {
+            margin: 7px 0 0 0;
+            padding: 0;
+            font-size: 13px;
+            line-height: 20px;
+            color: #6b7280;
+        }
+        .transaction-block-td {
+            padding: 15px 40px 20px 40px;
+        }
+        .transaction-title {
+            margin: 0 0 10px 0;
+            padding: 0;
+            font-size: 14px;
+            line-height: 21px;
+            color: #374151;
+        }
+        .transaction-table {
+            border-collapse: collapse;
+            width: 100%;
+            font-size: 12px;
+        }
+        .transaction-th {
+            padding: 10px 8px;
+            border: 1px solid #e5e7eb;
+            color: #374151;
+            font-size: 11px;
+            background-color: #f3f4f6;
+        }
+        .transaction-th-left {
+            text-align: left;
+        }
+        .transaction-th-right {
+            text-align: right;
+        }
+        .transaction-td {
+            padding: 10px 8px;
+            border: 1px solid #e5e7eb;
+            color: #4b5563;
+        }
+        .transaction-td-green {
+            color: #15803d;
+            font-weight: 700;
+        }
+        .transaction-td-nowrap {
+            white-space: nowrap;
+        }
+        .transaction-td-break {
+            word-break: break-word;
+        }
+        .transaction-td-right {
+            text-align: right;
+        }
+
+        .transaction-total-td {
+            padding: 0 40px 25px 40px;
+        }
+        .transaction-total-box {
+            background-color: #f0fdf4;
+            border: 1px solid #bbf7d0;
+            border-radius: 8px;
+        }
+        .transaction-total-padding {
+            padding: 14px 18px;
+            font-size: 13px;
+            color: #166534;
+        }
+        .transaction-total-amount {
+            text-align: right;
+            padding: 14px 18px;
+            font-size: 15px;
+            color: #15803d;
+            font-weight: 700;
+        }
+
+        /* ----- Payment Request ----- */
+        .request-td {
+            padding: 10px 40px 30px 40px;
+        }
+        .request-box {
+            background-color: #f9fafb;
+            border-left: 4px solid #111827;
+        }
+        .request-padding {
+            padding: 18px 20px;
+        }
+        .request-text {
+            margin: 0;
+            padding: 0;
+            font-size: 14px;
+            line-height: 23px;
+            color: #374151;
+        }
+        .request-text-mt {
+            margin-top: 12px;
+        }
+
+        /* ----- Closing ----- */
+        .closing-td {
+            padding: 0 40px 30px 40px;
+        }
+        .closing-text {
+            margin: 0;
+            padding: 0;
+            font-size: 14px;
+            line-height: 22px;
+            color: #374151;
+        }
+        .closing-signoff {
+            margin: 15px 0 0 0;
+            padding: 0;
+            font-size: 14px;
+            line-height: 22px;
+            color: #374151;
+        }
+
+        /* ----- Footer ----- */
+        .footer-td {
+            background-color: #111827;
+            padding: 25px 40px;
+        }
+        .footer-company {
+            margin: 0;
+            padding: 0;
+            font-size: 14px;
+            line-height: 20px;
+            color: #ffffff;
+            font-weight: 700;
+        }
+        .footer-email {
+            margin: 5px 0 0 0;
+            padding: 0;
+            font-size: 12px;
+            line-height: 18px;
+            color: #d1d5db;
+        }
+        .footer-phone {
+            margin: 3px 0 0 0;
+            padding: 0;
+            font-size: 12px;
+            line-height: 18px;
+            color: #d1d5db;
+        }
+        .footer-note {
+            margin: 15px 0 0 0;
+            padding: 0;
+            font-size: 11px;
+            line-height: 17px;
+            color: #9ca3af;
+        }
+
+        /* ----- Utility ----- */
+        .text-bold {
+            font-weight: 700;
+        }
+        .text-dark {
+            color: #111827;
+        }
+        .text-gray {
+            color: #6b7280;
+        }
+        .text-green {
+            color: #15803d;
+        }
+        .text-red {
+            color: #dc2626;
+        }
+        .text-orange {
+            color: #b45309;
+        }
+        .nowrap {
+            white-space: nowrap;
+        }
+        .text-center {
+            text-align: center;
+        }
+        .text-right {
+            text-align: right;
+        }
+    </style>
+</head>
+<body>
+
+<!-- =========================================================
+     OUTER CONTAINER
+========================================================= -->
+<table width="100%" cellpadding="0" cellspacing="0" border="0" class="outer-table">
+    <tr>
+        <td align="center" class="outer-td">
+            <!-- EMAIL CONTAINER -->
+            <table width="700" cellpadding="0" cellspacing="0" border="0" class="main-container">
+                <!-- HEADER -->
+                <tr>
+                    <td class="header-td">
+                        <img src="cid:company_logo" alt="Quivonex Solutions" class="logo-img" />
+                    </td>
+                </tr>
+
+                <!-- MAIN INTRODUCTION -->
+                <tr>
+                    <td class="intro-td">
+                        <h1 class="main-heading">Payment Reminder</h1>
+                        <p class="intro-text">
+                            Dear <strong>{{ client.client_name }}</strong>,
+                        </p>
+                        <p class="intro-sub">
+                            This is a friendly reminder regarding the payment status of your
+                            {% if projects|length == 1 %}
+                                project <strong>{{ projects.0.project_name }}</strong>.
+                            {% else %}
+                                projects with us.
+                            {% endif %}
+                        </p>
+                    </td>
+                </tr>
+
+                <!-- SUMMARY HEADING -->
+                <tr>
+                    <td class="summary-heading-td">
+                        <h2 class="summary-heading">Payment Summary</h2>
+                    </td>
+                </tr>
+
+                <!-- SUMMARY CARDS -->
+                <tr>
+                    <td class="summary-cards-td">
+                        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                            <tr>
+                                <!-- TOTAL AMOUNT -->
+                                <td class="card-cell">
+                                    <table width="100%" cellpadding="0" cellspacing="0" border="0" class="summary-card">
+                                        <tr><td class="card-padding">
+                                            <div class="card-label card-label-gray">TOTAL AMOUNT</div>
+                                            <div class="card-value card-value-dark">₹{{ summary.total_amount|floatformat:2 }}</div>
+                                        </td></tr>
+                                    </table>
+                                </td>
+                                <!-- TOTAL PAID -->
+                                <td class="card-cell-mid">
+                                    <table width="100%" cellpadding="0" cellspacing="0" border="0" class="summary-card-green">
+                                        <tr><td class="card-padding">
+                                            <div class="card-label card-label-green">TOTAL PAID</div>
+                                            <div class="card-value card-value-green">₹{{ summary.total_paid|floatformat:2 }}</div>
+                                        </td></tr>
+                                    </table>
+                                </td>
+                                <!-- OUTSTANDING -->
+                                <td class="card-cell-right">
+                                    <table width="100%" cellpadding="0" cellspacing="0" border="0" class="summary-card-red">
+                                        <tr><td class="card-padding">
+                                            <div class="card-label card-label-red">OUTSTANDING</div>
+                                            <div class="card-value card-value-red">₹{{ summary.total_outstanding|floatformat:2 }}</div>
+                                        </td></tr>
+                                    </table>
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+
+                <!-- OVERDUE NOTICE -->
+                {% if summary.total_overdue > 0 %}
+                <tr>
+                    <td class="overdue-td">
+                        <table width="100%" cellpadding="0" cellspacing="0" border="0" class="overdue-box">
+                            <tr><td class="overdue-padding">
+                                <div class="overdue-title">Overdue Amount</div>
+                                <div class="overdue-amount">₹{{ summary.total_overdue|floatformat:2 }}</div>
+                                <div class="overdue-note">This amount is currently overdue according to the payment schedule.</div>
+                            </td></tr>
+                        </table>
+                    </td>
+                </tr>
+                {% endif %}
+
+                <!-- PROJECTS LOOP -->
+                {% for project in projects %}
+                <!-- PROJECT HEADING -->
+                <tr>
+                    <td class="project-heading-td">
+                        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                            <tr><td>
+                                <h2 class="project-name">{{ project.project_name }}</h2>
+                                {% if project.project_type %}
+                                <p class="project-type">{{ project.project_type }}</p>
+                                {% endif %}
+                            </td></tr>
+                        </table>
+                    </td>
+                </tr>
+
+                <!-- PROJECT SUMMARY -->
+                <tr>
+                    <td class="project-summary-td">
+                        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                            <tr>
+                                <td class="project-summary-row">Project Amount</td>
+                                <td class="project-summary-value project-summary-value-dark">₹{{ project.total_amount|floatformat:2 }}</td>
+                            </tr>
+                            <tr>
+                                <td class="project-summary-row">Amount Paid</td>
+                                <td class="project-summary-value project-summary-value-green">₹{{ project.paid_amount|floatformat:2 }}</td>
+                            </tr>
+                            <tr>
+                                <td class="project-summary-row">Outstanding Amount</td>
+                                <td class="project-summary-value project-summary-value-red">₹{{ project.outstanding_amount|floatformat:2 }}</td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+
+                <!-- PAYMENT SCHEDULE -->
+                <tr>
+                    <td class="schedule-td">
+                        <h3 class="schedule-heading">Payment Schedule</h3>
+                        <table class="schedule-table">
+                            <tr style="background:#111827;">
+                                <th class="schedule-th schedule-th-left">Payment</th>
+                                <th class="schedule-th schedule-th-left">Due Date</th>
+                                <th class="schedule-th schedule-th-right">Amount</th>
+                                <th class="schedule-th schedule-th-right">Paid</th>
+                                <th class="schedule-th schedule-th-right">Remaining</th>
+                                <th class="schedule-th schedule-th-center">Status</th>
+                            </tr>
+                            {% for payment in project.payments %}
+                            <tr class="
+                                {% if payment.status == 'Overdue' %}row-overdue
+                                {% elif payment.status == 'Paid' %}row-paid
+                                {% elif payment.status == 'Partially Paid' %}row-partial
+                                {% else %}row-pending{% endif %}
+                            ">
+                                <td class="schedule-td-cell"><strong>{{ payment.title }}</strong></td>
+                                <td class="schedule-td-cell schedule-td-cell-light nowrap">
+                                    {% if payment.due_date %}{{ payment.due_date|date:"d M Y" }}{% else %}&mdash;{% endif %}
+                                </td>
+                                <td class="schedule-td-cell schedule-td-cell-right nowrap">₹{{ payment.amount|floatformat:2 }}</td>
+                                <td class="schedule-td-cell schedule-td-cell-green schedule-td-cell-right nowrap">₹{{ payment.paid_amount|floatformat:2 }}</td>
+                                <td class="schedule-td-cell schedule-td-cell-red schedule-td-cell-right nowrap">₹{{ payment.outstanding_amount|floatformat:2 }}</td>
+                                <td class="schedule-td-cell schedule-td-cell-center nowrap">
+                                    {% if payment.status == "Paid" %}<span class="text-green text-bold">Paid</span>
+                                    {% elif payment.status == "Overdue" %}<span class="text-red text-bold">Overdue</span>
+                                    {% elif payment.status == "Partially Paid" %}<span class="text-orange text-bold">Partially Paid</span>
+                                    {% else %}<span class="text-gray text-bold">Pending</span>{% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                            <!-- PROJECT TOTAL -->
+                            <tr class="schedule-total-row">
+                                <td colspan="2" class="schedule-total-cell">Project Total</td>
+                                <td class="schedule-total-cell schedule-total-cell-right nowrap">₹{{ project.total_amount|floatformat:2 }}</td>
+                                <td class="schedule-total-cell schedule-total-cell-green schedule-total-cell-right nowrap">₹{{ project.paid_amount|floatformat:2 }}</td>
+                                <td class="schedule-total-cell schedule-total-cell-red schedule-total-cell-right nowrap">₹{{ project.outstanding_amount|floatformat:2 }}</td>
+                                <td class="schedule-total-empty">&nbsp;</td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+                {% endfor %}
+
+                <!-- TRANSACTION HISTORY -->
+                {% if include_transaction_history %}
+                <tr>
+                    <td class="divider-td">
+                        <div class="divider-line">&nbsp;</div>
+                    </td>
+                </tr>
+                <tr>
+                    <td class="transaction-heading-td">
+                        <h2 class="transaction-heading">Payment Transaction History</h2>
+                        <p class="transaction-sub">The following are successful payment transactions recorded for the project(s).</p>
+                    </td>
+                </tr>
+
+                {% for project in projects %}
+                    {% for payment in project.payments %}
+                        {% if payment.transactions %}
+                        <tr>
+                            <td class="transaction-block-td">
+                                <h3 class="transaction-title">{{ project.project_name }} &mdash; {{ payment.title }}</h3>
+                                <table class="transaction-table">
+                                    <tr style="background:#f3f4f6;">
+                                        <th class="transaction-th transaction-th-left">Date</th>
+                                        <th class="transaction-th transaction-th-left">Payment Method</th>
+                                        <th class="transaction-th transaction-th-right">Amount</th>
+                                        <th class="transaction-th transaction-th-left">Reference / UTR</th>
+                                    </tr>
+                                    {% for transaction in payment.transactions %}
+                                    <tr>
+                                        <td class="transaction-td transaction-td-nowrap">{{ transaction.date|date:"d M Y" }}</td>
+                                        <td class="transaction-td">{{ transaction.payment_method }}</td>
+                                        <td class="transaction-td transaction-td-green transaction-td-right transaction-td-nowrap">₹{{ transaction.amount|floatformat:2 }}</td>
+                                        <td class="transaction-td transaction-td-break">{{ transaction.reference_number }}</td>
+                                    </tr>
+                                    {% endfor %}
+                                </table>
+                            </td>
+                        </tr>
+                        {% endif %}
+                    {% endfor %}
+                {% endfor %}
+
+                <tr>
+                    <td class="transaction-total-td">
+                        <table width="100%" cellpadding="0" cellspacing="0" border="0" class="transaction-total-box">
+                            <tr>
+                                <td class="transaction-total-padding">Total Successful Transactions</td>
+                                <td class="transaction-total-amount">₹{{ summary.total_transaction_amount|floatformat:2 }}</td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+                {% endif %}
+
+                <!-- PAYMENT REQUEST -->
+                <tr>
+                    <td class="request-td">
+                        <table width="100%" cellpadding="0" cellspacing="0" border="0" class="request-box">
+                            <tr><td class="request-padding">
+                                <p class="request-text">We kindly request you to arrange the pending payment(s) as per the agreed payment schedule.</p>
+                                <p class="request-text request-text-mt">If you have already made any pending payment, please disregard this reminder or share the payment details with us for confirmation.</p>
+                            </td></tr>
+                        </table>
+                    </td>
+                </tr>
+
+                <!-- CLOSING -->
+                <tr>
+                    <td class="closing-td">
+                        <p class="closing-text">Thank you for your continued association with us.</p>
+                        <p class="closing-signoff">Regards,<br /><strong>{{ company_name }}</strong></p>
+                    </td>
+                </tr>
+
+                <!-- FOOTER -->
+                <tr>
+                    <td class="footer-td">
+                        <p class="footer-company">{{ company_name }}</p>
+                        {% if company_email %}
+                        <p class="footer-email">{{ company_email }}</p>
+                        {% endif %}
+                        {% if company_phone %}
+                        <p class="footer-phone">{{ company_phone }}</p>
+                        {% endif %}
+                        <p class="footer-note">This is an automated payment reminder. Please contact us if you have any questions regarding your payment schedule.</p>
+                    </td>
+                </tr>
+            </table>
+            <!-- END EMAIL CONTAINER -->
+        </td>
+    </tr>
+</table>
+<!-- END OUTER CONTAINER -->
+
+</body>
+</html>

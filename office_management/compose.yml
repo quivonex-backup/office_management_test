@@ -1,0 +1,69 @@
+
+services:
+  web:
+    build: .
+    container_name: erp_web
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DB_HOST: host.docker.internal
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      ALLOWED_HOSTS: localhost,127.0.0.1
+    ports:
+      - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: >
+      gunicorn config.wsgi:application
+      --bind 0.0.0.0:8000
+      --workers 3
+
+  redis:
+    image: redis:7-alpine
+    container_name: erp_redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  celery_worker:
+    build: .
+    container_name: erp_celery_worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DB_HOST: host.docker.internal
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      ALLOWED_HOSTS: localhost,127.0.0.1
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: celery -A config worker -l INFO
+
+  celery_beat:
+    build: .
+    container_name: erp_celery_beat
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DB_HOST: host.docker.internal
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      ALLOWED_HOSTS: localhost,127.0.0.1
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: celery -A config beat -l INFO
+
+volumes:
+  redis_data:

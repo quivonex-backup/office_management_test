@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>{{ title }}</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+
+            font-family:
+                -apple-system,
+                BlinkMacSystemFont,
+                "Segoe UI",
+                Roboto,
+                Arial,
+                sans-serif;
+
+            background:
+                linear-gradient(
+                    135deg,
+                    #f8fafc 0%,
+                    #eef2ff 100%
+                );
+
+            color: #111827;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 520px;
+            padding: 24px;
+        }
+
+        .card {
+            background: #ffffff;
+            border-radius: 20px;
+
+            padding: 44px 36px;
+
+            text-align: center;
+
+            box-shadow:
+                0 20px 50px rgba(15, 23, 42, 0.10);
+
+            border: 1px solid #e5e7eb;
+        }
+
+        .icon {
+            width: 72px;
+            height: 72px;
+
+            margin: 0 auto 24px;
+
+            border-radius: 50%;
+
+            display: flex;
+            align-items: center;
+            justify-content: center;
+
+            font-size: 34px;
+        }
+
+        .success-icon {
+            background: #dcfce7;
+            color: #16a34a;
+        }
+
+        .error-icon {
+            background: #fee2e2;
+            color: #dc2626;
+        }
+
+        h1 {
+            font-size: 25px;
+            font-weight: 700;
+
+            margin-bottom: 12px;
+
+            color: #111827;
+        }
+
+        .message {
+            font-size: 16px;
+            line-height: 1.6;
+
+            color: #6b7280;
+
+            margin-bottom: 28px;
+        }
+
+        .status {
+            display: inline-flex;
+
+            align-items: center;
+            justify-content: center;
+
+            padding: 8px 14px;
+
+            border-radius: 999px;
+
+            font-size: 13px;
+            font-weight: 600;
+
+            margin-bottom: 26px;
+        }
+
+        .success-status {
+            background: #ecfdf5;
+            color: #047857;
+        }
+
+        .error-status {
+            background: #fef2f2;
+            color: #b91c1c;
+        }
+
+        .close-message {
+            font-size: 14px;
+            color: #9ca3af;
+
+            margin-top: 10px;
+        }
+
+        .loader {
+            width: 18px;
+            height: 18px;
+
+            border: 2px solid #d1d5db;
+            border-top-color: #4f46e5;
+
+            border-radius: 50%;
+
+            animation: spin 0.8s linear infinite;
+
+            margin: 0 auto 12px;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        @media (max-width: 480px) {
+
+            .container {
+                padding: 16px;
+            }
+
+            .card {
+                padding: 36px 24px;
+            }
+
+            h1 {
+                font-size: 22px;
+            }
+
+            .message {
+                font-size: 15px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="container">
+
+    <div class="card">
+
+        {% if success %}
+
+            <div class="icon success-icon">
+                ✓
+            </div>
+
+            <div class="status success-status">
+                SUCCESS
+            </div>
+
+            <h1>
+                {{ title }}
+            </h1>
+
+            <p class="message">
+                {{ message }}
+            </p>
+
+        {% else %}
+
+            <div class="icon error-icon">
+                ×
+            </div>
+
+            <div class="status error-status">
+                ERROR
+            </div>
+
+            <h1>
+                {{ title }}
+            </h1>
+
+            <p class="message">
+                {{ message }}
+            </p>
+
+        {% endif %}
+
+        <div class="close-message">
+            You can safely close this window.
+        </div>
+
+    </div>
+
+</div>
+
+</body>
+</html>
