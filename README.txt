@@ -154,3 +154,8 @@ wsl
 sudo service redis-server start
 redis-cli ping   # should now return PONG
 sudo service redis-server status
+
+
+git add .
+git commit -m "first commit"
+git push -u origin main
