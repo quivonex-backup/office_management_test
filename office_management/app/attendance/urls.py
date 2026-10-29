@@ -4,6 +4,7 @@ from .views import (
     AttendanceSettingsAPIView,
     ShiftListAPIView, ShiftCreateAPIView, ShiftUpdateAPIView, ShiftDeactivateAPIView,
     EmployeeShiftAssignmentListAPIView, EmployeeShiftAssignmentCreateAPIView, EmployeeShiftAssignmentUpdateAPIView,
+    EmployeeShiftAssignmentBulkAPIView, EmployeeShiftAssignmentPatternAPIView, EmployeeShiftAssignmentBulkCloseAPIView,
     AttendancePunchAPIView, AttendanceListAPIView, MyAttendanceListAPIView, AttendanceDetailAPIView,
     AttendanceCorrectionCreateAPIView, AttendanceCorrectionListAPIView, AttendanceCorrectionReviewAPIView,
     FaceRecognitionAPIView
@@ -23,6 +24,11 @@ urlpatterns = [
     path("shift-assignments/list/", EmployeeShiftAssignmentListAPIView.as_view()),
     path("shift-assignments/create/", EmployeeShiftAssignmentCreateAPIView.as_view()),
     path("shift-assignments/update/", EmployeeShiftAssignmentUpdateAPIView.as_view()),
+
+    # Employee shift assignments
+    path("shift-assignments/bulk-assign/", EmployeeShiftAssignmentBulkAPIView.as_view()),
+    path("shift-assignments/bulk-assign-pattern/", EmployeeShiftAssignmentPatternAPIView.as_view()),
+    path("shift-assignments/bulk-close/", EmployeeShiftAssignmentBulkCloseAPIView.as_view()),
 
     # Attendance
     path("punch/", AttendancePunchAPIView.as_view()),

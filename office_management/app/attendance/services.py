@@ -1,7 +1,8 @@
 import math
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from app.employees.models import Employee
@@ -764,3 +765,390 @@ def mark_employee_absent(employee, organization, work_date):
     )
 
     return attendance
+
+
+
+# =========================================================
+# SHIFT ASSIGNMENT HELPERS
+# =========================================================
+
+def validate_shift_assignment_range(
+    organization,
+    employee,
+    shift,
+    effective_from,
+    effective_to,
+    exclude_assignment_id=None,
+):
+    """Reject overlapping assignments for the same employee."""
+
+    if employee.organization_id != organization.id:
+        raise ValueError(
+            f"Employee {employee.id} does not belong to this organization."
+        )
+
+    if not employee.is_active or employee.employment_status != "ACTIVE":
+        raise ValueError(
+            f"Employee {employee.id} is not active."
+        )
+
+    if shift.organization_id != organization.id:
+        raise ValueError(
+            f"Shift {shift.id} does not belong to this organization."
+        )
+
+    if not shift.is_active:
+        raise ValueError(f"Shift '{shift.name}' is inactive.")
+
+    if effective_to and effective_to < effective_from:
+        raise ValueError("End date cannot be before start date.")
+
+    conflicts = EmployeeShiftAssignment.objects.filter(
+        organization=organization,
+        employee=employee,
+        effective_from__lte=effective_to or date.max,
+    ).filter(
+        Q(effective_to__isnull=True)
+        | Q(effective_to__gte=effective_from)
+    )
+
+    if exclude_assignment_id is not None:
+        conflicts = conflicts.exclude(pk=exclude_assignment_id)
+
+    conflict = conflicts.select_related("shift").first()
+
+    if conflict:
+        raise ValueError(
+            f"Employee {employee.id} already has shift "
+            f"'{conflict.shift.name}' assigned from "
+            f"{conflict.effective_from} to "
+            f"{conflict.effective_to or 'open-ended'}."
+        )
+
+
+def validate_common_weekly_offs(
+    organization,
+    shifts,
+    date_from,
+    date_to,
+):
+    """
+    Rotation shifts must have the same weekly-off behavior
+    throughout the requested date range.
+    Organization-wide holidays apply equally to all shifts.
+    """
+
+    from app.calendar_app.services import get_calendar_day
+
+    if len(shifts) <= 1:
+        return
+
+    current_date = date_from
+
+    while current_date <= date_to:
+        day_results = [
+            get_calendar_day(
+                organization=organization,
+                target_date=current_date,
+                shift=shift,
+            )
+            for shift in shifts
+        ]
+
+        # Holidays are organization-wide, so they do not create
+        # a difference between the shifts' weekly-off schedules.
+        if all(
+            result["day_type"] == "HOLIDAY"
+            for result in day_results
+        ):
+            current_date += timedelta(days=1)
+            continue
+
+        weekly_off_statuses = [
+            result["day_type"] == "WEEKLY_OFF"
+            for result in day_results
+        ]
+
+        if len(set(weekly_off_statuses)) > 1:
+            raise ValueError(
+                "Rotation shifts must share the same weekly-off "
+                f"schedule. The schedules differ on {current_date}."
+            )
+
+        current_date += timedelta(days=1)
+
+
+# =========================================================
+# BULK ASSIGN ONE SHIFT TO MULTIPLE EMPLOYEES
+# =========================================================
+
+@transaction.atomic
+def bulk_assign_shift(
+    organization,
+    employee_ids,
+    shift_id,
+    effective_from,
+    effective_to=None,
+    assigned_by=None,
+):
+    employees = list(
+        Employee.objects.select_for_update().filter(
+            id__in=employee_ids,
+            organization=organization,
+        ).order_by("id")
+    )
+
+    if len(employees) != len(set(employee_ids)):
+        raise ValueError(
+            "One or more employees do not belong to this organization "
+            "or do not exist."
+        )
+
+    shift = Shift.objects.filter(
+        id=shift_id,
+        organization=organization,
+        is_active=True,
+    ).first()
+
+    if not shift:
+        raise ValueError("Active shift not found in this organization.")
+
+    # Validate everyone before creating any assignment.
+    for employee in employees:
+        validate_shift_assignment_range(
+            organization=organization,
+            employee=employee,
+            shift=shift,
+            effective_from=effective_from,
+            effective_to=effective_to,
+        )
+
+    assignments = [
+        EmployeeShiftAssignment(
+            organization=organization,
+            employee=employee,
+            shift=shift,
+            effective_from=effective_from,
+            effective_to=effective_to,
+            assigned_by=assigned_by,
+        )
+        for employee in employees
+    ]
+
+    return EmployeeShiftAssignment.objects.bulk_create(assignments)
+
+
+# =========================================================
+# BULK ASSIGN A ROTATING SHIFT PATTERN
+# =========================================================
+
+@transaction.atomic
+def bulk_assign_shift_pattern(
+    organization,
+    employee_ids,
+    start_date,
+    pattern,
+    repetitions=1,
+    assigned_by=None,
+    auto_close_prior=False,
+):
+    """
+    Example pattern:
+    [
+        {"shift_id": 1, "duration_days": 7},
+        {"shift_id": 2, "duration_days": 7},
+    ]
+
+    Each duration is inclusive. A 7-day block occupies seven
+    calendar dates, and the next block starts the following day.
+    """
+
+    if not employee_ids:
+        raise ValueError("Select at least one employee.")
+
+    if not pattern:
+        raise ValueError("Provide at least one shift pattern block.")
+
+    if repetitions < 1:
+        raise ValueError("Repetitions must be at least 1.")
+
+    # CHANGED: reject duplicate employee IDs up front.
+    if len(employee_ids) != len(set(employee_ids)):
+        raise ValueError("employee_ids contains duplicate IDs.")
+
+    # Validate pattern and collect its shifts.
+    shift_ids = []
+    total_days = 0
+
+    for block in pattern:
+        shift_id = block.get("shift_id")
+        duration_days = block.get("duration_days")
+
+        if not shift_id:
+            raise ValueError("Every pattern block needs a shift_id.")
+
+        # CHANGED: reject booleans (JSON true/false) as durations.
+        if (
+            isinstance(duration_days, bool)
+            or not isinstance(duration_days, int)
+            or duration_days < 1
+        ):
+            raise ValueError(
+                "duration_days must be a positive integer."
+            )
+
+        shift_ids.append(shift_id)
+        total_days += duration_days
+
+    shifts = {
+        shift.id: shift
+        for shift in Shift.objects.filter(
+            organization=organization,
+            id__in=set(shift_ids),
+            is_active=True,
+        )
+    }
+
+    if len(shifts) != len(set(shift_ids)):
+        raise ValueError(
+            "One or more shifts are missing, inactive, or belong "
+            "to another organization."
+        )
+
+    # CHANGED: added select_for_update() to lock employee rows
+    employees = list(
+        Employee.objects.select_for_update().filter(
+            id__in=employee_ids,
+            organization=organization,
+        ).order_by("id")
+    )
+
+    if len(employees) != len(set(employee_ids)):
+        raise ValueError(
+            "One or more employees do not belong to this organization "
+            "or do not exist."
+        )
+
+    # Generate all date blocks first. No database writes yet.
+    blocks = []
+    current_date = start_date
+
+    for _ in range(repetitions):
+        for item in pattern:
+            block_start = current_date
+            block_end = (
+                block_start
+                + timedelta(days=item["duration_days"] - 1)
+            )
+
+            blocks.append({
+                "shift": shifts[item["shift_id"]],
+                "effective_from": block_start,
+                "effective_to": block_end,
+            })
+
+            current_date = block_end + timedelta(days=1)
+
+    final_date = blocks[-1]["effective_to"]
+
+    # Validate weekly-off behavior before creating assignments.
+    validate_common_weekly_offs(
+        organization=organization,
+        shifts=list(shifts.values()),
+        date_from=start_date,
+        date_to=final_date,
+    )
+
+    # CHANGED: validate every employee fully BEFORE modifying any prior
+    # assignment. prior assignments are locked and cached here, then closed
+    # only after all checks pass.
+    prior_assignments_by_employee = {}
+    for employee in employees:
+        prior_open_assignments = list(
+            EmployeeShiftAssignment.objects.select_for_update().filter(
+                organization=organization,
+                employee=employee,
+                effective_from__lt=start_date,
+                effective_to__isnull=True,
+            ).select_related("shift")
+        )
+
+        prior_assignments_by_employee[employee.id] = (
+            prior_open_assignments
+        )
+
+        if prior_open_assignments and not auto_close_prior:
+            raise ValueError(
+                f"Employee {employee.id} has an existing "
+                "open-ended shift assignment. Set auto_close_prior "
+                "to true to close it before the new pattern."
+            )
+
+        # Validate that prior assignments can safely be closed.
+        for prior in prior_open_assignments:
+            has_conflicting_attendance = (
+                AttendanceRecord.objects.filter(
+                    organization=organization,
+                    employee=employee,
+                    shift=prior.shift,
+                    work_date__gte=start_date,
+                ).exists()
+            )
+
+            if has_conflicting_attendance:
+                raise ValueError(
+                    f"Cannot close the previous assignment for "
+                    f"employee {employee.id}: attendance records "
+                    f"already exist on or after {start_date} for "
+                    f"shift '{prior.shift.name}'."
+                )
+
+        # Reject any other assignment overlapping the requested period.
+        overlapping = EmployeeShiftAssignment.objects.filter(
+            organization=organization,
+            employee=employee,
+            effective_from__lte=final_date,
+        ).filter(
+            Q(effective_to__isnull=True)
+            | Q(effective_to__gte=start_date)
+        )
+
+        # CHANGED: exclude the open-ended assignments we intend to close
+        # (auto_close_prior) so genuine conflicts are still detected.
+        prior_ids = [assignment.id for assignment in prior_open_assignments]
+        if prior_ids:
+            overlapping = overlapping.exclude(id__in=prior_ids)
+
+        conflict = overlapping.select_related("shift").first()
+
+        if conflict:
+            raise ValueError(
+                f"Employee {employee.id} already has an assignment "
+                f"for shift '{conflict.shift.name}' overlapping "
+                f"{start_date} to {final_date}."
+            )
+
+    # CHANGED: all validations passed — now safely close prior open-ended
+    # assignments that were validated above.
+    for employee in employees:
+        for prior in prior_assignments_by_employee[employee.id]:
+            prior.effective_to = start_date - timedelta(days=1)
+            prior.save(update_fields=["effective_to", "updated_at"])
+
+    # All checks passed. Create every block for every employee.
+    assignments = []
+
+    for employee in employees:
+        for block in blocks:
+            assignments.append(
+                EmployeeShiftAssignment(
+                    organization=organization,
+                    employee=employee,
+                    shift=block["shift"],
+                    effective_from=block["effective_from"],
+                    effective_to=block["effective_to"],
+                    assigned_by=assigned_by,
+                )
+            )
+
+    return EmployeeShiftAssignment.objects.bulk_create(assignments)

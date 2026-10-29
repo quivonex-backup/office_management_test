@@ -1,6 +1,9 @@
-from django.db import transaction
+from django.db import transaction, IntegrityError
 from django.db.models import Q
 from django.utils.dateparse import parse_date
+from datetime import date, datetime
+
+from openpyxl import load_workbook
 
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -9,6 +12,7 @@ from rest_framework.views import APIView
 
 from common.services import get_user_organization
 from app.audit.services import log_activity
+from app.attendance.models import Shift
 from app.attendance.services import get_employee_for_user
 
 from .models import WeeklyOffRule, CalendarHoliday
@@ -132,6 +136,97 @@ class WeeklyOffRuleCreateAPIView(APIView):
                     rule,
                     context={"organization": organization},
                 ).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+# =========================================================
+# CREATE THE SAME WEEKLY-OFF RULE FOR ALL ACTIVE SHIFTS
+# =========================================================
+
+class WeeklyOffRuleBulkCreateAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request):
+        organization, error_response = get_user_organization(request)
+
+        if error_response:
+            return error_response
+
+        shifts = list(
+            Shift.objects.filter(
+                organization=organization,
+                is_active=True,
+            ).order_by("id")
+        )
+
+        if not shifts:
+            return Response(
+                {
+                    "status": False,
+                    "message": "No active shifts found.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        data = request.data.copy()
+        data.pop("organization_id", None)
+        data.pop("shift", None)
+        data.pop("shift_id", None)
+
+        # Validate the rule for every shift before creating any rows.
+        serializers_to_save = []
+
+        for shift in shifts:
+            shift_data = data.copy()
+            shift_data["shift"] = shift.id
+
+            serializer = WeeklyOffRuleSerializer(
+                data=shift_data,
+                context={"organization": organization},
+            )
+
+            if not serializer.is_valid():
+                return Response(
+                    {
+                        "status": False,
+                        "message": (
+                            "Weekly-off rule validation failed. "
+                            "No rules were created."
+                        ),
+                        "shift_id": shift.id,
+                        "shift_name": shift.name,
+                        "errors": serializer.errors,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            serializers_to_save.append(serializer)
+
+        created_rules = []
+
+        for serializer in serializers_to_save:
+            rule = serializer.save(
+                created_by=request.user,
+                updated_by=request.user,
+            )
+            created_rules.append(rule)
+
+        result_serializer = WeeklyOffRuleSerializer(
+            created_rules,
+            many=True,
+            context={"organization": organization},
+        )
+
+        return Response(
+            {
+                "status": True,
+                "message": (
+                    "Weekly-off rule created for all active shifts."
+                ),
+                "data": result_serializer.data,
             },
             status=status.HTTP_201_CREATED,
         )
@@ -684,6 +779,388 @@ class CalendarHolidayDeactivateAPIView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+# =========================================================
+# HOLIDAY BULK IMPORT FROM EXCEL
+# =========================================================
+
+class CalendarHolidayBulkImportAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
+    MAX_ROWS = 1000
+
+    REQUIRED_COLUMNS = {
+        "date",
+        "name",
+        "holiday_type",
+        "pay_type",
+    }
+
+    ALLOWED_COLUMNS = {
+        "date",
+        "name",
+        "holiday_type",
+        "pay_type",
+        "is_optional",
+        "description",
+    }
+
+    def post(self, request):
+        organization, error_response = get_user_organization(request)
+
+        if error_response:
+            return error_response
+
+        uploaded_file = request.FILES.get("file")
+
+        if not uploaded_file:
+            return Response(
+                {
+                    "status": False,
+                    "message": "Please upload an Excel file using the 'file' field.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if uploaded_file.size > self.MAX_FILE_SIZE:
+            return Response(
+                {
+                    "status": False,
+                    "message": "File size cannot exceed 5 MB.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not uploaded_file.name.lower().endswith(".xlsx"):
+            return Response(
+                {
+                    "status": False,
+                    "message": "Only .xlsx Excel files are supported.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            workbook = load_workbook(
+                uploaded_file,
+                read_only=True,
+                data_only=True,
+            )
+        except Exception:
+            return Response(
+                {
+                    "status": False,
+                    "message": "The uploaded Excel file could not be read.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            if "Holidays" in workbook.sheetnames:
+                worksheet = workbook["Holidays"]
+            else:
+                worksheet = workbook.active
+
+            rows = worksheet.iter_rows(values_only=True)
+            header_row = next(rows, None)
+
+            if not header_row:
+                return Response(
+                    {
+                        "status": False,
+                        "message": "The Excel sheet is empty.",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            headers = [
+                str(value).strip().lower() if value is not None else ""
+                for value in header_row
+            ]
+
+            if len(headers) != len(set(headers)):
+                return Response(
+                    {
+                        "status": False,
+                        "message": "The Excel file contains duplicate column headers.",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            missing_columns = self.REQUIRED_COLUMNS - set(headers)
+
+            if missing_columns:
+                return Response(
+                    {
+                        "status": False,
+                        "message": "Required Excel columns are missing.",
+                        "errors": {
+                            "missing_columns": sorted(missing_columns),
+                        },
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            unknown_columns = set(headers) - self.ALLOWED_COLUMNS
+
+            if unknown_columns:
+                return Response(
+                    {
+                        "status": False,
+                        "message": "The Excel file contains unsupported columns.",
+                        "errors": {
+                            "unknown_columns": sorted(unknown_columns),
+                        },
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            column_indexes = {
+                name: index
+                for index, name in enumerate(headers)
+            }
+
+            def get_value(row, column_name):
+                index = column_indexes.get(column_name)
+
+                if index is None or index >= len(row):
+                    return None
+
+                return row[index]
+
+            def parse_holiday_date(value):
+                if isinstance(value, datetime):
+                    return value.date()
+
+                if isinstance(value, date):
+                    return value
+
+                if isinstance(value, str):
+                    return parse_date(value.strip())
+
+                return None
+
+            def parse_optional(value):
+                if value is None or value == "":
+                    return False
+
+                if isinstance(value, bool):
+                    return value
+
+                if isinstance(value, int) and value in (0, 1):
+                    return bool(value)
+
+                if isinstance(value, str):
+                    normalized = value.strip().lower()
+
+                    if normalized in {"true", "yes", "1"}:
+                        return True
+
+                    if normalized in {"false", "no", "0"}:
+                        return False
+
+                raise ValueError(
+                    "is_optional must be TRUE or FALSE."
+                )
+
+            prepared_rows = []
+            errors = []
+            seen_dates = set()
+
+            for row_number, row in enumerate(rows, start=2):
+                if not row or all(
+                    value is None or (
+                        isinstance(value, str)
+                        and not value.strip()
+                    )
+                    for value in row
+                ):
+                    continue
+
+                if len(prepared_rows) >= self.MAX_ROWS:
+                    errors.append({
+                        "row": row_number,
+                        "errors": (
+                            f"Maximum {self.MAX_ROWS} holiday rows "
+                            "are allowed per import."
+                        ),
+                    })
+                    break
+
+                holiday_date = parse_holiday_date(
+                    get_value(row, "date")
+                )
+
+                if holiday_date is None:
+                    errors.append({
+                        "row": row_number,
+                        "errors": {
+                            "date": "Enter a valid date in YYYY-MM-DD format."
+                        },
+                    })
+                    continue
+
+                if holiday_date in seen_dates:
+                    errors.append({
+                        "row": row_number,
+                        "errors": {
+                            "date": (
+                                "This date appears more than once "
+                                "in the uploaded file."
+                            )
+                        },
+                    })
+                    continue
+
+                seen_dates.add(holiday_date)
+
+                raw_name = get_value(row, "name")
+                name = (
+                    str(raw_name).strip()
+                    if raw_name is not None
+                    else ""
+                )
+
+                raw_description = get_value(row, "description")
+                description = (
+                    str(raw_description).strip()
+                    if raw_description is not None
+                    else ""
+                )
+
+                try:
+                    is_optional = parse_optional(
+                        get_value(row, "is_optional")
+                    )
+                except ValueError as exc:
+                    errors.append({
+                        "row": row_number,
+                        "errors": {
+                            "is_optional": str(exc),
+                        },
+                    })
+                    continue
+
+                data = {
+                    "date": holiday_date,
+                    "name": name,
+                    "holiday_type": (
+                        str(get_value(row, "holiday_type") or "")
+                        .strip()
+                        .upper()
+                    ),
+                    "pay_type": (
+                        str(get_value(row, "pay_type") or "")
+                        .strip()
+                        .upper()
+                    ),
+                    "is_optional": is_optional,
+                    "description": description,
+                }
+
+                serializer = CalendarHolidayWriteSerializer(
+                    data=data,
+                    context={
+                        "organization": organization,
+                    },
+                )
+
+                if not serializer.is_valid():
+                    errors.append({
+                        "row": row_number,
+                        "errors": serializer.errors,
+                    })
+                    continue
+
+                prepared_rows.append({
+                    "row_number": row_number,
+                    "serializer": serializer,
+                })
+
+            if not prepared_rows and not errors:
+                errors.append({
+                    "row": None,
+                    "errors": "The Excel file contains no holiday records.",
+                })
+
+            # Validate the entire file before writing anything.
+            if errors:
+                return Response(
+                    {
+                        "status": False,
+                        "message": (
+                            "Holiday import failed. No holidays were imported."
+                        ),
+                        "errors": errors,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            created_holidays = []
+
+            try:
+                # The nested transaction lets us catch database conflicts
+                # and return a response without partially saving the file.
+                with transaction.atomic():
+                    for item in prepared_rows:
+                        holiday = item["serializer"].save(
+                            organization=organization,
+                            created_by=request.user,
+                            updated_by=request.user,
+                        )
+
+                        created_holidays.append(holiday)
+
+                        log_activity(
+                            request=request,
+                            action="CREATE",
+                            module="CALENDAR",
+                            object_type="CalendarHoliday",
+                            object_id=holiday.id,
+                            description=(
+                                f"Holiday {holiday.name} created "
+                                "through Excel import."
+                            ),
+                            new_data={
+                                "date": str(holiday.date),
+                                "name": holiday.name,
+                                "holiday_type": holiday.holiday_type,
+                                "pay_type": holiday.pay_type,
+                                "is_optional": holiday.is_optional,
+                            },
+                        )
+
+            except IntegrityError:
+                return Response(
+                    {
+                        "status": False,
+                        "message": (
+                            "Import failed because one or more holiday "
+                            "dates already exist. No holidays were imported."
+                        ),
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            return Response(
+                {
+                    "status": True,
+                    "message": "Holidays imported successfully.",
+                    "data": {
+                        "created_count": len(created_holidays),
+                        "holidays": CalendarHolidaySerializer(
+                            created_holidays,
+                            many=True,
+                        ).data,
+                    },
+                },
+                status=status.HTTP_201_CREATED,
+            )
+
+        finally:
+            workbook.close()
 
 
 # =========================================================

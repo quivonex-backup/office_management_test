@@ -1,6 +1,7 @@
 from datetime import date
 
 from django.db import transaction
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
@@ -44,6 +45,8 @@ from .services import (
     process_attendance_punch,
     create_attendance_correction,
     review_attendance_correction,
+    bulk_assign_shift,
+    bulk_assign_shift_pattern,
 )
 from .face_recognition_service import (
     FaceVerificationError,
@@ -463,6 +466,258 @@ class EmployeeShiftAssignmentUpdateAPIView(AttendanceBaseAPIView):
                 assignment,
                 context={"organization": organization},
             ).data,
+        )
+
+
+# =========================================================
+# BULK ASSIGN ONE SHIFT TO MULTIPLE EMPLOYEES
+# =========================================================
+
+class EmployeeShiftAssignmentBulkAPIView(AttendanceBaseAPIView):
+
+    @transaction.atomic
+    def post(self, request):
+        organization, error_response = self.get_organization(request)
+
+        if error_response:
+            return error_response
+
+        employee_ids = request.data.get("employee_ids")
+        shift_id = request.data.get("shift_id")
+        effective_from = request.data.get("effective_from")
+        effective_to = request.data.get("effective_to")
+
+        if not isinstance(employee_ids, list) or not employee_ids:
+            return self.failure(
+                "employee_ids must be a non-empty list."
+            )
+
+        if not shift_id:
+            return self.failure("shift_id is required.")
+
+        try:
+            effective_from = self.parse_date(
+                effective_from, "effective_from"
+            )
+            effective_to = (
+                self.parse_date(effective_to, "effective_to")
+                if effective_to else None
+            )
+
+            if not effective_from:
+                return self.failure("effective_from is required.")
+
+            assignments = bulk_assign_shift(
+                organization=organization,
+                employee_ids=employee_ids,
+                shift_id=shift_id,
+                effective_from=effective_from,
+                effective_to=effective_to,
+                assigned_by=request.user,
+            )
+
+        except ValueError as exc:
+            return self.failure(str(exc))
+
+        serializer = EmployeeShiftAssignmentSerializer(
+            assignments,
+            many=True,
+            context={"organization": organization},
+        )
+
+        return self.success(
+            "Shift assigned to employees successfully.",
+            serializer.data,
+            status.HTTP_201_CREATED,
+        )
+
+
+# =========================================================
+# BULK ASSIGN A ROTATING SHIFT PATTERN
+# =========================================================
+
+class EmployeeShiftAssignmentPatternAPIView(AttendanceBaseAPIView):
+
+    @transaction.atomic
+    def post(self, request):
+        organization, error_response = self.get_organization(request)
+
+        if error_response:
+            return error_response
+
+        employee_ids = request.data.get("employee_ids")
+        start_date = request.data.get("start_date")
+        pattern = request.data.get("pattern")
+        repetitions = request.data.get("repetitions", 1)
+        auto_close_prior = request.data.get("auto_close_prior", False)
+
+        if not isinstance(employee_ids, list) or not employee_ids:
+            return self.failure(
+                "employee_ids must be a non-empty list."
+            )
+
+        if not isinstance(pattern, list) or not pattern:
+            return self.failure(
+                "pattern must be a non-empty list."
+            )
+
+        if not isinstance(auto_close_prior, bool):
+            return self.failure(
+                "auto_close_prior must be true or false."
+            )
+
+        try:
+            start_date = self.parse_date(start_date, "start_date")
+
+            if not start_date:
+                return self.failure("start_date is required.")
+
+            if isinstance(repetitions, bool):
+                return self.failure(
+                    "repetitions must be a positive integer."
+                )
+
+            repetitions = int(repetitions)
+
+            assignments = bulk_assign_shift_pattern(
+                organization=organization,
+                employee_ids=employee_ids,
+                start_date=start_date,
+                pattern=pattern,
+                repetitions=repetitions,
+                assigned_by=request.user,
+                auto_close_prior=auto_close_prior,
+            )
+
+        except (ValueError, TypeError) as exc:
+            return self.failure(str(exc))
+
+        serializer = EmployeeShiftAssignmentSerializer(
+            assignments,
+            many=True,
+            context={"organization": organization},
+        )
+
+        return self.success(
+            "Rotating shift pattern assigned successfully.",
+            serializer.data,
+            status.HTTP_201_CREATED,
+        )
+
+
+# =========================================================
+# BULK CLOSE SHIFT ASSIGNMENTS
+# =========================================================
+
+class EmployeeShiftAssignmentBulkCloseAPIView(AttendanceBaseAPIView):
+
+    @transaction.atomic
+    def post(self, request):
+        organization, error_response = self.get_organization(request)
+
+        if error_response:
+            return error_response
+
+        assignment_ids = request.data.get("assignment_ids")
+        effective_to = request.data.get("effective_to")
+
+        if not isinstance(assignment_ids, list) or not assignment_ids:
+            return self.failure(
+                "assignment_ids must be a non-empty list."
+            )
+
+        try:
+            effective_to = self.parse_date(
+                effective_to, "effective_to"
+            )
+
+            if not effective_to:
+                return self.failure("effective_to is required.")
+
+        except ValueError as exc:
+            return self.failure(str(exc))
+
+        assignments = list(
+            EmployeeShiftAssignment.objects.filter(
+                organization=organization,
+                id__in=assignment_ids,
+            ).select_related("employee", "shift")
+        )
+
+        if len(assignments) != len(set(assignment_ids)):
+            return self.failure(
+                "One or more assignment IDs were not found "
+                "in this organization."
+            )
+
+        # Validate every assignment before updating any of them.
+        for assignment in assignments:
+            if effective_to < assignment.effective_from:
+                return self.failure(
+                    f"End date cannot be before the start date for "
+                    f"assignment {assignment.id}."
+                )
+
+            # CHANGED: Closing an open-ended assignment must not overlap
+            # another assignment belonging to the same employee.
+            if assignment.effective_to is None:
+                other_conflict = EmployeeShiftAssignment.objects.filter(
+                    organization=organization,
+                    employee=assignment.employee,
+                    effective_from__lte=effective_to,
+                ).filter(
+                    Q(effective_to__isnull=True)
+                    | Q(effective_to__gte=assignment.effective_from)
+                ).exclude(
+                    id=assignment.id
+                ).first()
+
+                if other_conflict:
+                    return self.failure(
+                        f"Cannot close assignment {assignment.id} to "
+                        f"{effective_to}: it would overlap assignment "
+                        f"{other_conflict.id}."
+                    )
+
+            if (
+                assignment.effective_to is not None
+                and effective_to > assignment.effective_to
+            ):
+                return self.failure(
+                    f"Assignment {assignment.id} already ends on "
+                    f"{assignment.effective_to}; it cannot be extended "
+                    "by this close operation."
+                )
+
+            attendance_exists = AttendanceRecord.objects.filter(
+                organization=organization,
+                employee=assignment.employee,
+                shift=assignment.shift,
+                work_date__gt=effective_to,
+            ).exists()
+
+            if attendance_exists:
+                return self.failure(
+                    f"Cannot close assignment {assignment.id}: "
+                    "attendance records already exist after the "
+                    "requested end date for this employee and shift."
+                )
+
+        for assignment in assignments:
+            assignment.effective_to = effective_to
+            assignment.save(
+                update_fields=["effective_to", "updated_at"]
+            )
+
+        serializer = EmployeeShiftAssignmentSerializer(
+            assignments,
+            many=True,
+            context={"organization": organization},
+        )
+
+        return self.success(
+            "Shift assignments closed successfully.",
+            serializer.data,
         )
 
 

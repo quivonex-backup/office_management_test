@@ -203,71 +203,62 @@ class EmployeeShiftAssignmentSerializer(serializers.ModelSerializer):
                 "Organization context is required."
             )
 
-        # --- existing org-scoped ownership checks ---
-        if employee and employee.organization_id != organization.id:
-            raise serializers.ValidationError({
-                "employee": "Employee does not belong to this organization."
-            })
+        # Validate employee and shift status.
+        if employee:
+            if employee.organization_id != organization.id:
+                raise serializers.ValidationError({
+                    "employee": "Employee does not belong to this organization."
+                })
 
-        if shift and shift.organization_id != organization.id:
-            raise serializers.ValidationError({
-                "shift": "Shift does not belong to this organization."
-            })
+            if not employee.is_active or employee.employment_status != "ACTIVE":
+                raise serializers.ValidationError({
+                    "employee": "Only active employees can be assigned shifts."
+                })
 
-        # --- existing date-order check (kept for a friendly message) ---
+        if shift:
+            if shift.organization_id != organization.id:
+                raise serializers.ValidationError({
+                    "shift": "Shift does not belong to this organization."
+                })
+
+            if not shift.is_active:
+                raise serializers.ValidationError({
+                    "shift": "Cannot assign an inactive shift."
+                })
+
         if effective_from and effective_to and effective_to < effective_from:
             raise serializers.ValidationError({
                 "effective_to": "End date cannot be before start date."
             })
 
-        # --- NEW: prevent overlapping assignments for the same employee ---
+        # Prevent overlapping assignments for the same employee.
         if employee and effective_from:
-            overlapping = (
-                EmployeeShiftAssignment.objects.filter(
-                    organization=organization,
-                    employee=employee,
-                )
-                .exclude(pk=self.instance.pk if self.instance else None)
-                .filter(
-                    # existing.effective_from <= new.effective_to
-                    # (treat NULL effective_to on the NEW side as "forever")
-                    effective_from__lte=(
-                        effective_to
-                        if effective_to is not None
-                        else date.max
-                    ),
-                )
-                .filter(
-                    # existing.effective_to IS NULL
-                    # OR existing.effective_to >= new.effective_from
-                    Q(effective_to__isnull=True)
-                    | Q(effective_to__gte=effective_from)
-                )
-                .select_related("shift")
-                .order_by("effective_from")
+            overlapping = EmployeeShiftAssignment.objects.filter(
+                organization=organization,
+                employee=employee,
+                effective_from__lte=effective_to or date.max,
+            ).filter(
+                Q(effective_to__isnull=True)
+                | Q(effective_to__gte=effective_from)
             )
 
-            conflict = overlapping.first()
+            # Important: only exclude an existing row when updating.
+            # Do not use exclude(pk=None) on create.
+            if self.instance:
+                overlapping = overlapping.exclude(pk=self.instance.pk)
 
-            if conflict is not None:
-                if conflict.effective_to is None:
-                    message = (
-                        f"Employee already has an ongoing assignment to "
-                        f"'{conflict.shift.name}' since "
-                        f"{conflict.effective_from.isoformat()}. "
-                        f"Set an end date on that assignment before "
-                        f"creating a new one."
-                    )
-                else:
-                    message = (
-                        f"Employee already has an assignment to "
-                        f"'{conflict.shift.name}' overlapping this period "
-                        f"({conflict.effective_from.isoformat()} – "
-                        f"{conflict.effective_to.isoformat()}). "
-                        f"Shift date ranges must not overlap."
-                    )
+            conflict = overlapping.select_related("shift").first()
 
-                raise serializers.ValidationError({"employee": message})
+            if conflict:
+                raise serializers.ValidationError({
+                    "employee": (
+                        f"Employee already has a shift assignment for "
+                        f"'{conflict.shift.name}' from "
+                        f"{conflict.effective_from} to "
+                        f"{conflict.effective_to or 'open-ended'}. "
+                        "Assignment date ranges cannot overlap."
+                    )
+                })
 
         return attrs
 
