@@ -522,7 +522,13 @@
                 <!-- HEADER -->
                 <tr>
                     <td class="header-td">
-                        <img src="cid:company_logo" alt="Quivonex Solutions" class="logo-img" />
+                        {% if logo_available %}
+                            <img src="cid:company_logo" alt="{{ company_name }}" class="logo-img" />
+                        {% else %}
+                            <div style="font-size:20px;font-weight:700;color:#ffffff;line-height:28px;">
+                                {{ company_name }}
+                            </div>
+                        {% endif %}
                     </td>
                 </tr>
 

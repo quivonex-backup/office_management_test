@@ -940,6 +940,7 @@ class ProjectPaymentsByProjectAPIView(APIView):
 # =========================================================
 # SEND PROJECT PAYMENT REMINDER EMAIL
 # =========================================================
+
 class ProjectPaymentReminderAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -959,7 +960,6 @@ class ProjectPaymentReminderAPIView(APIView):
         project_ids = data["project_ids"]
         include_transaction_history = data.get("include_transaction_history", False)
 
-        # Fetch projects accessible to the user
         projects = (
             Project.objects
             .filter(
@@ -967,11 +967,10 @@ class ProjectPaymentReminderAPIView(APIView):
                 organization=organization,
                 is_active=True,
             )
-            .select_related("client")
+            .select_related("client", "organization")
             .order_by("-created_at")
         )
 
-        # Check for unauthorized projects
         accessible_ids = set(projects.values_list("id", flat=True))
         unauthorized = set(project_ids) - accessible_ids
         if unauthorized:
@@ -992,7 +991,6 @@ class ProjectPaymentReminderAPIView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        # Send emails
         try:
             result = send_project_payment_reminder_emails(
                 projects=projects,
@@ -1004,7 +1002,6 @@ class ProjectPaymentReminderAPIView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-        # Handle total failure
         if result["total_emails_sent"] == 0 and result["total_clients"] > 0:
             return Response(
                 {
@@ -1020,8 +1017,11 @@ class ProjectPaymentReminderAPIView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-        # Build response
-        message = "Payment reminder emails processed with some failures." if result["failed_clients"] else "Payment reminder emails sent successfully."
+        message = (
+            "Payment reminder emails processed with some failures."
+            if result["failed_clients"]
+            else "Payment reminder emails sent successfully."
+        )
 
         return Response(
             {
@@ -1040,6 +1040,8 @@ class ProjectPaymentReminderAPIView(APIView):
                     },
                     "successful_clients": [
                         {
+                            "organization_id": item.get("organization_id"),
+                            "organization_name": item.get("organization_name"),
                             "client_id": item["client_id"],
                             "client_name": item["client_name"],
                             "email": item["email"],
@@ -1074,10 +1076,7 @@ class ProjectInvoicePDFAPIView(APIView):
 
         if project_id is None:
             return Response(
-                {
-                    "status": False,
-                    "message": "The 'project_id' field is required.",
-                },
+                {"status": False, "message": "The 'project_id' field is required."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -1085,10 +1084,7 @@ class ProjectInvoicePDFAPIView(APIView):
             project_id = int(project_id)
         except (ValueError, TypeError):
             return Response(
-                {
-                    "status": False,
-                    "message": "project_id must be a valid integer.",
-                },
+                {"status": False, "message": "project_id must be a valid integer."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -1099,7 +1095,7 @@ class ProjectInvoicePDFAPIView(APIView):
                 organization=organization,
                 is_active=True,
             )
-            .select_related("client")
+            .select_related("client", "organization")
             .first()
         )
 
@@ -1124,11 +1120,6 @@ class ProjectInvoicePDFAPIView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-        response = HttpResponse(
-            pdf_file,
-            content_type="application/pdf",
-        )
-
+        response = HttpResponse(pdf_file, content_type="application/pdf")
         response["Content-Disposition"] = f'attachment; filename="{invoice_number}.pdf"'
-
         return response

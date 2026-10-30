@@ -404,7 +404,7 @@
     <tr>
         <td class="header-left">
             {% if logo_data %}
-                <img src="data:image/png;base64,{{ logo_data }}" alt="Logo" class="logo">
+                <img src="data:{{ logo_mime }};base64,{{ logo_data }}" alt="Logo" class="logo">
             {% else %}
                 <div class="company-name">{{ company_name }}</div>
             {% endif %}

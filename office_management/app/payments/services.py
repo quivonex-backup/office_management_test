@@ -1,15 +1,21 @@
+# app/payments/services.py
 from decimal import Decimal
 from pathlib import Path
 import base64
+from email.mime.image import MIMEImage
 
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 from django.utils import timezone
 from django.db.models import Sum
-from email.mime.image import MIMEImage
 
 from weasyprint import HTML
+
+from common.branding import (
+    get_organization_branding,
+    load_organization_logo,
+)
 
 from .models import ProjectPayment, ProjectPaymentTransaction
 
@@ -19,18 +25,27 @@ from .models import ProjectPayment, ProjectPaymentTransaction
 # =========================================================
 def send_project_payment_reminder_emails(projects, include_transaction_history=False):
     """
-    Send payment reminder emails grouped by client.
-    Returns summary dict with totals and per-client results.
+    Send payment reminder emails grouped by (organization, client).
+    Each organization brands its own email + logo.
     """
     today = timezone.localdate()
 
-    # Group projects by client
-    clients_projects = {}
+    # Group projects by (organization_id, client_id)
+    groups = {}
     for project in projects:
-        client = project.client
-        if client.id not in clients_projects:
-            clients_projects[client.id] = {"client": client, "projects": []}
-        clients_projects[client.id]["projects"].append(project)
+        organization = project.organization
+        if organization is None:
+            # Skip projects without an organization — can't brand them.
+            continue
+
+        key = (organization.id, project.client_id)
+        if key not in groups:
+            groups[key] = {
+                "organization": organization,
+                "client": project.client,
+                "projects": [],
+            }
+        groups[key]["projects"].append(project)
 
     # Overall tracking
     total_clients = 0
@@ -43,14 +58,19 @@ def send_project_payment_reminder_emails(projects, include_transaction_history=F
     overall_total_outstanding = Decimal("0.00")
     overall_total_overdue = Decimal("0.00")
 
-    # Process each client
-    for client_data in clients_projects.values():
-        client = client_data["client"]
-        client_projects = client_data["projects"]
+    # Process each (organization, client) group
+    for group in groups.values():
+        organization = group["organization"]
+        client = group["client"]
+        client_projects = group["projects"]
         total_clients += 1
+
+        branding = get_organization_branding(organization)
 
         if not client.email:
             failed_clients.append({
+                "organization_id": organization.id,
+                "organization_name": organization.organization_name,
                 "client_id": client.id,
                 "client_name": client.client_name,
                 "email": None,
@@ -86,7 +106,6 @@ def send_project_payment_reminder_emails(projects, include_transaction_history=F
                 paid_amount = payment.paid_amount or Decimal("0.00")
                 outstanding_amount = max(amount - paid_amount, Decimal("0.00"))
 
-                # Payment title
                 if payment.title:
                     payment_title = payment.title
                 elif payment.payment_type == "ADVANCE":
@@ -94,7 +113,6 @@ def send_project_payment_reminder_emails(projects, include_transaction_history=F
                 else:
                     payment_title = "Installment {}".format(payment.installment_number)
 
-                # Display status
                 if outstanding_amount <= Decimal("0.00"):
                     display_status = "Paid"
                 elif payment.due_date and payment.due_date < today:
@@ -110,7 +128,6 @@ def send_project_payment_reminder_emails(projects, include_transaction_history=F
                     else Decimal("0.00")
                 )
 
-                # Transaction history
                 transaction_rows = []
                 if include_transaction_history:
                     transactions = (
@@ -121,13 +138,11 @@ def send_project_payment_reminder_emails(projects, include_transaction_history=F
                     for txn in transactions:
                         if txn.payment_method == "CASH":
                             ref = txn.reference_number or "-"
-                        elif txn.payment_method == "UPI":
-                            ref = txn.utr_number or "-"
-                        elif txn.payment_method == "BANK_TRANSFER":
+                        elif txn.payment_method in ("UPI", "BANK_TRANSFER"):
                             ref = txn.utr_number or "-"
                         elif txn.payment_method == "CHEQUE":
                             ref = txn.cheque_number or "-"
-                        elif txn.payment_method in ["CARD", "ONLINE"]:
+                        elif txn.payment_method in ("CARD", "ONLINE"):
                             ref = txn.gateway_transaction_id or "-"
                         elif txn.payment_method == "OTHER":
                             ref = txn.reference_number or "-"
@@ -186,6 +201,8 @@ def send_project_payment_reminder_emails(projects, include_transaction_history=F
 
         if not project_data:
             failed_clients.append({
+                "organization_id": organization.id,
+                "organization_name": organization.organization_name,
                 "client_id": client.id,
                 "client_name": client.client_name,
                 "email": client.email,
@@ -194,7 +211,9 @@ def send_project_payment_reminder_emails(projects, include_transaction_history=F
             })
             continue
 
-        # Build email
+        # Load org logo for CID attachment
+        logo_bytes, logo_filename, logo_mime = load_organization_logo(organization)
+
         context = {
             "client": client,
             "projects": project_data,
@@ -208,14 +227,18 @@ def send_project_payment_reminder_emails(projects, include_transaction_history=F
             },
             "include_transaction_history": include_transaction_history,
             "today": today,
-            "company_name": getattr(settings, "COMPANY_NAME", "Quivonex Solutions"),
-            "company_email": settings.DEFAULT_FROM_EMAIL,
-            "company_phone": getattr(settings, "COMPANY_PHONE", ""),
+            "company_name": branding["company_name"],
+            "company_email": branding["company_email"],
+            "company_phone": branding["company_phone"],
+            "company_address": branding["company_address"],
+            "company_gst": branding["company_gst"],
+            "company_website": branding["company_website"],
+            "logo_available": bool(logo_bytes),
         }
 
         html_content = render_to_string("project_payment_reminder.html", context)
 
-        greeting = client.client_name or client.company_name or "Client"
+        greeting = client.client_name or getattr(client, "company_name", None) or "Client"
         text_content = """
 Dear {greeting},
 
@@ -240,11 +263,11 @@ Regards,
             total_paid=client_total_paid,
             total_outstanding=client_total_outstanding,
             total_overdue=client_total_overdue,
-            company_name=context["company_name"],
+            company_name=branding["company_name"],
         )
 
         subject = (
-            "Payment Reminder - {}".format(project_data[0]['project_name'])
+            "Payment Reminder - {}".format(project_data[0]["project_name"])
             if len(project_data) == 1
             else "Payment Reminder - Pending Project Payments"
         )
@@ -257,20 +280,26 @@ Regards,
         )
         email.attach_alternative(html_content, "text/html")
 
-        # Attach company logo as inline CID using MIMEImage
-        logo_path = Path(settings.MEDIA_ROOT) / "assets" / "quivonex_solutions.png"
-        if logo_path.exists():
-            with open(logo_path, "rb") as logo_file:
-                logo_data = logo_file.read()
-            logo = MIMEImage(logo_data, _subtype="png")
+        # Attach org logo inline (CID) if present
+        if logo_bytes:
+            subtype = logo_mime.split("/", 1)[-1] if logo_mime else "png"
+            if subtype == "jpg":
+                subtype = "jpeg"
+            logo = MIMEImage(logo_bytes, _subtype=subtype)
             logo.add_header("Content-ID", "<company_logo>")
-            logo.add_header("Content-Disposition", "inline", filename="quivonex_solutions.png")
+            logo.add_header(
+                "Content-Disposition",
+                "inline",
+                filename=logo_filename or "logo.png",
+            )
             email.attach(logo)
 
         try:
             email.send(fail_silently=False)
             total_emails_sent += 1
             successful_clients.append({
+                "organization_id": organization.id,
+                "organization_name": organization.organization_name,
                 "client_id": client.id,
                 "client_name": client.client_name,
                 "email": client.email,
@@ -288,6 +317,8 @@ Regards,
             overall_total_overdue += client_total_overdue
         except Exception as exc:
             failed_clients.append({
+                "organization_id": organization.id,
+                "organization_name": organization.organization_name,
                 "client_id": client.id,
                 "client_name": client.client_name,
                 "email": client.email,
@@ -314,12 +345,13 @@ Regards,
 # =========================================================
 def generate_project_invoice_pdf(project):
     """
-    Generate a PDF invoice for a project (any status: Pending, Partially Paid, Paid, Overdue).
-    Invoice number derived from project_code: PR-260823-73914 -> INV-260823-73914.
+    Generate a PDF invoice for a project, branded with the project's organization.
     Returns (pdf_file, invoice_number).
     """
     client = project.client
-    # invoice_number = project.project_code.replace("PR-", "INV-", 1)
+    organization = project.organization
+    branding = get_organization_branding(organization)
+
     invoice_number = project.project_code.replace("PR-", "PR-", 1)
     invoice_date = timezone.localdate()
 
@@ -347,7 +379,6 @@ def generate_project_invoice_pdf(project):
     project_total = project.total_cost or Decimal("0.00")
     outstanding_amount = max(project_total - total_paid, Decimal("0.00"))
 
-    # Payment status
     if project_total > Decimal("0.00") and total_paid >= project_total:
         payment_status = "PAID"
     elif total_paid > Decimal("0.00"):
@@ -357,18 +388,10 @@ def generate_project_invoice_pdf(project):
 
     payment_notes = "\n".join([p.notes for p in payments if p.notes])
 
-    # Load company logo as base64
-    logo_path = Path(settings.MEDIA_ROOT) / "assets" / "quivonex_solutions.png"
-    logo_data = None
-    if logo_path.exists():
-        with open(logo_path, "rb") as f:
-            logo_data = base64.b64encode(f.read()).decode("utf-8")
-
-    company_name = getattr(settings, "COMPANY_NAME", "Quivonex Solutions")
-    company_address = getattr(settings, "COMPANY_ADDRESS", "")
-    company_email = getattr(settings, "COMPANY_EMAIL", settings.DEFAULT_FROM_EMAIL)
-    company_phone = getattr(settings, "COMPANY_PHONE", "")
-    company_gst = getattr(settings, "COMPANY_GST", "")
+    # Organization logo as base64 + mime
+    logo_data, logo_filename, logo_mime = load_organization_logo(
+        organization, as_base64=True
+    )
 
     context = {
         "project": project,
@@ -383,11 +406,13 @@ def generate_project_invoice_pdf(project):
         "invoice_date": invoice_date,
         "payment_notes": payment_notes,
         "logo_data": logo_data,
-        "company_name": company_name,
-        "company_address": company_address,
-        "company_email": company_email,
-        "company_phone": company_phone,
-        "company_gst": company_gst,
+        "logo_mime": logo_mime or "image/png",
+        "company_name": branding["company_name"],
+        "company_address": branding["company_address"],
+        "company_email": branding["company_email"],
+        "company_phone": branding["company_phone"],
+        "company_gst": branding["company_gst"],
+        "company_website": branding["company_website"],
         "generated_at": timezone.localtime().strftime("%d-%m-%Y %I:%M %p"),
     }
 
