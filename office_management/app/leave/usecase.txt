@@ -1,0 +1,527 @@
+Base URL: /leave/
+
+All endpoints use POST.
+API endpoint	                            Purpose	                                        Intended user
+/leave/types/list/	                        List active leave types	                        Admin and Employee
+/leave/types/create/	                    Create a leave type	                            Admin
+/leave/types/update/	                    Update leave type details	                    Admin
+/leave/types/deactivate/	                Deactivate a leave type	                        Admin
+/leave/balances/my/	                        View own leave balances	                        Employee
+/leave/balances/list/	                    View organization employee leave balances	    Admin
+/leave/balances/initialize/	                Initialize yearly balances for employees	    Admin
+/leave/balances/adjust/	                    Manually adjust an employee's leave allocation	Admin
+/leave/applications/create/	                Apply for leave	                                Employee
+/leave/applications/my/	                    View own leave applications	                    Employee
+/leave/applications/list/	                View organization leave applications	        Admin
+/leave/applications/review/	                Approve or reject an application	            Admin
+/leave/applications/cancel/my/	            Cancel own application	                        Employee
+/leave/applications/cancel/organization/	Cancel an employee's application	            Admin
+/leave/transactions/list/	                View leave balance transaction history	        Admin
+
+
+
+1. Leave types
+
+    1.1 List leave types
+        Admin + Employee
+        POST /leave/types/list/
+
+        Request:
+        {}
+
+        Response:
+        {
+          "status": true,
+          "message": "Leave types fetched successfully.",
+          "data": [
+            {
+              "id": 1,
+              "name": "Casual Leave",
+              "code": "CL",
+              "description": "Personal leave",
+              "annual_allocation": "12.00",
+              "is_paid": true,
+              "is_active": true,
+              "created_at": "2026-01-01T10:00:00Z",
+              "updated_at": "2026-01-01T10:00:00Z"
+            },
+            {
+              "id": 2,
+              "name": "Sick Leave",
+              "code": "SL",
+              "description": "Medical leave",
+              "annual_allocation": "10.00",
+              "is_paid": true,
+              "is_active": true,
+              "created_at": "2026-01-01T10:00:00Z",
+              "updated_at": "2026-01-01T10:00:00Z"
+            }
+          ]
+        }
+
+    1.2 Create leave type
+        Admin
+        POST /leave/types/create/
+
+        Request:
+        {
+          "name": "Casual Leave",
+          "code": "CL",
+          "description": "Personal leave",
+          "annual_allocation": "12.00",
+          "is_paid": true
+        }
+
+        Response:
+        {
+          "status": true,
+          "message": "Leave type created successfully.",
+          "data": {
+            "id": 1,
+            "name": "Casual Leave",
+            "code": "CL",
+            "description": "Personal leave",
+            "annual_allocation": "12.00",
+            "is_paid": true,
+            "is_active": true,
+            "created_at": "2026-01-01T10:00:00Z",
+            "updated_at": "2026-01-01T10:00:00Z"
+          }
+        }
+
+    1.3 Update leave type
+        Admin
+        POST /leave/types/update/
+
+        Request:
+        {
+          "leave_type_id": 1,
+          "name": "Casual Leave",
+          "code": "CL",
+          "description": "Personal and emergency leave",
+          "annual_allocation": "15.00",
+          "is_paid": true
+        }
+
+        Response:
+        {
+          "status": true,
+          "message": "Leave type updated successfully.",
+          "data": {
+            "id": 1,
+            "name": "Casual Leave",
+            "code": "CL",
+            "description": "Personal and emergency leave",
+            "annual_allocation": "15.00",
+            "is_paid": true,
+            "is_active": true,
+            "created_at": "2026-01-01T10:00:00Z",
+            "updated_at": "2026-01-02T10:00:00Z"
+          }
+        }
+
+    1.4 Deactivate leave type
+        Admin
+        POST /leave/types/deactivate/
+
+        Request:
+        {
+          "leave_type_id": 1
+        }
+
+        Response:
+        {
+          "status": true,
+          "message": "Leave type deactivated successfully."
+        }
+
+2. Leave balances
+
+    2.1 My leave balances
+        Employee
+        POST /leave/balances/my/
+
+        Request:
+        {
+          "leave_year": 2026,
+          "leave_type_id": 1
+        }
+
+        Both filters are optional. To fetch all own balances, send {}.
+
+        Response:
+        {
+          "status": true,
+          "message": "Your leave balances fetched successfully.",
+          "data": [
+            {
+              "id": 10,
+              "employee": 15,
+              "employee_code": "EMP001",
+              "employee_name": "Rahul Patil",
+              "leave_type": 1,
+              "leave_type_name": "Casual Leave",
+              "leave_year": 2026,
+              "opening_balance": "0.00",
+              "allocated_days": "12.00",
+              "used_days": "2.00",
+              "pending_days": "1.00",
+              "available_days": "9.00",
+              "created_at": "2026-01-01T10:00:00Z",
+              "updated_at": "2026-01-02T10:00:00Z"
+            }
+          ]
+        }
+
+    2.2 Organization leave balances
+        Admin
+        POST /leave/balances/list/
+
+        Request:
+        {
+          "employee_id": 15,
+          "leave_type_id": 1,
+          "leave_year": 2026
+        }
+
+        All filters are optional. Send {} for all organization balances.
+
+        Response:
+        {
+          "status": true,
+          "message": "Organization leave balances fetched successfully.",
+          "data": [
+            {
+              "id": 10,
+              "employee": 15,
+              "employee_code": "EMP001",
+              "employee_name": "Rahul Patil",
+              "leave_type": 1,
+              "leave_type_name": "Casual Leave",
+              "leave_year": 2026,
+              "opening_balance": "0.00",
+              "allocated_days": "12.00",
+              "used_days": "2.00",
+              "pending_days": "1.00",
+              "available_days": "9.00",
+              "created_at": "2026-01-01T10:00:00Z",
+              "updated_at": "2026-01-02T10:00:00Z"
+            }
+          ]
+        }
+
+    2.3 Initialize leave balances
+        Admin
+        POST /leave/balances/initialize/
+
+        Request:
+        {
+          "leave_year": 2026,
+          "leave_type_ids": [1, 2]
+        }
+
+        leave_type_ids is optional. If omitted, all active leave types are initialized for all active employees.
+
+        Response:
+        {
+          "status": true,
+          "message": "Leave balances initialized successfully.",
+          "data": {
+            "created": 20,
+            "existing": 5
+          }
+        }
+
+    2.4 Adjust leave balance
+        Admin
+        POST /leave/balances/adjust/
+
+        Request:
+        {
+          "balance_id": 10,
+          "days": 2,
+          "remarks": "Additional leave allocation"
+        }
+
+        Use positive days to increase allocation and negative days to decrease it.
+
+        Response:
+        {
+          "status": true,
+          "message": "Leave balance adjusted successfully.",
+          "data": {
+            "id": 10,
+            "employee": 15,
+            "employee_code": "EMP001",
+            "employee_name": "Rahul Patil",
+            "leave_type": 1,
+            "leave_type_name": "Casual Leave",
+            "leave_year": 2026,
+            "opening_balance": "0.00",
+            "allocated_days": "14.00",
+            "used_days": "2.00",
+            "pending_days": "1.00",
+            "available_days": "11.00",
+            "created_at": "2026-01-01T10:00:00Z",
+            "updated_at": "2026-01-03T10:00:00Z"
+          }
+        }
+
+3. Leave applications
+
+    3.1 Create leave application
+        Employee
+        POST /leave/applications/create/
+
+        Request:
+        {
+          "leave_type_id": 1,
+          "start_date": "2026-11-05",
+          "end_date": "2026-11-06",
+          "reason": "Personal work"
+        }
+
+        The backend calculates total_days using calendar and shift rules.
+
+        Response:
+        {
+          "status": true,
+          "message": "Leave application submitted successfully.",
+          "data": {
+            "id": 101,
+            "employee": 15,
+            "employee_code": "EMP001",
+            "employee_name": "Rahul Patil",
+            "leave_type": 1,
+            "leave_type_name": "Casual Leave",
+            "start_date": "2026-11-05",
+            "end_date": "2026-11-06",
+            "total_days": "2.00",
+            "reason": "Personal work",
+            "status": "PENDING",
+            "reviewed_by": null,
+            "reviewed_by_name": null,
+            "reviewed_at": null,
+            "review_remarks": "",
+            "created_at": "2026-10-30T10:00:00Z",
+            "updated_at": "2026-10-30T10:00:00Z"
+          }
+        }
+
+    3.2 My leave applications
+        Employee
+        POST /leave/applications/my/
+
+        Request:
+        {
+          "status": "PENDING"
+        }
+
+        Status filter is optional. Allowed values: PENDING, APPROVED, REJECTED, CANCELLED.
+
+        Response:
+        {
+          "status": true,
+          "message": "Your leave applications fetched successfully.",
+          "data": [
+            {
+              "id": 101,
+              "employee": 15,
+              "employee_code": "EMP001",
+              "employee_name": "Rahul Patil",
+              "leave_type": 1,
+              "leave_type_name": "Casual Leave",
+              "start_date": "2026-11-05",
+              "end_date": "2026-11-06",
+              "total_days": "2.00",
+              "reason": "Personal work",
+              "status": "PENDING",
+              "reviewed_by": null,
+              "reviewed_by_name": null,
+              "reviewed_at": null,
+              "review_remarks": "",
+              "created_at": "2026-10-30T10:00:00Z",
+              "updated_at": "2026-10-30T10:00:00Z"
+            }
+          ]
+        }
+
+    3.3 Organization leave applications
+        Admin
+        POST /leave/applications/list/
+
+        Request:
+        {
+          "status": "PENDING",
+          "employee_id": 15,
+          "leave_type_id": 1,
+          "from_date": "2026-11-01",
+          "to_date": "2026-11-30"
+        }
+
+        All filters are optional.
+
+        Response:
+        {
+          "status": true,
+          "message": "Leave applications fetched successfully.",
+          "data": [
+            {
+              "id": 101,
+              "employee": 15,
+              "employee_code": "EMP001",
+              "employee_name": "Rahul Patil",
+              "leave_type": 1,
+              "leave_type_name": "Casual Leave",
+              "start_date": "2026-11-05",
+              "end_date": "2026-11-06",
+              "total_days": "2.00",
+              "reason": "Personal work",
+              "status": "PENDING",
+              "reviewed_by": null,
+              "reviewed_by_name": null,
+              "reviewed_at": null,
+              "review_remarks": "",
+              "created_at": "2026-10-30T10:00:00Z",
+              "updated_at": "2026-10-30T10:00:00Z"
+            }
+          ]
+        }
+
+    3.4 Review leave application
+        Admin
+        POST /leave/applications/review/
+
+        Request — approve:
+        {
+          "application_id": 101,
+          "decision": "APPROVED",
+          "review_remarks": "Approved"
+        }
+
+        Request — reject:
+        {
+          "application_id": 101,
+          "decision": "REJECTED",
+          "review_remarks": "Insufficient supporting information"
+        }
+
+        Response — approved:
+        {
+          "status": true,
+          "message": "Leave application approved successfully.",
+          "data": {
+            "id": 101,
+            "employee": 15,
+            "employee_code": "EMP001",
+            "employee_name": "Rahul Patil",
+            "leave_type": 1,
+            "leave_type_name": "Casual Leave",
+            "start_date": "2026-11-05",
+            "end_date": "2026-11-06",
+            "total_days": "2.00",
+            "reason": "Personal work",
+            "status": "APPROVED",
+            "reviewed_by": 5,
+            "reviewed_by_name": "Admin User",
+            "reviewed_at": "2026-10-30T11:00:00Z",
+            "review_remarks": "Approved",
+            "created_at": "2026-10-30T10:00:00Z",
+            "updated_at": "2026-10-30T11:00:00Z"
+          }
+        }
+
+        For rejection, the same response structure is returned with status: "REJECTED" and the rejection remarks.
+
+    3.5 Employee cancel own application
+        Employee
+        POST /leave/applications/cancel/my/
+
+        Request:
+        {
+          "application_id": 101
+        }
+
+        Response:
+        {
+          "status": true,
+          "message": "Leave application cancelled successfully.",
+          "data": {
+            "id": 101,
+            "employee": 15,
+            "employee_code": "EMP001",
+            "employee_name": "Rahul Patil",
+            "leave_type": 1,
+            "leave_type_name": "Casual Leave",
+            "start_date": "2026-11-05",
+            "end_date": "2026-11-06",
+            "total_days": "2.00",
+            "reason": "Personal work",
+            "status": "CANCELLED",
+            "reviewed_by": null,
+            "reviewed_by_name": null,
+            "reviewed_at": null,
+            "review_remarks": "",
+            "created_at": "2026-10-30T10:00:00Z",
+            "updated_at": "2026-10-30T12:00:00Z"
+          }
+        }
+
+    3.6 Organization cancel application
+        Admin
+        POST /leave/applications/cancel/organization/
+
+        Request:
+        {
+          "application_id": 101
+        }
+
+        Response: Same complete application response as employee cancellation, with status: "CANCELLED".
+        This supports:
+        - Cancelling a pending application: releases pending balance.
+        - Cancelling an approved application: restores used balance and resets its ON_LEAVE attendance records to INCOMPLETE.
+
+    4. Leave transactions
+        4.1 Organization leave transactions
+        Admin
+        POST /leave/transactions/list/
+
+        Request:
+        {
+          "employee_id": 15,
+          "leave_type_id": 1,
+          "transaction_type": "PENDING_RESERVE"
+        }
+
+        All filters are optional.
+
+        Allowed transaction types:
+        - ALLOCATION
+        - PENDING_RESERVE
+        - APPROVAL
+        - REJECTION
+        - CANCELLATION
+        - ADJUSTMENT
+
+        Response:
+        {
+          "status": true,
+          "message": "Leave balance transactions fetched successfully.",
+          "data": [
+            {
+              "id": 501,
+              "employee": 15,
+              "employee_code": "EMP001",
+              "employee_name": "Rahul Patil",
+              "leave_type": 1,
+              "leave_type_name": "Casual Leave",
+              "leave_balance": 10,
+              "leave_application": 101,
+              "transaction_type": "PENDING_RESERVE",
+              "days": "2.00",
+              "remarks": "Leave application submitted.",
+              "created_by": 15,
+              "created_at": "2026-10-30T10:00:00Z"
+            }
+          ]
+        }

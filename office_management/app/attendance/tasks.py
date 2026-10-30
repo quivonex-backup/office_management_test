@@ -40,6 +40,7 @@
 #     - Skip holidays and weekly offs.
 #     - Respect the configured absence cutoff.
 #     - Never overwrite an existing check-in or another attendance status.
+#     - Approved leave is already marked ON_LEAVE by the Leave service.
 #     - Delegate attendance creation and absence marking to the service.
 #     """
 
@@ -123,9 +124,11 @@
 #                 if existing_attendance.check_in:
 #                     continue
 
-#                 # Do not overwrite ABSENT, ON_LEAVE, HOLIDAY,
-#                 # WEEKLY_OFF, PENDING_REVIEW, or other statuses.
+#                 # This also skips approved leave because its status is ON_LEAVE.
+#                 # Do not overwrite ABSENT, ON_LEAVE, HOLIDAY, WEEKLY_OFF,
+#                 # PENDING_REVIEW, or any other existing status.
 #                 if existing_attendance.status != "INCOMPLETE":
+#                     employees_skipped += 1
 #                     continue
 
 #             # The service is responsible for creating or updating the record.

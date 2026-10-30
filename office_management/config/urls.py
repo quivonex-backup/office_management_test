@@ -31,4 +31,5 @@ urlpatterns = [
     path('social_media/',include('app.social_media.urls')),
     path('attendance/', include("app.attendance.urls")),
     path('calendar/', include("app.calendar_app.urls")),
+    path('leave/', include("app.leave.urls")),
 ]
