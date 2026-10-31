@@ -41,7 +41,8 @@ INSTALLED_APPS = [
     'app.social_media',
     'app.attendance',
     'app.calendar_app',
-    'app.leave'
+    'app.leave',
+    'app.payroll'
 ]
 
 # Middleware

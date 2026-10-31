@@ -146,8 +146,8 @@ Check container status	                docker compose ps
 
 
 
->> mkdir app/chatbot 
->> python manage.py startapp chatbot app/chatbot  
+>> mkdir app\payroll 
+>> python manage.py startapp payroll app\payroll  
 
 
 wsl

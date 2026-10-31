@@ -58,6 +58,20 @@ class Employee(models.Model):
     # ---- Profile Photo ----
     profile_photo = models.FileField(upload_to="employees/profile/", blank=True, null=True)
 
+    # ---- Payroll/Statutory (used by payroll app) ----
+    pf_uan = models.CharField(max_length=12, blank=True, null=True)
+    esi_ip_number = models.CharField(max_length=17, blank=True, null=True)
+    pan_number = models.CharField(max_length=10, blank=True, null=True)
+
+    work_state = models.ForeignKey("location_master.StateMaster", on_delete=models.SET_NULL, null=True, blank=True, related_name="employees_working_here")
+
+    tax_regime = models.CharField(max_length=10, choices=[("OLD", "Old Regime"), ("NEW", "New Regime")], default="NEW", blank=True, null=True)
+
+    bank_account_number = models.CharField(max_length=30, blank=True, null=True)
+    bank_ifsc = models.CharField(max_length=11, blank=True, null=True)
+    bank_name = models.CharField(max_length=100, blank=True, null=True)
+    bank_branch = models.CharField(max_length=100, blank=True, null=True)
+
     # ---- User ----
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="employee_profile")
 

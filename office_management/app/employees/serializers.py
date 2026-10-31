@@ -56,6 +56,15 @@ class EmployeeCreateSerializer(serializers.ModelSerializer):
             "emergency_contact_name",
             "emergency_contact_number",
             "emergency_contact_relation",
+            "pf_uan",
+            "esi_ip_number",
+            "pan_number",
+            "work_state",
+            "tax_regime",
+            "bank_account_number",
+            "bank_ifsc",
+            "bank_name",
+            "bank_branch",
             "create_user",
         ]
 
@@ -69,6 +78,7 @@ class EmployeeCreateSerializer(serializers.ModelSerializer):
 # =========================================================
 class EmployeeListSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
+    work_state_name = serializers.CharField(source="work_state.state_name", read_only=True, allow_null=True)
     documents = EmployeeDocumentSerializer(many=True, read_only=True)
 
     class Meta:
@@ -99,6 +109,16 @@ class EmployeeListSerializer(serializers.ModelSerializer):
             'emergency_contact_number',
             'emergency_contact_relation',
             'profile_photo',
+            "pf_uan",
+            "esi_ip_number",
+            "pan_number",
+            "work_state",
+            "work_state_name",       # SerializerMethodField or CharField source
+            "tax_regime",
+            "bank_account_number",
+            "bank_ifsc",
+            "bank_name",
+            "bank_branch",
             'documents',
             'is_active',
             'created_at',
@@ -114,6 +134,7 @@ class EmployeeListSerializer(serializers.ModelSerializer):
 # =========================================================
 class EmployeeDetailSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
+    work_state_name = serializers.CharField(source="work_state.state_name", read_only=True, allow_null=True)
     documents = EmployeeDocumentSerializer(many=True, read_only=True)
 
     class Meta:
@@ -144,6 +165,16 @@ class EmployeeDetailSerializer(serializers.ModelSerializer):
             'emergency_contact_number',
             'emergency_contact_relation',
             'profile_photo',
+            "pf_uan",
+            "esi_ip_number",
+            "pan_number",
+            "work_state",
+            "work_state_name",       # SerializerMethodField or CharField source
+            "tax_regime",
+            "bank_account_number",
+            "bank_ifsc",
+            "bank_name",
+            "bank_branch",
             'documents',
             'is_active',
             'created_at',
@@ -183,6 +214,15 @@ class EmployeeUpdateSerializer(serializers.ModelSerializer):
             'emergency_contact_name',
             'emergency_contact_number',
             'emergency_contact_relation',
+            "pf_uan",
+            "esi_ip_number",
+            "pan_number",
+            "work_state",
+            "tax_regime",
+            "bank_account_number",
+            "bank_ifsc",
+            "bank_name",
+            "bank_branch",
         ]
         extra_kwargs = {
             'first_name': {'required': False},
