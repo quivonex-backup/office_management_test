@@ -817,6 +817,8 @@ Response 200:
         "net": "25400.00",
         "payment_status": "UNPAID",
         "paid_amount": "0.00",
+        "remaining": "25400.00",
+        "upi_link": "upi://pay?pa=rahul%40okhdfcbank&pn=Rahul%20Patil&am=25400.00&cu=INR&tn=March%202026%20salary",
         "generation_status": "GENERATED",
         "generation_notes": "",
         "requires_review": false,
@@ -841,6 +843,16 @@ Response 200:
     ]
   }
 }
+
+NOTE:
+  - "remaining" = net - paid_amount, always present as a string.
+  - "upi_link" = pre-filled UPI deep link for this employee, or null when:
+      * employee.upi_id is not set, OR
+      * record is fully paid (remaining <= 0)
+  - When remaining > 0 and employee has a UPI ID, upi_link is present and
+    reflects the REMAINING amount (not net). Frontend should encode this as
+    a QR code or pass it to the device UPI app.
+  - After payment is recorded, upi_link becomes null automatically.
 
 --------------------------------------------------------------------------------
 7.5  POST /payroll/runs/generate/
@@ -946,11 +958,47 @@ Request (all optional):
   "generation_status": "GENERATED"     // GENERATED | SKIPPED | ERROR
 }
 Response 200:
+Response 200:
 {
   "status": true,
   "message": "Payroll records fetched.",
-  "data": [ ...full record objects with nested line_items and payments... ]
+  "data": [
+    {
+      "id": 101,
+      "payroll_run": 8,
+      "organization": 5,
+      "employee": 25,
+      "employee_code": "EMP-000025",
+      "employee_name": "Rahul Patil",
+      "period_start": "2026-03-01",
+      "period_end": "2026-03-31",
+      "payroll_month": "March 2026",
+      "present_days": "22.00",
+      ...
+      "net": "25400.00",
+      "payment_status": "UNPAID",
+      "paid_amount": "0.00",
+      "remaining": "25400.00",
+      "upi_link": "upi://pay?pa=rahul%40okhdfcbank&pn=Rahul%20Patil&am=25400.00&cu=INR&tn=March%202026%20salary",
+      "generation_status": "GENERATED",
+      ...
+      "line_items": [ ... ],
+      "payments": [],
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  ]
 }
+
+NOTE:
+  - "remaining" = net - paid_amount, always present as a string.
+  - "upi_link" = pre-filled UPI deep link for this employee, or null when:
+      * employee.upi_id is not set, OR
+      * record is fully paid (remaining <= 0)
+  - When remaining > 0 and employee has a UPI ID, upi_link is present and
+    reflects the REMAINING amount (not net). Frontend should encode this as
+    a QR code or pass it to the device UPI app.
+  - After payment is recorded, upi_link becomes null automatically.
 
 --------------------------------------------------------------------------------
 8.2  POST /payroll/records/update-deductions/
@@ -1034,6 +1082,8 @@ Response 200:
     "net": "22400.00",
     "payment_status": "UNPAID",
     "paid_amount": "0.00",
+    "remaining": "22400.00",
+    "upi_link": "upi://pay?...am=22400.00&...",
     "generation_status": "GENERATED",
     "generation_notes": "",
     "requires_review": false,
@@ -1272,6 +1322,8 @@ Response 200:
       "net": "25400.00",
       "payment_status": "PAID",
       "paid_amount": "25400.00",
+      "remaining": "0.00",
+      "upi_link": null,
       "generation_status": "GENERATED",
       "generation_notes": "",
       "requires_review": false,
@@ -1300,6 +1352,12 @@ Response 200:
 }
 Response 404:
 { "status": false, "message": "Payslip not found." }
+
+NOTE:
+  The record object includes "remaining" and "upi_link" as documented
+  in section 8.1 NOTE. For a fully paid record: remaining="0.00",
+  upi_link=null. For a partially paid record: remaining shows the
+  outstanding balance and upi_link targets that amount.
 
 --------------------------------------------------------------------------------
 10.3  POST /payroll/my/salary/
@@ -1449,6 +1507,32 @@ KEY NOTES FOR FRONTEND TEAM
     All responses: { "status": true|false, "message": "...", "data": {...}? }
     Validation errors additionally include "errors": { "field": ["msg"] }
     The frontend should always check "status" before using "data".
+
+11. UPI PAYMENT HELPERS
+    Every payroll record in responses now includes:
+      - "remaining": string decimal, always present, = net - paid_amount
+      - "upi_link":  string or null, a pre-filled UPI deep link:
+                     upi://pay?pa=<employee_upi>&pn=<name>&am=<remaining>&cu=INR&tn=<Month Year salary>
+
+    Behavior:
+      - employee.upi_id not set           → upi_link = null
+      - payment_status == "PAID"          → upi_link = null
+      - payment_status == "UNPAID"        → upi_link targets full net
+      - payment_status == "PARTIALLY_PAID"→ upi_link targets remaining only
+
+    Frontend rule:
+      if (record.upi_link === null) hide the UPI / QR button
+      else render QR from record.upi_link and/or "Open UPI App" button
+
+    This is a CONVENIENCE only. No automated transfer. Admin still:
+      1. Opens UPI app from the link
+      2. Manually completes the transfer
+      3. Returns and calls POST /payroll/payments/record/ with the UTR
+         as "transaction_reference" and "payment_mode": "UPI"
+
+    For bulk salary runs (many employees), use /payroll/payments/bulk-record/
+    with a real bank batch reference — UPI link is for individual /
+    one-off / small-org payments.
 
 
 ================================================================================
