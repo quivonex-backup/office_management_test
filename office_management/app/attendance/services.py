@@ -1152,3 +1152,144 @@ def bulk_assign_shift_pattern(
             )
 
     return EmployeeShiftAssignment.objects.bulk_create(assignments)
+
+
+# =========================================================
+# BULK MARK ABSENT
+# Creates ABSENT AttendanceRecord rows for every eligible employee
+# who has no record on a working day in the given range.
+# =========================================================
+
+@transaction.atomic
+def bulk_mark_absent(
+    organization,
+    from_date,
+    to_date,
+    employee_ids=None,
+    marked_by=None,
+):
+    """
+    Create ABSENT records for every eligible employee who has no
+    AttendanceRecord on a working day in [from_date, to_date].
+
+    Rules:
+      - Only runs when AttendanceSettings.auto_mark_absent is True.
+      - Only active employees with employment_status in
+        (ACTIVE, ON_LEAVE) belonging to `organization`.
+      - Skips non-working days (HOLIDAY / WEEKLY_OFF / NO_SHIFT_ASSIGNED).
+      - Skips days where an AttendanceRecord already exists.
+      - Never overwrites an existing record.
+      - Date range capped at MAX_DAYS (safety net).
+    """
+    from app.calendar_app.services import get_calendar_day
+    from app.employees.models import Employee
+
+    MAX_DAYS = 62  # safety net — change to your required number
+
+    if from_date > to_date:
+        raise ValueError("from_date cannot be after to_date.")
+
+    if (to_date - from_date).days > MAX_DAYS:
+        raise ValueError(
+            f"Date range cannot exceed {MAX_DAYS} days."
+        )
+
+    attendance_settings = get_attendance_settings(organization)
+
+    if not attendance_settings.auto_mark_absent:
+        raise ValueError(
+            "Auto-mark-absent is disabled for this organization."
+        )
+
+    employees_qs = Employee.objects.filter(
+        organization=organization,
+        is_active=True,
+        employment_status__in=["ACTIVE", "ON_LEAVE"],
+    ).order_by("id")
+
+    if employee_ids:
+        employees_qs = employees_qs.filter(id__in=employee_ids)
+        employees = list(employees_qs)
+        matched_ids = {e.id for e in employees}
+        missing_ids = sorted(set(employee_ids) - matched_ids)
+        if missing_ids:
+            raise ValueError(
+                f"These employee IDs are not active or do not belong to "
+                f"this organization: {missing_ids}."
+            )
+    else:
+        employees = list(employees_qs)
+
+    if not employees:
+        return {
+            "created_count": 0,
+            "skipped_existing": 0,
+            "skipped_non_working": 0,
+            "employees_processed": 0,
+            "from_date": str(from_date),
+            "to_date": str(to_date),
+        }
+
+    employee_ids_set = [e.id for e in employees]
+
+    existing_pairs = set(
+        AttendanceRecord.objects.filter(
+            organization=organization,
+            employee_id__in=employee_ids_set,
+            work_date__range=(from_date, to_date),
+        ).values_list("employee_id", "work_date")
+    )
+
+    created_count = 0
+    skipped_existing = 0
+    skipped_non_working = 0
+
+    current_date = from_date
+    while current_date <= to_date:
+        for employee in employees:
+            if (employee.id, current_date) in existing_pairs:
+                skipped_existing += 1
+                continue
+
+            shift = get_employee_shift(employee, organization, current_date)
+
+            calendar_day = get_calendar_day(
+                organization=organization,
+                target_date=current_date,
+                shift=shift,
+            )
+
+            if not calendar_day.get("is_working_day"):
+                skipped_non_working += 1
+                continue
+
+            attendance = get_or_create_attendance(
+                employee, organization, current_date,
+            )
+
+            if attendance.check_in or attendance.status in {
+                "PRESENT", "HALF_DAY", "ON_LEAVE",
+            }:
+                skipped_existing += 1
+                continue
+
+            attendance.status = "ABSENT"
+            attendance.created_by = marked_by
+            attendance.updated_by = marked_by
+            attendance.save(
+                update_fields=[
+                    "status", "created_by", "updated_by", "updated_at",
+                ]
+            )
+            created_count += 1
+
+        current_date += timedelta(days=1)
+
+    return {
+        "created_count": created_count,
+        "skipped_existing": skipped_existing,
+        "skipped_non_working": skipped_non_working,
+        "employees_processed": len(employees),
+        "from_date": str(from_date),
+        "to_date": str(to_date),
+    }

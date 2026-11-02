@@ -5,7 +5,7 @@ from .views import (
     ShiftListAPIView, ShiftCreateAPIView, ShiftUpdateAPIView, ShiftDeactivateAPIView,
     EmployeeShiftAssignmentListAPIView, EmployeeShiftAssignmentCreateAPIView, EmployeeShiftAssignmentUpdateAPIView,
     EmployeeShiftAssignmentBulkAPIView, EmployeeShiftAssignmentPatternAPIView, EmployeeShiftAssignmentBulkCloseAPIView,
-    AttendancePunchAPIView, AttendanceListAPIView, MyAttendanceListAPIView, AttendanceDetailAPIView,
+    AttendancePunchAPIView, AttendanceListAPIView, MyAttendanceListAPIView, AttendanceDetailAPIView, AttendanceBulkMarkAbsentAPIView,
     AttendanceCorrectionCreateAPIView, AttendanceCorrectionListAPIView, AttendanceCorrectionReviewAPIView,
     FaceRecognitionAPIView
 )
@@ -35,6 +35,7 @@ urlpatterns = [
     path("list/", AttendanceListAPIView.as_view()),
     path("my-attendance/", MyAttendanceListAPIView.as_view()),
     path("detail/", AttendanceDetailAPIView.as_view()),
+    path("bulk-mark-absent/", AttendanceBulkMarkAbsentAPIView.as_view()),
 
     # Corrections
     path("corrections/create/", AttendanceCorrectionCreateAPIView.as_view()),

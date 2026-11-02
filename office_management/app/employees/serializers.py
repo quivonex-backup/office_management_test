@@ -65,6 +65,7 @@ class EmployeeCreateSerializer(serializers.ModelSerializer):
             "bank_ifsc",
             "bank_name",
             "bank_branch",
+            "upi_id",
             "create_user",
         ]
 
@@ -80,6 +81,7 @@ class EmployeeListSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
     work_state_name = serializers.CharField(source="work_state.state_name", read_only=True, allow_null=True)
     documents = EmployeeDocumentSerializer(many=True, read_only=True)
+    has_user_account = serializers.SerializerMethodField()
 
     class Meta:
         model = Employee
@@ -119,14 +121,19 @@ class EmployeeListSerializer(serializers.ModelSerializer):
             "bank_ifsc",
             "bank_name",
             "bank_branch",
+            "upi_id",
             'documents',
             'is_active',
             'created_at',
+            'has_user_account', 
         ]
 
     def get_full_name(self, obj):
         parts = [obj.first_name, obj.middle_name, obj.last_name]
         return " ".join(part.strip() for part in parts if part)
+
+    def get_has_user_account(self, obj):
+        return obj.user_id is not None
 
 
 # =========================================================
@@ -136,6 +143,7 @@ class EmployeeDetailSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
     work_state_name = serializers.CharField(source="work_state.state_name", read_only=True, allow_null=True)
     documents = EmployeeDocumentSerializer(many=True, read_only=True)
+    has_user_account = serializers.SerializerMethodField()
 
     class Meta:
         model = Employee
@@ -175,15 +183,20 @@ class EmployeeDetailSerializer(serializers.ModelSerializer):
             "bank_ifsc",
             "bank_name",
             "bank_branch",
+            "upi_id",
             'documents',
             'is_active',
             'created_at',
             'updated_at',
+            'has_user_account',
         ]
 
     def get_full_name(self, obj):
         parts = [obj.first_name, obj.middle_name, obj.last_name]
         return " ".join(part.strip() for part in parts if part)
+
+    def get_has_user_account(self, obj):
+        return obj.user_id is not None
 
 
 # =========================================================
@@ -223,6 +236,7 @@ class EmployeeUpdateSerializer(serializers.ModelSerializer):
             "bank_ifsc",
             "bank_name",
             "bank_branch",
+            "upi_id",
         ]
         extra_kwargs = {
             'first_name': {'required': False},

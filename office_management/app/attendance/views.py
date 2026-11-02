@@ -16,6 +16,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from common.services import get_user_organization
+from app.audit.services import log_activity
 
 from app.employees.models import Employee
 
@@ -47,6 +48,7 @@ from .services import (
     review_attendance_correction,
     bulk_assign_shift,
     bulk_assign_shift_pattern,
+    bulk_mark_absent,
 )
 from .face_recognition_service import (
     FaceVerificationError,
@@ -107,6 +109,12 @@ class AttendanceBaseAPIView(APIView):
             id=attendance_id,
             organization=organization,
         )
+
+    def audit(self, **kwargs):
+        try:
+            log_activity(**kwargs)
+        except Exception:
+            pass
 
 
 # =========================================================
@@ -222,6 +230,16 @@ class ShiftCreateAPIView(AttendanceBaseAPIView):
             created_by=request.user,
         )
 
+        self.audit(
+            request=request,
+            action="CREATE",
+            module="ATTENDANCE",
+            object_type="Shift",
+            object_id=shift.id,
+            description=f"Shift created: {shift.name}.",
+            new_data=ShiftSerializer(shift).data,
+        )
+
         return self.success(
             "Shift created successfully.",
             ShiftSerializer(shift).data,
@@ -272,7 +290,20 @@ class ShiftUpdateAPIView(AttendanceBaseAPIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        old_data = ShiftSerializer(shift).data
+
         serializer.save()
+
+        self.audit(
+            request=request,
+            action="UPDATE",
+            module="ATTENDANCE",
+            object_type="Shift",
+            object_id=shift.id,
+            description=f"Shift updated: {shift.name}.",
+            old_data=old_data,
+            new_data=serializer.data,
+        )
 
         return self.success(
             "Shift updated successfully.",
@@ -305,6 +336,16 @@ class ShiftDeactivateAPIView(AttendanceBaseAPIView):
 
         shift.is_active = False
         shift.save(update_fields=["is_active", "updated_at"])
+
+        self.audit(
+            request=request,
+            action="UPDATE",
+            module="ATTENDANCE",
+            object_type="Shift",
+            object_id=shift.id,
+            description=f"Shift deactivated: {shift.name}.",
+            new_data={"is_active": False},
+        )
 
         return self.success("Shift deactivated successfully.")
 
@@ -405,6 +446,21 @@ class EmployeeShiftAssignmentCreateAPIView(AttendanceBaseAPIView):
             assigned_by=request.user,
         )
 
+        self.audit(
+            request=request,
+            action="CREATE",
+            module="ATTENDANCE",
+            object_type="EmployeeShiftAssignment",
+            object_id=assignment.id,
+            description=(
+                f"Shift '{assignment.shift.name}' assigned to "
+                f"employee {assignment.employee.employee_code}."
+            ),
+            new_data=EmployeeShiftAssignmentSerializer(
+                assignment, context={"organization": organization},
+            ).data,
+        )
+
         return self.success(
             "Shift assigned successfully.",
             EmployeeShiftAssignmentSerializer(
@@ -458,7 +514,27 @@ class EmployeeShiftAssignmentUpdateAPIView(AttendanceBaseAPIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        old_data = EmployeeShiftAssignmentSerializer(
+            assignment, context={"organization": organization},
+        ).data
+
         assignment = serializer.save()
+
+        self.audit(
+            request=request,
+            action="UPDATE",
+            module="ATTENDANCE",
+            object_type="EmployeeShiftAssignment",
+            object_id=assignment.id,
+            description=(
+                f"Shift assignment updated for "
+                f"employee {assignment.employee.employee_code}."
+            ),
+            old_data=old_data,
+            new_data=EmployeeShiftAssignmentSerializer(
+                assignment, context={"organization": organization},
+            ).data,
+        )
 
         return self.success(
             "Shift assignment updated successfully.",
@@ -523,6 +599,26 @@ class EmployeeShiftAssignmentBulkAPIView(AttendanceBaseAPIView):
             assignments,
             many=True,
             context={"organization": organization},
+        )
+
+        self.audit(
+            request=request,
+            action="CREATE",
+            module="ATTENDANCE",
+            object_type="EmployeeShiftAssignment",
+            object_id=None,
+            description=(
+                f"Bulk shift assign: {len(assignments)} employee(s) "
+                f"to shift id {shift_id}."
+            ),
+            new_data={
+                "created_count": len(assignments),
+                "shift_id": shift_id,
+                "effective_from": str(effective_from),
+                "effective_to": (
+                    str(effective_to) if effective_to else None
+                ),
+            },
         )
 
         return self.success(
@@ -596,6 +692,24 @@ class EmployeeShiftAssignmentPatternAPIView(AttendanceBaseAPIView):
             assignments,
             many=True,
             context={"organization": organization},
+        )
+
+        self.audit(
+            request=request,
+            action="CREATE",
+            module="ATTENDANCE",
+            object_type="EmployeeShiftAssignment",
+            object_id=None,
+            description=(
+                f"Bulk rotating shift pattern assigned: "
+                f"{len(assignments)} assignment(s)."
+            ),
+            new_data={
+                "created_count": len(assignments),
+                "start_date": str(start_date),
+                "repetitions": repetitions,
+                "pattern": pattern,
+            },
         )
 
         return self.success(
@@ -715,6 +829,22 @@ class EmployeeShiftAssignmentBulkCloseAPIView(AttendanceBaseAPIView):
             context={"organization": organization},
         )
 
+        self.audit(
+            request=request,
+            action="UPDATE",
+            module="ATTENDANCE",
+            object_type="EmployeeShiftAssignment",
+            object_id=None,
+            description=(
+                f"Bulk shift close: {len(assignments)} assignment(s) "
+                f"closed as of {effective_to}."
+            ),
+            new_data={
+                "closed_count": len(assignments),
+                "effective_to": str(effective_to),
+            },
+        )
+
         return self.success(
             "Shift assignments closed successfully.",
             serializer.data,
@@ -787,6 +917,25 @@ class AttendancePunchAPIView(AttendanceBaseAPIView):
                 "Unable to process attendance punch. Please try again.",
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+        self.audit(
+            request=request,
+            action="CREATE",
+            module="ATTENDANCE",
+            object_type="AttendancePunch",
+            object_id=punch.id,
+            description=(
+                f"{punch.punch_type} recorded for "
+                f"employee {employee.employee_code} on "
+                f"{attendance.work_date}."
+            ),
+            new_data={
+                "punch_type": punch.punch_type,
+                "punched_at": str(punch.punched_at),
+                "attendance_id": attendance.id,
+                "work_date": str(attendance.work_date),
+            },
+        )
 
         return self.success(
             (
@@ -1099,6 +1248,24 @@ class AttendanceCorrectionCreateAPIView(AttendanceBaseAPIView):
         except ValueError as exc:
             return self.failure(str(exc))
 
+        self.audit(
+            request=request,
+            action="CREATE",
+            module="ATTENDANCE",
+            object_type="AttendanceCorrection",
+            object_id=correction.id,
+            description=(
+                f"Correction submitted for "
+                f"{attendance.employee.employee_code} on "
+                f"{attendance.work_date} (field: {correction.field_name})."
+            ),
+            new_data={
+                "field_name": correction.field_name,
+                "new_value": correction.new_value,
+                "attendance_id": attendance.id,
+            },
+        )
+
         return self.success(
             "Attendance correction submitted successfully.",
             AttendanceCorrectionSerializer(
@@ -1229,12 +1396,120 @@ class AttendanceCorrectionReviewAPIView(AttendanceBaseAPIView):
         except ValueError as exc:
             return self.failure(str(exc))
 
+        self.audit(
+            request=request,
+            action="UPDATE",
+            module="ATTENDANCE",
+            object_type="AttendanceCorrection",
+            object_id=correction.id,
+            description=(
+                f"Correction {correction.id} "
+                f"{'approved' if approve else 'rejected'} "
+                f"(field: {correction.field_name})."
+            ),
+            old_data={"status": "PENDING"},
+            new_data={
+                "status": correction.status,
+                "review_note": review_note,
+            },
+        )
+
         return self.success(
             "Correction reviewed successfully.",
             AttendanceCorrectionSerializer(
                 correction,
                 context={"organization": organization},
             ).data,
+        )
+
+
+# =========================================================
+# BULK MARK ABSENT
+# =========================================================
+
+class AttendanceBulkMarkAbsentAPIView(AttendanceBaseAPIView):
+
+    @transaction.atomic
+    def post(self, request):
+        organization, error_response = self.get_organization(request)
+
+        if error_response:
+            return error_response
+
+        from_date_raw = request.data.get("from_date")
+        to_date_raw = request.data.get("to_date")
+        employee_ids = request.data.get("employee_ids")
+
+        try:
+            from_date = self.parse_date(from_date_raw, "from_date")
+            to_date = self.parse_date(to_date_raw, "to_date")
+        except ValueError as exc:
+            return self.failure(str(exc))
+
+        if from_date is None or to_date is None:
+            return self.failure(
+                "from_date and to_date are required (YYYY-MM-DD)."
+            )
+
+        if from_date > to_date:
+            return self.failure(
+                "from_date cannot be after to_date."
+            )
+
+        if employee_ids is not None:
+            if not isinstance(employee_ids, list) or not employee_ids:
+                return self.failure(
+                    "employee_ids must be a non-empty list when provided."
+                )
+
+        try:
+            result = bulk_mark_absent(
+                organization=organization,
+                from_date=from_date,
+                to_date=to_date,
+                employee_ids=employee_ids,
+                marked_by=request.user,
+            )
+        except ValueError as exc:
+            return self.failure(str(exc))
+        except Exception:
+            return self.failure(
+                "Unable to bulk-mark absent attendance.",
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        self.audit(
+            request=request,
+            action="CREATE",
+            module="ATTENDANCE",
+            object_type="AttendanceRecord",
+            object_id=None,
+            description=(
+                f"Bulk absent mark: {result['created_count']} created, "
+                f"{result['skipped_existing']} existed, "
+                f"{result['skipped_non_working']} non-working days."
+            ),
+            new_data={
+                "from_date": str(from_date),
+                "to_date": str(to_date),
+                "created_count": result["created_count"],
+                "employees_processed": result["employees_processed"],
+            },
+        )
+
+        return self.success(
+            (
+                f"Bulk absent mark completed: "
+                f"{result['created_count']} created, "
+                f"{result['skipped_existing']} already existed, "
+                f"{result['skipped_non_working']} non-working days."
+            ),
+            result,
+            (
+                status.HTTP_201_CREATED
+                if result["created_count"] > 0
+                else status.HTTP_200_OK
+            ),
         )
 
 
@@ -1288,6 +1563,21 @@ class FaceRecognitionAPIView(AttendanceBaseAPIView):
                 "Face does not match your registered profile photo.",
                 status.HTTP_400_BAD_REQUEST,
             )
+
+        self.audit(
+            request=request,
+            action="OTHER",
+            module="ATTENDANCE",
+            object_type="FaceVerification",
+            object_id=employee.id,
+            description=(
+                f"Face verification success for "
+                f"employee {employee.employee_code}."
+            ),
+            new_data={
+                "similarity": round(result["similarity"], 4),
+            },
+        )
 
         return Response(
             {

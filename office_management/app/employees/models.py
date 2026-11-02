@@ -71,6 +71,7 @@ class Employee(models.Model):
     bank_ifsc = models.CharField(max_length=11, blank=True, null=True)
     bank_name = models.CharField(max_length=100, blank=True, null=True)
     bank_branch = models.CharField(max_length=100, blank=True, null=True)
+    upi_id = models.CharField(max_length=100, blank=True, null=True)
 
     # ---- User ----
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="employee_profile")
