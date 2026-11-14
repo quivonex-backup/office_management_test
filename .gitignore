@@ -26,7 +26,6 @@ db.sqlite3
 db.sqlite3-journal
 staticfiles/
 media/
-backend/media/
 backend/staticfiles/
 
 # ==============================

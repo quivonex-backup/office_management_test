@@ -1,0 +1,250 @@
+Adding a new API — exact files to touch
+Here's the decision tree based on what the API does.
+
+The universal rule
+For any new API endpoint, you touch these files in this order:
+
+text
+1. config/api_config.dart          ← ALWAYS
+2. models/xxx_model.dart           ← ONLY if the API returns a new data shape
+3. services/auth_service.dart      ← ONLY if reused in 2+ pages (else call ApiService directly)
+4. pages/xxx.dart                  ← ALWAYS (the caller)
+Plus one file only if the data must survive beyond the page:
+
+text
+5. (none in your current structure — no global state store)
+Decision tree
+Q1: Does the API return data you haven't modeled yet?
+Answer	Action
+Yes — new shape	Create lib/models/<name>_model.dart with a fromJson factory
+No — same shape as existing model	Reuse the existing model
+No — just confirmation ({status, message})	No model needed
+Q2: Will this API be called from more than one page?
+Answer	Action
+Yes — 2+ pages	Add a method to services/auth_service.dart (or a new service file in services/)
+No — only one page	Call ApiService.instance.post(...) directly from that page — skip the service
+Q3: Does this API need a new page?
+Answer	Action
+Yes — new page	Create pages/<name>.dart + edit config/app_routes.dart + (if it needs a sidebar tab) add one line in common/navigation.dart
+No — existing page calls it	Just edit the existing page
+Concrete examples
+Example A: Dashboard loads /dashboard/summary/ — used once, simple data
+Files: 2
+
+File	What
+config/api_config.dart	static const String dashboardSummary = "/dashboard/summary/";
+pages/dashboard.dart	Call ApiService.instance.post(ApiConfig.dashboardSummary) in initState
+No model, no service. If the response is {"status": true, "data": {"total_orgs": 5}} and you only need to display it once, parse the map inline.
+
+Example B: Organizations list — reused in organizations page and dashboard, typed data
+Files: 4 (1 new)
+
+File	New/Edit	What
+models/organization_model.dart	NEW	OrganizationModel class + fromJson
+config/api_config.dart	Edit	static const String organizationList = "/organization/list/";
+services/auth_service.dart	Edit	Future<List<OrganizationModel>> fetchOrganizations()
+pages/organizations.dart	Edit	Call AuthService.instance.fetchOrganizations()
+pages/dashboard.dart	Edit	Same call — no duplication
+Example C: Billing page — new endpoint and new page and navbar tab
+Files: 6 (2 new)
+
+File	New/Edit	What
+models/invoice_model.dart	NEW	Model with fromJson
+pages/billing.dart	NEW	Standard page scaffold (see below)
+config/api_config.dart	Edit	static const String billingInvoices = "/billing/invoices/";
+services/auth_service.dart	Edit	Future<List<InvoiceModel>> fetchInvoices()
+config/app_routes.dart	Edit	Import + static const billing = "/billing"; + billing: (_) => const BillingPage(),
+common/navigation.dart	Edit	One NavItem(label: "Billing", icon: Icons.receipt_long_rounded, route: AppRoutes.billing)
+Example D: Small one-shot API — e.g. “resend OTP” — used once, no data
+Files: 2
+
+File	What
+config/api_config.dart	static const String resendOtp = "/resend-otp/";
+pages/login.dart (or wherever the button lives)	await ApiService.instance.post(ApiConfig.resendOtp, body: {...});
+No model, no service, no page.
+
+What each file is for
+config/api_config.dart
+Only place where endpoint paths live. Every URL string used in the app must be a constant here. This makes it trivial to change a path later — one file, one place.
+
+dart
+static const String organizationList = "/organization/list/";
+static const String billingInvoices = "/billing/invoices/";
+models/<name>_model.dart
+Only place where a backend JSON shape is turned into a typed Dart object. Create a new file for each distinct backend object:
+
+user_model.dart — already exists (User + Role)
+
+organization_model.dart — create when you first fetch organizations
+
+invoice_model.dart — create when you first fetch invoices
+
+subscription_model.dart — create when you first fetch subscriptions
+
+Never put two unrelated models in one file. Never put UI logic in a model.
+
+Standard template:
+
+dart
+class OrganizationModel {
+  final int id;
+  final String organizationName;
+  final String? organizationCode;
+  final bool isActive;
+
+  OrganizationModel({
+    required this.id,
+    required this.organizationName,
+    required this.organizationCode,
+    required this.isActive,
+  });
+
+  factory OrganizationModel.fromJson(Map<String, dynamic> j) =>
+      OrganizationModel(
+        id: j["id"] as int? ?? 0,
+        organizationName: j["organization_name"] as String? ?? "",
+        organizationCode: j["organization_code"] as String?,
+        isActive: j["is_active"] as bool? ?? true,
+      );
+}
+Rules:
+
+Every field is final.
+
+required for fields you always need; nullable for optional backend fields.
+
+One factory fromJson.
+
+Defensive casts: as int? ?? 0, as String? ?? "", as bool? ?? false.
+
+No toJson unless you also POST this model.
+
+No business logic.
+
+services/auth_service.dart (or a new service file in services/)
+Only if the API is reused. The service:
+
+Calls ApiService.instance.post(...).
+
+Parses the envelope (res["data"]).
+
+Converts to a typed model via fromJson.
+
+Returns the model(s).
+
+dart
+Future<List<OrganizationModel>> fetchOrganizations() async {
+  final res = await ApiService.instance.post(ApiConfig.organizationList);
+  final list = res["data"] as List? ?? [];
+  return list
+      .map((e) => OrganizationModel.fromJson(e as Map<String, dynamic>))
+      .toList();
+}
+Naming: auth_service.dart currently holds auth + profile. For genuinely different domains (e.g. payroll), create services/payroll_service.dart — same pattern, different file.
+
+pages/<name>.dart
+The page that uses the API. Standard pattern:
+
+dart
+class BillingPage extends StatefulWidget {
+  const BillingPage({super.key});
+  @override
+  State<BillingPage> createState() => _BillingPageState();
+}
+
+class _BillingPageState extends State<BillingPage> {
+  List<InvoiceModel> _items = [];
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() { _loading = true; _error = null; });
+    try {
+      final items = await AuthService.instance.fetchInvoices();
+      if (!mounted) return;
+      setState(() => _items = items);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() => _error = e.message);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AppShell(
+      currentRoute: AppRoutes.billing,
+      pageTitle: "Billing",
+      breadcrumbs: const ["Home", "Billing"],
+      child: _loading
+          ? const AppLoader(message: "Loading…")
+          : SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SectionHeader(title: "Billing", subtitle: "…"),
+                  const SizedBox(height: 20),
+                  if (_error != null)
+                    GlassCard(child: Text(_error!))
+                  else
+                    _buildContent(),
+                ],
+              ),
+            ),
+    );
+  }
+
+  Widget _buildContent() { /* your GlassCards, tables, etc. */ }
+}
+Every page must:
+
+Return AppShell(...) — gets sidebar + topbar for free.
+
+Have the _loading / _error / data state trio.
+
+Call setState only after checking if (mounted).
+
+Use AppLoader for loading, GlassCard for content.
+
+Sidebar tab is one line — nothing else
+Adding a page that needs a tab does not touch any sidebar widget code. Sidebar renders by looping AppNavigationConfig.items:
+
+dart
+class AppNavigationConfig {
+  static const List<NavItem> items = [
+    // ...
+    NavItem(label: "Billing", icon: Icons.receipt_long_rounded, route: AppRoutes.billing),  // ← only line to add
+  ];
+}
+That's it. Active state, hover, collapse, theme — all handled automatically.
+
+Removing an API or page — reverse the same steps
+What	Files to edit
+Remove an API call used in one page	Delete the page's call + delete the constant from api_config.dart
+Remove a reused API	Above + delete the method from services/auth_service.dart + remove all page call-sites
+Remove a model	Only after no code references it — search the codebase first
+Remove a page (no tab)	Delete pages/x.dart + remove 3 lines from app_routes.dart (import, constant, route entry)
+Remove a page (with tab)	Above + delete the NavItem(...) line from common/navigation.dart
+Full map of the project files
+File	Purpose	Touch when…
+main.dart	Boot: init, run	Only if init sequence changes
+app.dart	MaterialApp config	Only if theme/router config changes
+config/api_config.dart	All endpoint URLs	Every new API
+config/api_service.dart	Dio, envelope parsing, error handling	Only if the base HTTP behavior changes
+config/app_theme.dart	Colors, typography, input decoration	Only if you add a global color
+config/app_routes.dart	Route constants + map	Every new page
+common/navigation.dart	Sidebar, topbar, page shell	Only the AppNavigationConfig.items list for new tab; rest is infrastructure
+common/common_widgets.dart	Shared widgets	Only if you need a genuinely new shared widget
+models/*.dart	Typed JSON models	Every new data shape
+pages/*.dart	Feature UI	Every new screen
+services/*.dart	API methods grouped by domain	When an API is reused
+The one-sentence summary
+For each new API: add one line in api_config.dart. If it returns a new shape, create one model file. If it's reused, add one method in services/. Then call it from a page — which may or may not be a new page needing three extra lines in app_routes.dart and one line in navigation.dart.
