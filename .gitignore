@@ -1,5 +1,84 @@
-venv
-.venv
-.env
 
+# ==============================
+# PYTHON CACHE
+# ==============================
 __pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+
+# ==============================
+# VIRTUAL ENVIRONMENTS
+# ==============================
+venv/
+.venv/
+env/
+ENV/
+backend/venv/
+backend/.venv/
+
+# ==============================
+# DJANGO
+# ==============================
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+staticfiles/
+media/
+backend/media/
+backend/staticfiles/
+
+# ==============================
+# ENVIRONMENT VARIABLES
+# ==============================
+.env
+.env.*
+!.env.example
+
+# ==============================
+# TESTING / COVERAGE
+# ==============================
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# ==============================
+# TYPE CHECKING / LINTING
+# ==============================
+.mypy_cache/
+.dmypy.json
+.pyre/
+.ruff_cache/
+
+# ==============================
+# JUPYTER
+# ==============================
+.ipynb_checkpoints/
+
+# ==============================
+# IDE / EDITORS
+# ==============================
+.vscode/
+.idea/
+*.sublime-workspace
+
+# ==============================
+# OS FILES
+# ==============================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ==============================
+# BUILD FILES
+# ==============================
+build/
+dist/
+*.egg-info/
+.eggs/
+wheels/
+pip-wheel-metadata/

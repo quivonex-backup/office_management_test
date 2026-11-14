@@ -1,0 +1,937 @@
+================================================================================
+ACCOUNTS / ORGANIZATION APP — API REFERENCE FOR FRONTEND
+================================================================================
+
+Base URL       : /
+Method         : All endpoints are POST
+Auth           : Bearer token (IsAuthenticated) unless noted PUBLIC
+Envelope       : { "status": true|false, "message": "...", "data": {...}?, "errors": {...}? }
+
+Roles:
+  - #SU  = Super Admin  (user.is_superuser == true)
+  - #A   = Admin / Company Owner (organization.owner)
+  - #E   = Employee (any authenticated org member)
+  - #PUB = Public (no auth required)
+
+Organization context:
+  - If the logged-in user belongs to exactly one active organization,
+    organization context is auto-resolved.
+  - If the user belongs to multiple organizations, request body must
+    include "organization_id".
+  - Super admins bypass org scoping on list/detail endpoints and see
+    everything.
+
+
+================================================================================
+BOOTSTRAP ORDER — READ THIS FIRST
+================================================================================
+Data must exist in this order for the rest of the system to work:
+
+  STEP 0 (super admin — one time for the platform)
+    └─ 1. Create Roles                 (Admin, Accountant, etc.)
+    └─ 2. Create Organizations         (each tenant)
+    └─ 3. Assign Organization Owner    (Admin role + membership)
+
+  STEP 1 (org admin — one time per organization)
+    └─ 4. Update organization profile  (logos, address, contact)
+    └─ 5. Register / assign users      (super admin creates users)
+    └─ 6. Assign members to org        (owner assigns roles)
+
+  STEP 2 (any user — anytime)
+    └─ 7. Login / refresh token
+    └─ 8. View own profile / update it
+    └─ 9. Change password
+    └─ 10. View own organizations
+
+  STEP 3 (optional — OTP flows)
+    └─ 11. Send OTP / Verify OTP       (registration, forgot password)
+
+IMPORTANT:
+  - Roles are global (shared across all organizations).
+  - A user can belong to AT MOST ONE active organization (enforced).
+  - "Admin" role is reserved for organization owners and must be
+    assigned via the assign-owner API, not assign-user.
+  - "Accountant" role is used when downgrading a previous owner.
+
+
+================================================================================
+SECTION 1 — AUTHENTICATION (PUBLIC)
+================================================================================
+
+--------------------------------------------------------------------------------
+1.1  POST /login/
+--------------------------------------------------------------------------------
+Auth : #PUB
+Purpose : Authenticate and receive JWT tokens.
+
+Request:
+{
+  "username": "rahul",
+  "password": "SecurePass@123"
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Login successful.",
+  "data": {
+    "access": "eyJ0eXAiOiJKV1Qi...",
+    "refresh": "eyJ0eXAiOiJKV1Qi...",
+    "user": {
+      "id": 25,
+      "username": "rahul",
+      "first_name": "Rahul",
+      "last_name": "Patil",
+      "email": "rahul@example.com",
+      "mobile": "9876543210",
+      "profile_photo": "users/profile/abc.jpg",
+      "role": 1,
+      "role_details": {
+        "id": 1,
+        "name": "Admin",
+        "is_active": true,
+        "created_at": "...",
+        "updated_at": "..."
+      },
+      "is_active": true,
+      "date_joined": "...",
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  }
+}
+
+Response 400: { "status": false, "message": "Username and password are required." }
+Response 401: { "status": false, "message": "Invalid username or password." }
+Response 403: { "status": false, "message": "Your account is inactive." }
+
+NOTE:
+  - A LOGIN audit log is written on every successful login.
+  - Frontend must store "access" and "refresh" and send
+    "Authorization: Bearer <access>" on every subsequent request.
+
+--------------------------------------------------------------------------------
+1.2  POST /forgot-password/
+--------------------------------------------------------------------------------
+Auth : #PUB
+Purpose : Reset password by email (no OTP required — email match only).
+
+Request:
+{
+  "email": "rahul@example.com",
+  "new_password": "NewPass@123",
+  "confirm_password": "NewPass@123"
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Password reset successfully. Please login with your new password.",
+  "data": null
+}
+
+Response 400: { "status": false, "message": "Validation failed.", "errors": {...} }
+Response 404: { "status": false, "message": "User not found." }
+
+NOTE:
+  - Password is validated by Django password validators.
+  - A PASSWORD_RESET audit log is written.
+
+--------------------------------------------------------------------------------
+1.3  POST /send-otp/
+--------------------------------------------------------------------------------
+Auth : #PUB
+Purpose : Send a 6-digit OTP to an email (for verification flows).
+
+Request:
+{
+  "email": "rahul@example.com",
+  "purpose": "EMAIL_VERIFICATION"
+}
+
+purpose values (optional):
+  EMAIL_VERIFICATION | FORGOT_PASSWORD | LOGIN | CHANGE_EMAIL
+
+Response 200:
+{
+  "status": true,
+  "message": "OTP sent successfully.",
+  "data": { "expires_at": "2026-03-15T10:35:00Z" }
+}
+
+Response 500: { "status": false, "message": "Unable to send OTP. Please try again." }
+
+NOTE:
+  - OTP expires in 5 minutes.
+  - Any previous unverified OTP for this email/purpose is expired.
+  - If email sending fails, the OTP record is expired immediately.
+
+--------------------------------------------------------------------------------
+1.4  POST /verify-otp/
+--------------------------------------------------------------------------------
+Auth : #PUB
+Purpose : Verify an OTP previously sent.
+
+Request:
+{
+  "email": "rahul@example.com",
+  "otp": "123456",
+  "purpose": "EMAIL_VERIFICATION"
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "OTP verified successfully.",
+  "data": null
+}
+
+Response 400 variants:
+  { "status": false, "message": "No OTP found. Please request a new OTP." }
+  { "status": false, "message": "OTP has expired. Please request a new OTP." }
+  { "status": false, "message": "Maximum OTP attempts exceeded. Please request a new OTP." }
+  { "status": false, "message": "Invalid OTP.", "data": { "remaining_attempts": 3 } }
+
+NOTE:
+  - Max 5 attempts per OTP.
+  - OTP must be exactly 6 digits.
+
+
+================================================================================
+SECTION 2 — REGISTRATION (#SU only)
+================================================================================
+Only super admins should create users. Registration sends a welcome email
+with login credentials.
+
+--------------------------------------------------------------------------------
+2.1  POST /register/
+--------------------------------------------------------------------------------
+Auth : #SU   (intended; see NOTE)
+Purpose : Create a new user (optionally with profile photo).
+
+Request (multipart/form-data):
+{
+  "username": "priya",
+  "first_name": "Priya",
+  "last_name": "Sharma",
+  "email": "priya@example.com",
+  "mobile": "9876500000",
+  "role": 3,
+  "password": "SecurePass@123",
+  "confirm_password": "SecurePass@123",
+  "profile_photo": <file>          // optional
+}
+
+Response 201:
+{
+  "status": true,
+  "message": "User registered successfully. Login credentials sent to user's email.",
+  "data": {
+    "id": 30,
+    "username": "priya",
+    "first_name": "Priya",
+    "last_name": "Sharma",
+    "email": "priya@example.com",
+    "mobile": "9876500000",
+    "profile_photo": "users/profile/xyz.jpg",
+    "role": 3,
+    "role_details": { ... },
+    "is_active": true,
+    "date_joined": "...",
+    "created_at": "...",
+    "updated_at": "..."
+  }
+}
+
+NOTE:
+  - Email is sent with plain-text password. If email fails, user is
+    still created and message says so.
+  - Profile photo is uploaded to S3 before the user is saved; on
+    failure the S3 object is deleted.
+  - username, email, mobile must be unique (case-insensitive).
+  - role must be active.
+  - An audit log "CREATE USER" is written.
+  - ⚠ CURRENT CODE: permission_classes commented out → effectively public.
+    Should be locked to #SU.
+
+
+================================================================================
+SECTION 3 — MY PROFILE (any authenticated user)
+================================================================================
+
+--------------------------------------------------------------------------------
+3.1  POST /my-profile/
+--------------------------------------------------------------------------------
+Auth : #E #A #SU
+Purpose : Fetch the logged-in user's own profile.
+
+Request: {}
+
+Response 200:
+{
+  "status": true,
+  "message": "Profile fetched successfully.",
+  "data": { ...UserSerializer object (same as login response "user")... }
+}
+
+--------------------------------------------------------------------------------
+3.2  POST /my-profile/update/
+--------------------------------------------------------------------------------
+Auth : #E #A #SU
+Purpose : Update the logged-in user's own profile.
+          Role CANNOT be changed via this endpoint.
+
+Request (multipart/form-data):
+{
+  "first_name": "Rahul",
+  "last_name": "Patil",
+  "email": "rahul.new@example.com",
+  "mobile": "9876543211",
+  "profile_photo": <file>          // optional
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Profile updated successfully.",
+  "data": { ...UserSerializer... }
+}
+
+NOTE:
+  - All fields optional (partial update).
+  - Email and mobile must remain unique.
+  - Old profile photo is deleted from S3 after successful save.
+  - New photo is uploaded first; on any failure it is rolled back.
+  - Audit log "UPDATE USER" is written.
+
+--------------------------------------------------------------------------------
+3.3  POST /change-password/
+--------------------------------------------------------------------------------
+Auth : #E #A #SU
+Purpose : Change own password (requires old password).
+
+Request:
+{
+  "old_password": "SecurePass@123",
+  "new_password": "NewPass@456",
+  "confirm_password": "NewPass@456"
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Password changed successfully. Please login again.",
+  "data": null
+}
+
+Response 400 variants:
+  { "status": false, "message": "Old password is required." }
+  { "status": false, "message": "New password is required." }
+  { "status": false, "message": "Confirm password is required." }
+  { "status": false, "message": "Old password is incorrect." }
+  { "status": false, "message": "New password and confirm password do not match." }
+  { "status": false, "message": "New password cannot be the same as old password." }
+
+NOTE:
+  - Django validators are currently DISABLED (commented in view).
+  - A PASSWORD_CHANGE audit log is written.
+
+
+================================================================================
+SECTION 4 — USER MANAGEMENT (#SU only)
+================================================================================
+⚠ CURRENT CODE: all four views are protected only by IsAuthenticated, NOT
+by is_superuser. Until a permission class is added, any authenticated
+user (including employees) can call them. The endpoints below describe
+INTENDED #SU behavior.
+
+--------------------------------------------------------------------------------
+4.1  POST /user/list/
+--------------------------------------------------------------------------------
+Auth : #SU   (intended; currently #E #A #SU)
+Purpose : List all active users.
+
+Request: {}
+
+Response 200:
+{
+  "status": true,
+  "message": "Accounts fetched successfully.",
+  "data": [ ...UserSerializer array, newest first... ]
+}
+
+--------------------------------------------------------------------------------
+4.2  POST /user/detail/
+--------------------------------------------------------------------------------
+Auth : #SU   (intended; currently #E #A #SU)
+Purpose : Fetch a single active user.
+
+Request: { "id": 30 }
+
+Response 200:
+{
+  "status": true,
+  "message": "Account fetched successfully.",
+  "data": { ...UserSerializer... }
+}
+
+Response 400: { "status": false, "message": "Account id is required." }
+Response 404: { "status": false, "message": "Account not found." }
+
+--------------------------------------------------------------------------------
+4.3  POST /user/update/
+--------------------------------------------------------------------------------
+Auth : #SU   (intended; currently #E #A #SU)
+Purpose : Admin-level update of another user (including role and is_active).
+
+Request (multipart/form-data):
+{
+  "id": 30,
+  "first_name": "Priya",
+  "last_name": "Sharma",
+  "email": "priya.new@example.com",
+  "mobile": "9876500001",
+  "role": 4,
+  "is_active": true,
+  "profile_photo": <file>          // optional
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "User updated successfully.",
+  "data": { ...UserSerializer... }
+}
+
+Response 400: { "status": false, "message": "User id is required." }
+Response 404: { "status": false, "message": "User not found." }
+
+NOTE:
+  - Email/mobile must remain unique (excluding self).
+  - Old profile photo is deleted from S3 after successful save.
+  - Audit log "UPDATE USER" with old/new data.
+
+--------------------------------------------------------------------------------
+4.4  POST /user/deactivate/
+--------------------------------------------------------------------------------
+Auth : #SU   (intended; currently #E #A #SU)
+Purpose : Soft-delete a user (sets is_active=false).
+
+Request: { "id": 30 }
+
+Response 200:
+{
+  "status": true,
+  "message": "Account deactivated successfully.",
+  "data": null
+}
+
+Response 404: { "status": false, "message": "Account not found or already inactive." }
+
+NOTE:
+  - Soft delete only — row is preserved.
+  - Audit log "DELETE USER" with old/new data.
+
+
+================================================================================
+SECTION 5 — ROLE MANAGEMENT (#SU only)
+================================================================================
+⚠ CURRENT CODE: all five views are protected only by IsAuthenticated.
+Intended: super admin only.
+
+--------------------------------------------------------------------------------
+5.1  POST /role/create/
+--------------------------------------------------------------------------------
+Auth : #SU
+Purpose : Create a new global role.
+
+Request:
+{
+  "name": "Accountant"
+}
+
+Response 201:
+{
+  "status": true,
+  "message": "Role created successfully.",
+  "data": {
+    "id": 3,
+    "name": "Accountant",
+    "is_active": true,
+    "created_at": "...",
+    "updated_at": "..."
+  }
+}
+
+Response 400 variants:
+  { "status": false, "message": "Validation failed.", "errors": { "name": ["..."] } }
+  { "status": false, "message": "Role with this name already exists." }
+
+NOTE:
+  - Name is trimmed and unique case-insensitively.
+  - Audit log "CREATE ROLE".
+
+--------------------------------------------------------------------------------
+5.2  POST /role/list/
+--------------------------------------------------------------------------------
+Auth : #SU
+Purpose : List all active roles.
+
+Request: {}
+
+Response 200:
+{
+  "status": true,
+  "message": "Roles fetched successfully.",
+  "data": [ ...RoleSerializer array, newest first... ]
+}
+
+--------------------------------------------------------------------------------
+5.3  POST /role/detail/
+--------------------------------------------------------------------------------
+Auth : #SU
+Purpose : Fetch a single active role.
+
+Request: { "id": 3 }
+
+Response 200:
+{
+  "status": true,
+  "message": "Role fetched successfully.",
+  "data": { ...RoleSerializer... }
+}
+
+Response 400: { "status": false, "message": "Role id is required." }
+Response 404: { "status": false, "message": "Role not found." }
+
+--------------------------------------------------------------------------------
+5.4  POST /role/update/
+--------------------------------------------------------------------------------
+Auth : #SU
+Purpose : Update a role (partial).
+
+Request:
+{
+  "id": 3,
+  "name": "Senior Accountant",
+  "is_active": true
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Role updated successfully.",
+  "data": { ...RoleSerializer... }
+}
+
+Response 400 variants:
+  { "status": false, "message": "Role with this name already exists." }
+  { "status": false, "message": "Validation failed.", "errors": {...} }
+
+NOTE: Audit log "UPDATE ROLE" with old/new data.
+
+--------------------------------------------------------------------------------
+5.5  POST /role/delete/
+--------------------------------------------------------------------------------
+Auth : #SU
+Purpose : Soft-delete a role (sets is_active=false).
+
+Request: { "id": 3 }
+
+Response 200:
+{
+  "status": true,
+  "message": "Role deleted successfully.",
+  "data": null
+}
+
+Response 404: { "status": false, "message": "Role not found or already deleted." }
+
+NOTE: Audit log "DELETE ROLE" with old/new data.
+
+
+================================================================================
+SECTION 6 — ORGANIZATION MANAGEMENT
+================================================================================
+
+--------------------------------------------------------------------------------
+6.1  POST /organization/create/
+--------------------------------------------------------------------------------
+Auth : #SU   (✅ enforced)
+Purpose : Create a new tenant organization. Owner is set later via
+          assign-owner. organization_code is auto-generated.
+
+Request (multipart/form-data):
+{
+  "organization_name": "Acme Pvt Ltd",
+  "legal_name": "Acme Private Limited",
+  "business_type": "Private Limited",
+  "industry": "Software",
+  "description": "ERP product company",
+  "registration_number": "U12345MH2020PTC123456",
+  "gst_number": "27ABCDE1234F1Z5",
+  "pan_number": "ABCDE1234F",
+  "cin_number": "U12345MH2020PTC123456",
+  "email": "info@acme.com",
+  "phone_number": "02212345678",
+  "alternate_phone_number": "9876543210",
+  "website": "https://acme.com",
+  "address_line_1": "Plot 12, Tech Park",
+  "address_line_2": "Andheri East",
+  "city": "Mumbai",
+  "district": "Mumbai",
+  "state": "Maharashtra",
+  "pincode": "400069",
+  "country": "India",
+  "latitude": "19.119",
+  "longitude": "72.846",
+  "logo": <file>                        // optional
+}
+
+Response 201:
+{
+  "status": true,
+  "message": "Organization created successfully.",
+  "data": { ...OrganizationSerializer... }
+}
+
+Response 403: { "status": false, "message": "Only the super admin can create organizations." }
+
+NOTE:
+  - organization_code auto-generated (by code_generators.generate_organization_code).
+  - owner is left null until assign-owner is called.
+  - created_by / updated_by set to request.user.
+  - Logo uploaded to S3; rolled back on failure.
+  - Audit log "CREATE ORGANIZATION".
+
+--------------------------------------------------------------------------------
+6.2  POST /organization/list/
+--------------------------------------------------------------------------------
+Auth : #E #A #SU
+Purpose : List organizations the caller can see.
+          - Super admin  → ALL active orgs.
+          - Everyone else → orgs they own or are an active member of.
+
+Request: {}
+
+Response 200:
+{
+  "status": true,
+  "message": "Organizations fetched successfully.",
+  "data": [ ...OrganizationSerializer array, newest first... ]
+}
+
+--------------------------------------------------------------------------------
+6.3  POST /organization/detail/
+--------------------------------------------------------------------------------
+Auth : #E #A #SU
+Purpose : Fetch one organization (same scoping as list).
+
+Request: { "id": 5 }
+
+Response 200:
+{
+  "status": true,
+  "message": "Organization fetched successfully.",
+  "data": { ...OrganizationSerializer... }
+}
+
+Response 400: { "status": false, "message": "Organization id is required." }
+Response 404: { "status": false, "message": "Organization not found or access denied." }
+
+--------------------------------------------------------------------------------
+6.4  POST /organization/my-organizations/
+--------------------------------------------------------------------------------
+Auth : #E #A #SU
+Purpose : Convenience alias — same as list but always scoped to caller.
+
+Request: {}
+
+Response 200:
+{
+  "status": true,
+  "message": "Your organizations fetched successfully.",
+  "data": [ ...OrganizationSerializer array... ]
+}
+
+--------------------------------------------------------------------------------
+6.5  POST /organization/update/
+--------------------------------------------------------------------------------
+Auth : #A   (owner of that org only)
+Purpose : Update an organization's profile (partial). Cannot change
+          organization_code or owner here.
+
+Request (multipart/form-data):
+{
+  "id": 5,
+  "organization_name": "Acme Pvt Ltd",
+  "city": "Pune",
+  "state": "Maharashtra",
+  "logo": <file>                        // optional
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Organization updated successfully.",
+  "data": { ...OrganizationSerializer... }
+}
+
+Response 400: { "status": false, "message": "Organization id is required." }
+Response 404: { "status": false, "message": "Organization not found." }
+
+NOTE:
+  - Lookup filters by owner=request.user AND is_active=True.
+    → Super admin who is not the owner gets 404.
+  - organization_code and owner are read-only in serializer.
+  - New logo uploaded to S3, old logo deleted after save.
+  - Audit log "UPDATE ORGANIZATION".
+
+--------------------------------------------------------------------------------
+6.6  POST /organization/deactivate/
+--------------------------------------------------------------------------------
+Auth : #A   (owner of that org only)
+Purpose : Soft-delete an organization.
+
+Request: { "id": 5 }
+
+Response 200:
+{
+  "status": true,
+  "message": "Organization deactivated successfully.",
+  "data": null
+}
+
+Response 404: { "status": false, "message": "Organization not found or already inactive." }
+
+NOTE:
+  - Same owner-only lookup as update.
+  - Audit log "DELETE ORGANIZATION".
+
+--------------------------------------------------------------------------------
+6.7  POST /organization/assign-owner/
+--------------------------------------------------------------------------------
+Auth : #SU   (✅ enforced)
+Purpose : Assign an Admin (owner) to an organization.
+          - Creates/reactivates an OrganizationMembership.
+          - Sets user.role = Admin.
+          - If there was a previous owner, downgrades them to Accountant
+            and keeps their membership active.
+          - Enforces one-active-org-per-user.
+
+Request:
+{
+  "organization_id": 5,
+  "user_id": 25
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Organization owner assigned successfully.",
+  "data": {
+    "organization_id": 5,
+    "organization_name": "Acme Pvt Ltd",
+    "owner_id": 25,
+    "owner_username": "rahul",
+    "owner_email": "rahul@example.com",
+    "role_id": 1,
+    "role": "Admin",
+    "membership_id": 12,
+    "membership_created": true
+  }
+}
+
+Response 400 variants:
+  { "status": false, "message": "organization_id and user_id are required." }
+  { "status": false, "message": "Active Admin and Accountant roles must exist." }
+  { "status": false, "message": "This user already belongs to another active organization." }
+Response 403: { "status": false, "message": "Only the super admin can assign an organization owner." }
+Response 404: { "status": false, "message": "Organization not found or inactive." | "User not found or inactive." }
+
+NOTE:
+  - Wrapped in transaction.atomic with select_for_update on org and user.
+  - Idempotent: calling twice for same user creates nothing new
+    (membership_created=false).
+  - Audit log "UPDATE ORGANIZATION".
+
+--------------------------------------------------------------------------------
+6.8  POST /organization/assign-user/
+--------------------------------------------------------------------------------
+Auth : #A #SU
+Purpose : Assign a non-owner member to an organization with a role.
+          Allowed for super admin OR the organization's owner.
+          - Admin role is NOT permitted here (owner-only).
+          - Cannot assign the current owner here (use assign-owner).
+          - Enforces one-active-org-per-user.
+
+Request:
+{
+  "organization_id": 5,
+  "user_id": 30,
+  "role_id": 2
+}
+
+Response 201 (created):
+{
+  "status": true,
+  "message": "Organization member assigned successfully.",
+  "data": {
+    "membership_id": 15,
+    "organization_id": 5,
+    "organization_name": "Acme Pvt Ltd",
+    "user_id": 30,
+    "username": "priya",
+    "email": "priya@example.com",
+    "role_id": 2,
+    "role": "Accountant",
+    "is_active": true
+  }
+}
+
+Response 200 (reactivated existing membership) — same shape.
+
+Response 400 variants:
+  { "status": false, "message": "organization_id, user_id and role_id are required." }
+  { "status": false, "message": "The Admin role is reserved for organization owners. Use the owner assignment API instead." }
+  { "status": false, "message": "This user is the organization owner. Use the owner assignment API to manage ownership." }
+  { "status": false, "message": "This user already belongs to another active organization." }
+Response 403: { "status": false, "message": "Only the super admin or the organization owner can assign organization members." }
+Response 404 variants:
+  { "status": false, "message": "Organization not found or inactive." }
+  { "status": false, "message": "User not found or inactive." }
+  { "status": false, "message": "Role not found or inactive." }
+
+NOTE:
+  - Wrapped in transaction.atomic with select_for_update on user.
+  - Role is stored ONLY on User.role — OrganizationMembership has no
+    role field.
+  - Audit log "CREATE" or "UPDATE" (OrganizationMembership) with old/new.
+
+
+================================================================================
+QUICK REFERENCE — ENDPOINT SUMMARY
+================================================================================
+
+PUBLIC (4)
+  POST /login/
+  POST /forgot-password/
+  POST /send-otp/
+  POST /verify-otp/
+
+ANY AUTHENTICATED USER (#E #A #SU) (6)
+  POST /my-profile/
+  POST /my-profile/update/
+  POST /change-password/
+  POST /organization/list/
+  POST /organization/detail/
+  POST /organization/my-organizations/
+
+SUPER ADMIN (#SU) (12 intended)
+  POST /register/                         ⚠ currently public
+  POST /user/list/                        ⚠ currently any auth
+  POST /user/detail/                      ⚠ currently any auth
+  POST /user/update/                      ⚠ currently any auth
+  POST /user/deactivate/                  ⚠ currently any auth
+  POST /role/create/                      ⚠ currently any auth
+  POST /role/list/                        ⚠ currently any auth
+  POST /role/detail/                      ⚠ currently any auth
+  POST /role/update/                      ⚠ currently any auth
+  POST /role/delete/                      ⚠ currently any auth
+  POST /organization/create/              ✅ enforced
+  POST /organization/assign-owner/        ✅ enforced
+
+ADMIN / ORG OWNER (#A) (2)
+  POST /organization/update/              ✅ owner-only
+  POST /organization/deactivate/          ✅ owner-only
+
+ADMIN or SUPER ADMIN (#A #SU) (1)
+  POST /organization/assign-user/         ✅ enforced
+
+TOTAL: 25 endpoints
+
+
+================================================================================
+KEY NOTES FOR FRONTEND TEAM
+================================================================================
+
+1. RESPONSE ENVELOPE
+   Every response:
+     { "status": true|false, "message": "...", "data": {...}? }
+   Validation failures add:
+     { "errors": { "field": ["msg", ...] } }
+   Always check "status" before reading "data".
+
+2. AUTH HEADER
+   Send "Authorization: Bearer <access>" on every non-public endpoint.
+   On 401, use the refresh token to obtain a new access token.
+
+3. ROLE HIERARCHY (as intended)
+   - #SU (is_superuser)         → super admin; manages tenants & users.
+   - #A  (organization.owner)   → tenant admin; manages own org.
+   - #E  (any member)           → employee; self-service only.
+
+4. ONE-ACTIVE-ORG-PER-USER RULE
+   A user may belong to exactly ONE active organization at a time.
+   Attempting to assign a user who already belongs to another active
+   organization returns HTTP 400. To move a user, the previous
+   membership must be deactivated first (no API currently exposes this —
+   it's implicit via owner change).
+
+5. OWNER vs MEMBER
+   - Owner is stored on Organization.owner (FK to User).
+   - Owner's User.role must be "Admin".
+   - Members are stored in OrganizationMembership (no role field).
+   - Member's User.role is whatever was passed in assign-user.
+
+6. SOFT DELETE
+   - Users, Roles, Organizations are never hard-deleted.
+   - is_active = False hides them from list/detail endpoints.
+
+7. PROFILE PHOTOS & LOGOS
+   - Uploaded to S3 first, then path stored in DB.
+   - On save failure, the new S3 object is deleted.
+   - On successful save, the old S3 object is deleted.
+   - Serializer returns the S3 path (frontend must build full URL
+     via your S3/CDN helper).
+
+8. PASSWORD FLOWS
+   - Registration sends plain password via email (one-time).
+   - Forgot-password is email-only — no OTP requirement currently.
+   - Change-password requires old password.
+   - Django password validators are enabled on forgot-password
+     but DISABLED on change-password (commented in view).
+
+9. OTP BEHAVIOR
+   - 6 digits, 5-minute expiry, 5 max attempts.
+   - Purpose is optional but recommended for scoping.
+   - Previous unverified OTPs for same email/purpose are auto-expired.
+
+10. AUDIT LOGGING
+    Every mutating endpoint writes a log_activity row with:
+      action (CREATE / UPDATE / DELETE / LOGIN / PASSWORD_CHANGE /
+              PASSWORD_RESET), module, object_type, object_id,
+      description, old_data, new_data.
+    Passwords are NEVER included in audit data.
+
+11. ORGANIZATION CODE
+    - Auto-generated on create (format defined in code_generators).
+    - Read-only on the serializer.
+    - Unique across all organizations.
+
+12. WHERE THE CODE DOESN'T MATCH TAGS
+    Before going to production, add permission classes for:
+      - /register/                → IsSuperAdmin
+      - /user/* (4 endpoints)     → IsSuperAdmin
+      - /role/* (5 endpoints)     → IsSuperAdmin
+    Currently they rely only on IsAuthenticated, so any logged-in
+    employee can list users, promote themselves to Admin via
+    user/update/, deactivate users, and manage roles.
+
+    Super admin also cannot update/deactivate an org they don't own —
+    the views filter by owner=request.user only. If super admin should
+    bypass, add "Q(owner=request.user) | is_super_admin".
+
+================================================================================
+END OF ACCOUNTS / ORGANIZATION USE CASE REFERENCE
+================================================================================
