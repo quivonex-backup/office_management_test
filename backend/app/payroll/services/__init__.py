@@ -27,6 +27,8 @@ from .common import (
 
 from .computation import compute_payslip_data
 
+from .calculator import simulate_payslip
+
 from .processing import (
     generate_payroll,
     finalize_payroll,
@@ -40,6 +42,11 @@ from .payments import (
     record_payment,
     update_payment_status,
     bulk_record_payment_for_run,
+)
+
+from .payslip import (
+    generate_payslip_pdf,
+    download_payslip_response,
 )
 
 
@@ -61,6 +68,9 @@ __all__ = [
 
     # Payslip
     "compute_payslip_data",
+    "simulate_payslip",
+    "generate_payslip_pdf",
+    "download_payslip_response",
 
     # Generation & finalization
     "generate_payroll",

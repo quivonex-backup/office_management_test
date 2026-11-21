@@ -1,0 +1,1320 @@
+================================================================================
+PROJECTS APP — ADMIN API REFERENCE (FULL RESPONSES)
+================================================================================
+
+Base URL   : /
+Method     : All endpoints are POST
+Auth       : Bearer token (IsAuthenticated)
+Envelope   : { "status": true|false, "message": "...", "data": {...}?, "errors": {...}? }
+
+Organization context:
+  - Single-org users: omit organization_id
+  - Multi-org users: include organization_id in body
+
+Who uses this document:
+  - Super admin
+  - Organization owner (Admin role)
+  - Any org member with Admin-level access
+
+
+================================================================================
+BOOTSTRAP ORDER — READ FIRST
+================================================================================
+
+  1. Create a client         (separate /clients/ app — prerequisite)
+  2. Create a project        (this app)
+  3. Allocate employees      (team-allocation/create)
+  4. Assign a project head   (team-allocation/assign-head)
+  5. (Optional) Create tasks (task/create)
+
+
+================================================================================
+SECTION 1 — PROJECT CRUD
+================================================================================
+
+--------------------------------------------------------------------------------
+1.1  POST /projects/create/
+--------------------------------------------------------------------------------
+Purpose : Create a new project
+Type    : multipart/form-data (accepts file uploads)
+
+Request :
+{
+  "project_name": "Website Revamp",
+  "client": 5,
+  "project_type": "Web Development",
+  "description": "Full website redesign with CMS integration",
+  "start_date": "2026-05-01",
+  "end_date": "2026-08-31",
+  "deadline": "2026-08-15",
+  "priority": "high",
+  "status": "new",
+  "total_cost": "250000.00",
+  "live_url": "https://example.com",
+  "documents": [<file1>, <file2>]
+}
+
+Response 201:
+{
+  "status": true,
+  "message": "Project created successfully.",
+  "data": {
+    "id": 12,
+    "project_name": "Website Revamp",
+    "client": 5,
+    "client_name": "Acme Corp",
+    "project_type": "Web Development",
+    "description": "Full website redesign with CMS integration",
+    "start_date": "2026-05-01",
+    "end_date": "2026-08-31",
+    "deadline": "2026-08-15",
+    "priority": "high",
+    "status": "new",
+    "total_cost": "250000.00",
+    "live_url": "https://example.com",
+    "documents": [
+      {
+        "id": 101,
+        "title": "project-brief.pdf",
+        "file": "https:/aws.com/abc/projects/documents/project-brief.pdf",
+        "description": null,
+        "created_at": "2026-04-20T10:00:00Z"
+      }
+    ],
+    "project_head": null,
+    "is_active": true,
+    "created_at": "2026-04-20T10:00:00Z",
+    "updated_at": "2026-04-20T10:00:00Z"
+  }
+}
+
+Response 400 (validation — e.g. bad dates):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": {
+    "end_date": ["End date cannot be before start date."]
+  }
+}
+
+
+--------------------------------------------------------------------------------
+1.2  POST /projects/list/
+--------------------------------------------------------------------------------
+Purpose : List all active projects in caller's org
+
+Request (all optional):
+{
+  "search": "website",
+  "client_id": 5,
+  "status": "in_progress",
+  "priority": "high"
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Projects fetched successfully.",
+  "data": [
+    {
+      "id": 12,
+      "project_name": "Website Revamp",
+      "client": 5,
+      "client_name": "Acme Corp",
+      "project_type": "Web Development",
+      "start_date": "2026-05-01",
+      "end_date": "2026-08-31",
+      "deadline": "2026-08-15",
+      "priority": "high",
+      "status": "in_progress",
+      "total_cost": "250000.00",
+      "live_url": "https://example.com",
+      "documents": [
+        {
+          "id": 101,
+          "title": "project-brief.pdf",
+          "file": "https:/aws.com/abc/projects/documents/project-brief.pdf",
+          "description": null,
+          "created_at": "2026-04-20T10:00:00Z"
+        }
+      ],
+      "is_active": true,
+      "created_at": "2026-04-20T10:00:00Z"
+    },
+    {
+      "id": 11,
+      "project_name": "Mobile App",
+      "client": 6,
+      "client_name": "Beta Inc",
+      "project_type": "Android/iOS",
+      "start_date": "2026-03-01",
+      "end_date": "2026-06-30",
+      "deadline": "2026-06-20",
+      "priority": "medium",
+      "status": "testing",
+      "total_cost": "180000.00",
+      "live_url": null,
+      "documents": [],
+      "is_active": true,
+      "created_at": "2026-02-15T09:00:00Z"
+    }
+  ]
+}
+
+NOTE: project_head is NOT in list response (kept lean).
+      Use /detail/ to get the head for a specific project.
+
+
+--------------------------------------------------------------------------------
+1.3  POST /projects/detail/
+--------------------------------------------------------------------------------
+Purpose : Full detail of one project including head + documents
+
+Request : { "project_id": 12 }
+
+Response 200:
+{
+  "status": true,
+  "message": "Project details fetched successfully.",
+  "data": {
+    "id": 12,
+    "project_name": "Website Revamp",
+    "client": 5,
+    "client_name": "Acme Corp",
+    "project_type": "Web Development",
+    "description": "Full website redesign with CMS integration",
+    "start_date": "2026-05-01",
+    "end_date": "2026-08-31",
+    "deadline": "2026-08-15",
+    "priority": "high",
+    "status": "in_progress",
+    "total_cost": "250000.00",
+    "live_url": "https://example.com",
+    "documents": [
+      {
+        "id": 101,
+        "title": "project-brief.pdf",
+        "file": "https:/aws.com/abc/projects/documents/project-brief.pdf",
+        "description": null,
+        "created_at": "2026-04-20T10:00:00Z"
+      }
+    ],
+    "project_head": {
+      "allocation_id": 30,
+      "employee_id": 25,
+      "employee_code": "EMP-000025",
+      "name": "Rahul Patil",
+      "project_role": "Team Lead"
+    },
+    "is_active": true,
+    "created_at": "2026-04-20T10:00:00Z",
+    "updated_at": "2026-04-22T14:30:00Z"
+  }
+}
+
+Response 200 (project with NO head assigned):
+{
+  "status": true,
+  "message": "Project details fetched successfully.",
+  "data": {
+    ...
+    "project_head": null,
+    ...
+  }
+}
+
+Response 404:
+{ "status": false, "message": "Project not found." }
+
+
+--------------------------------------------------------------------------------
+1.4  POST /projects/update/
+--------------------------------------------------------------------------------
+Purpose : Update project (partial)
+Type    : multipart/form-data
+
+Request :
+{
+  "project_id": 12,
+  "project_name": "Website Revamp v2",
+  "priority": "urgent",
+  "remove_document_ids": [101],
+  "documents": [<newfile>]
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Project updated successfully.",
+  "data": {
+    "id": 12,
+    "project_name": "Website Revamp v2",
+    "client": 5,
+    "client_name": "Acme Corp",
+    "project_type": "Web Development",
+    "description": "Full website redesign with CMS integration",
+    "start_date": "2026-05-01",
+    "end_date": "2026-08-31",
+    "deadline": "2026-08-15",
+    "priority": "urgent",
+    "status": "in_progress",
+    "total_cost": "250000.00",
+    "live_url": "https://example.com",
+    "documents": [
+      {
+        "id": 102,
+        "title": "specs-v2.pdf",
+        "file": "https:/aws.com/abc/projects/documents/specs-v2.pdf",
+        "description": null,
+        "created_at": "2026-04-25T11:00:00Z"
+      }
+    ],
+    "project_head": {
+      "allocation_id": 30,
+      "employee_id": 25,
+      "employee_code": "EMP-000025",
+      "name": "Rahul Patil",
+      "project_role": "Team Lead"
+    },
+    "is_active": true,
+    "created_at": "2026-04-20T10:00:00Z",
+    "updated_at": "2026-04-25T11:00:00Z"
+  }
+}
+
+Response 400 (new client from another org):
+{
+  "status": false,
+  "message": "Selected client does not belong to this organization."
+}
+
+
+--------------------------------------------------------------------------------
+1.5  POST /projects/deactivate/
+--------------------------------------------------------------------------------
+Purpose : Soft-delete a project
+
+Request : { "project_id": 12 }
+
+Response 200:
+{
+  "status": true,
+  "message": "Project deactivated successfully."
+}
+
+Response 404:
+{ "status": false, "message": "Project not found." }
+
+
+================================================================================
+SECTION 2 — TEAM ALLOCATION
+================================================================================
+
+--------------------------------------------------------------------------------
+2.1  POST /projects/team-allocation/create/
+--------------------------------------------------------------------------------
+Purpose : Allocate an employee to a project
+
+Request :
+{
+  "project": 12,
+  "employee": 25,
+  "project_role": "Backend Dev",
+  "allocation_percentage": "80.00",
+  "start_date": "2026-05-01",
+  "end_date": "2026-08-31",
+  "notes": ""
+}
+
+Response 201:
+{
+  "status": true,
+  "message": "Employee allocated to project successfully.",
+  "data": {
+    "id": 30,
+    "project_details": {
+      "id": 12,
+      "project_name": "Website Revamp",
+      "project_type": "Web Development",
+      "status": "in_progress",
+      "priority": "high",
+      "client_id": 5,
+      "client_name": "Acme Corp"
+    },
+    "employee_details": {
+      "id": 25,
+      "employee_code": "EMP-000025",
+      "name": "Rahul Patil",
+      "designation": "Software Engineer",
+      "department": "Engineering",
+      "employment_status": "ACTIVE",
+      "mobile": "9876543210",
+      "email": "rahul@example.com"
+    },
+    "project_role": "Backend Dev",
+    "allocation_percentage": "80.00",
+    "start_date": "2026-05-01",
+    "end_date": "2026-08-31",
+    "notes": "",
+    "is_project_head": false,
+    "is_active": true,
+    "allocated_by_details": {
+      "id": 2,
+      "username": "admin_user",
+      "email": "admin@acme.com"
+    },
+    "created_at": "2026-04-25T11:00:00Z",
+    "updated_at": "2026-04-25T11:00:00Z"
+  }
+}
+
+Response 400 (duplicate active allocation):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": {
+    "non_field_errors": [
+      "This employee is already actively allocated to this project."
+    ]
+  }
+}
+
+Response 400 (inactive employee):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": {
+    "employee": ["Selected employee is not currently active."]
+  }
+}
+
+Response 404 (project from another org):
+{
+  "status": false,
+  "message": "Project not found in your organization."
+}
+
+
+--------------------------------------------------------------------------------
+2.2  POST /projects/team-allocation/list/
+--------------------------------------------------------------------------------
+Purpose : List team allocations (org-wide with filters)
+
+Request (all optional):
+{
+  "search": "rahul",
+  "project_id": 12,
+  "employee_id": 25,
+  "is_active": true,
+  "project_role": "Backend"
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Project team allocations fetched successfully.",
+  "data": [
+    {
+      "id": 30,
+      "project_id": 12,
+      "project_name": "Website Revamp",
+      "employee_code": "EMP-000025",
+      "employee_name": "Rahul Patil",
+      "employee_designation": "Software Engineer",
+      "project_role": "Backend Dev",
+      "allocation_percentage": "80.00",
+      "start_date": "2026-05-01",
+      "end_date": "2026-08-31",
+      "is_project_head": true,
+      "is_active": true,
+      "notes": "",
+      "created_at": "2026-04-25T11:00:00Z",
+      "updated_at": "2026-04-25T11:00:00Z"
+    },
+    {
+      "id": 31,
+      "project_id": 12,
+      "project_name": "Website Revamp",
+      "employee_code": "EMP-000030",
+      "employee_name": "Priya Sharma",
+      "employee_designation": "UI Designer",
+      "project_role": "Frontend Dev",
+      "allocation_percentage": "100.00",
+      "start_date": "2026-05-01",
+      "end_date": "2026-08-31",
+      "is_project_head": false,
+      "is_active": true,
+      "notes": "",
+      "created_at": "2026-04-25T11:30:00Z",
+      "updated_at": "2026-04-25T11:30:00Z"
+    }
+  ]
+}
+
+
+--------------------------------------------------------------------------------
+2.3  POST /projects/team-allocation/detail/
+--------------------------------------------------------------------------------
+Purpose : Full detail of one allocation
+
+Request : { "allocation_id": 30 }
+
+Response 200:
+{
+  "status": true,
+  "message": "Project team allocation details fetched successfully.",
+  "data": {
+    "id": 30,
+    "project_details": {
+      "id": 12,
+      "project_name": "Website Revamp",
+      "project_type": "Web Development",
+      "status": "in_progress",
+      "priority": "high",
+      "client_id": 5,
+      "client_name": "Acme Corp"
+    },
+    "employee_details": {
+      "id": 25,
+      "employee_code": "EMP-000025",
+      "name": "Rahul Patil",
+      "designation": "Software Engineer",
+      "department": "Engineering",
+      "employment_status": "ACTIVE",
+      "mobile": "9876543210",
+      "email": "rahul@example.com"
+    },
+    "project_role": "Backend Dev",
+    "allocation_percentage": "80.00",
+    "start_date": "2026-05-01",
+    "end_date": "2026-08-31",
+    "notes": "",
+    "is_project_head": true,
+    "is_active": true,
+    "allocated_by_details": {
+      "id": 2,
+      "username": "admin_user",
+      "email": "admin@acme.com"
+    },
+    "created_at": "2026-04-25T11:00:00Z",
+    "updated_at": "2026-04-25T11:00:00Z"
+  }
+}
+
+Response 404:
+{ "status": false, "message": "Project team allocation not found." }
+
+
+--------------------------------------------------------------------------------
+2.4  POST /projects/team-allocation/update/
+--------------------------------------------------------------------------------
+Purpose : Update allocation (partial — cannot change is_project_head)
+
+Request :
+{
+  "allocation_id": 30,
+  "project_role": "Senior Backend Dev",
+  "allocation_percentage": "100.00",
+  "end_date": "2026-09-30",
+  "notes": "Extended to Q3"
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Project team allocation updated successfully.",
+  "data": {
+    "id": 30,
+    "project_details": {
+      "id": 12,
+      "project_name": "Website Revamp",
+      "project_type": "Web Development",
+      "status": "in_progress",
+      "priority": "high",
+      "client_id": 5,
+      "client_name": "Acme Corp"
+    },
+    "employee_details": {
+      "id": 25,
+      "employee_code": "EMP-000025",
+      "name": "Rahul Patil",
+      "designation": "Software Engineer",
+      "department": "Engineering",
+      "employment_status": "ACTIVE",
+      "mobile": "9876543210",
+      "email": "rahul@example.com"
+    },
+    "project_role": "Senior Backend Dev",
+    "allocation_percentage": "100.00",
+    "start_date": "2026-05-01",
+    "end_date": "2026-09-30",
+    "notes": "Extended to Q3",
+    "is_project_head": true,
+    "is_active": true,
+    "allocated_by_details": {
+      "id": 2,
+      "username": "admin_user",
+      "email": "admin@acme.com"
+    },
+    "created_at": "2026-04-25T11:00:00Z",
+    "updated_at": "2026-04-27T09:15:00Z"
+  }
+}
+
+NOTE: is_project_head is NOT writable here — use /assign-head/
+
+
+--------------------------------------------------------------------------------
+2.5  POST /projects/team-allocation/deactivate/
+--------------------------------------------------------------------------------
+Purpose : Remove employee from project (soft-delete allocation)
+
+Request : { "allocation_id": 30 }
+
+Response 200:
+{
+  "status": true,
+  "message": "Employee removed from project successfully."
+}
+
+Response 404:
+{ "status": false, "message": "Active project team allocation not found." }
+
+NOTE:
+  - If the deactivated allocation was the head, the project is left
+    with NO active head. Admin must reassign via /assign-head/.
+  - The employee's tasks are NOT auto-reassigned.
+
+
+--------------------------------------------------------------------------------
+2.6  POST /projects/team-allocation/project-team/
+--------------------------------------------------------------------------------
+Purpose : View all active team members + who is head
+
+Request : { "project_id": 12 }
+
+Response 200:
+{
+  "status": true,
+  "message": "Project team fetched successfully.",
+  "data": {
+    "project": {
+      "id": 12,
+      "project_name": "Website Revamp",
+      "client_id": 5,
+      "client_name": "Acme Corp",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    "project_head": {
+      "allocation_id": 30,
+      "employee_id": 25,
+      "employee_code": "EMP-000025",
+      "name": "Rahul Patil",
+      "project_role": "Team Lead"
+    },
+    "team_count": 3,
+    "team": [
+      {
+        "id": 30,
+        "employee_code": "EMP-000025",
+        "employee_name": "Rahul Patil",
+        "project_role": "Team Lead",
+        "allocation_percentage": "80.00",
+        "start_date": "2026-05-01",
+        "end_date": "2026-08-31",
+        "is_project_head": true,
+        "is_active": true,
+        "notes": ""
+      },
+      {
+        "id": 31,
+        "employee_code": "EMP-000030",
+        "employee_name": "Priya Sharma",
+        "project_role": "Frontend Dev",
+        "allocation_percentage": "100.00",
+        "start_date": "2026-05-01",
+        "end_date": "2026-08-31",
+        "is_project_head": false,
+        "is_active": true,
+        "notes": ""
+      },
+      {
+        "id": 32,
+        "employee_code": "EMP-000035",
+        "employee_name": "Amit Kumar",
+        "project_role": "QA",
+        "allocation_percentage": "50.00",
+        "start_date": "2026-05-01",
+        "end_date": "2026-08-31",
+        "is_project_head": false,
+        "is_active": true,
+        "notes": ""
+      }
+    ]
+  }
+}
+
+Response 200 (no head assigned yet):
+{
+  "status": true,
+  "message": "Project team fetched successfully.",
+  "data": {
+    "project": { ... },
+    "project_head": null,
+    "team_count": 2,
+    "team": [ ... ]
+  }
+}
+
+
+--------------------------------------------------------------------------------
+2.7  POST /projects/team-allocation/employee-projects/
+--------------------------------------------------------------------------------
+Purpose : Admin views any employee's project list
+
+Request : { "employee_id": 25 }
+
+Response 200:
+{
+  "status": true,
+  "message": "Employee projects fetched successfully.",
+  "data": {
+    "employee": {
+      "id": 25,
+      "employee_code": "EMP-000025",
+      "name": "Rahul Patil",
+      "designation": "Software Engineer",
+      "department": "Engineering"
+    },
+    "project_count": 2,
+    "projects": [
+      {
+        "id": 30,
+        "project_name": "Website Revamp",
+        "project_status": "in_progress",
+        "project_priority": "high",
+        "client_name": "Acme Corp",
+        "project_role": "Team Lead",
+        "allocation_percentage": "80.00",
+        "start_date": "2026-05-01",
+        "end_date": "2026-08-31",
+        "is_project_head": true,
+        "is_active": true,
+        "notes": ""
+      },
+      {
+        "id": 42,
+        "project_name": "Mobile App",
+        "project_status": "testing",
+        "project_priority": "medium",
+        "client_name": "Beta Inc",
+        "project_role": "Backend Dev",
+        "allocation_percentage": "40.00",
+        "start_date": "2026-03-01",
+        "end_date": "2026-06-30",
+        "is_project_head": false,
+        "is_active": true,
+        "notes": ""
+      }
+    ]
+  }
+}
+
+Response 404:
+{ "status": false, "message": "Employee not found." }
+
+
+--------------------------------------------------------------------------------
+2.8  POST /projects/team-allocation/assign-head/
+--------------------------------------------------------------------------------
+Purpose : Make an already-allocated employee the project head
+
+Request : { "allocation_id": 30 }
+
+Response 200 (assigning new head):
+{
+  "status": true,
+  "message": "Project head assigned successfully.",
+  "data": {
+    "id": 30,
+    "project_details": {
+      "id": 12,
+      "project_name": "Website Revamp",
+      "project_type": "Web Development",
+      "status": "in_progress",
+      "priority": "high",
+      "client_id": 5,
+      "client_name": "Acme Corp"
+    },
+    "employee_details": {
+      "id": 25,
+      "employee_code": "EMP-000025",
+      "name": "Rahul Patil",
+      "designation": "Software Engineer",
+      "department": "Engineering",
+      "employment_status": "ACTIVE",
+      "mobile": "9876543210",
+      "email": "rahul@example.com"
+    },
+    "project_role": "Team Lead",
+    "allocation_percentage": "80.00",
+    "start_date": "2026-05-01",
+    "end_date": "2026-08-31",
+    "notes": "",
+    "is_project_head": true,
+    "is_active": true,
+    "allocated_by_details": {
+      "id": 2,
+      "username": "admin_user",
+      "email": "admin@acme.com"
+    },
+    "created_at": "2026-04-25T11:00:00Z",
+    "updated_at": "2026-04-28T10:20:00Z"
+  }
+}
+
+Response 200 (already the head — no-op):
+{
+  "status": true,
+  "message": "This employee is already the project head.",
+  "data": { ...same detail object... }
+}
+
+Response 404 (allocation inactive or project inactive):
+{
+  "status": false,
+  "message": "Active team allocation not found for this project."
+}
+
+BEHAVIOR:
+  - Previous head (if any) is demoted to normal member in the same transaction.
+  - No "revoke head" endpoint exists — reassigning someone else is the
+    way to demote.
+
+
+================================================================================
+SECTION 3 — TASK MANAGEMENT
+================================================================================
+
+Permission matrix for this section:
+  ADMIN  — super admin, org owner (full access)
+  HEAD   — active project head (full access on their project)
+  MEMBER — active team member (only their own tasks, limited transitions)
+
+
+--------------------------------------------------------------------------------
+3.1  POST /projects/task/create/
+--------------------------------------------------------------------------------
+Permission: ADMIN or HEAD
+Request :
+{
+  "project": 12,
+  "title": "Build login API",
+  "description": "JWT-based auth with refresh tokens",
+  "priority": "high",
+  "assigned_to": 25,
+  "due_date": "2026-06-15",
+  "estimated_hours": "16.00"
+}
+
+Response 201:
+{
+  "status": true,
+  "message": "Task created successfully.",
+  "data": {
+    "id": 500,
+    "project_details": {
+      "id": 12,
+      "project_name": "Website Revamp",
+      "project_code": "PRJ-000012",
+      "client_id": 5,
+      "client_name": "Acme Corp",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    "title": "Build login API",
+    "description": "JWT-based auth with refresh tokens",
+    "status": "TODO",
+    "priority": "high",
+    "assigned_to_details": {
+      "id": 25,
+      "employee_code": "EMP-000025",
+      "name": "Rahul Patil",
+      "designation": "Software Engineer",
+      "department": "Engineering"
+    },
+    "due_date": "2026-06-15",
+    "estimated_hours": "16.00",
+    "actual_hours": null,
+    "completed_at": null,
+    "is_active": true,
+    "created_by_details": {
+      "id": 2,
+      "username": "admin_user",
+      "email": "admin@acme.com"
+    },
+    "updated_by_details": {
+      "id": 2,
+      "username": "admin_user",
+      "email": "admin@acme.com"
+    },
+    "created_at": "2026-04-28T11:00:00Z",
+    "updated_at": "2026-04-28T11:00:00Z"
+  }
+}
+
+Response 400 (assignee not allocated to project):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": {
+    "assigned_to": ["Selected employee is not allocated to this project."]
+  }
+}
+
+Response 403 (member trying to create):
+{
+  "status": false,
+  "message": "Only the project head or organization admin can create tasks."
+}
+
+
+--------------------------------------------------------------------------------
+3.2  POST /projects/task/list/
+--------------------------------------------------------------------------------
+Permission: ADMIN or HEAD
+Request (all optional):
+{
+  "project_id": 12,
+  "status": "IN_PROGRESS",
+  "priority": "high",
+  "assigned_to_id": 25,
+  "search": "login"
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Tasks fetched successfully.",
+  "data": [
+    {
+      "id": 500,
+      "project_id": 12,
+      "project_name": "Website Revamp",
+      "title": "Build login API",
+      "status": "IN_PROGRESS",
+      "priority": "high",
+      "assigned_to_details": {
+        "id": 25,
+        "employee_code": "EMP-000025",
+        "name": "Rahul Patil",
+        "designation": "Software Engineer"
+      },
+      "due_date": "2026-06-15",
+      "estimated_hours": "16.00",
+      "actual_hours": "8.00",
+      "completed_at": null,
+      "created_at": "2026-04-28T11:00:00Z"
+    },
+    {
+      "id": 499,
+      "project_id": 12,
+      "project_name": "Website Revamp",
+      "title": "Design login form",
+      "status": "TODO",
+      "priority": "medium",
+      "assigned_to_details": {
+        "id": 30,
+        "employee_code": "EMP-000030",
+        "name": "Priya Sharma",
+        "designation": "UI Designer"
+      },
+      "due_date": "2026-06-10",
+      "estimated_hours": "8.00",
+      "actual_hours": null,
+      "completed_at": null,
+      "created_at": "2026-04-27T14:00:00Z"
+    }
+  ]
+}
+
+Response 403 (member trying to list):
+{
+  "status": false,
+  "message": "Only the project head or organization admin can view the task list."
+}
+
+
+--------------------------------------------------------------------------------
+3.3  POST /projects/task/detail/
+--------------------------------------------------------------------------------
+Permission: ADMIN, HEAD, or the task's assignee (MEMBER)
+Request : { "task_id": 500 }
+
+Response 200:
+{
+  "status": true,
+  "message": "Task detail fetched successfully.",
+  "data": {
+    "id": 500,
+    "project_details": {
+      "id": 12,
+      "project_name": "Website Revamp",
+      "project_code": "PRJ-000012",
+      "client_id": 5,
+      "client_name": "Acme Corp",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    "title": "Build login API",
+    "description": "JWT-based auth with refresh tokens",
+    "status": "IN_PROGRESS",
+    "priority": "high",
+    "assigned_to_details": {
+      "id": 25,
+      "employee_code": "EMP-000025",
+      "name": "Rahul Patil",
+      "designation": "Software Engineer",
+      "department": "Engineering"
+    },
+    "due_date": "2026-06-15",
+    "estimated_hours": "16.00",
+    "actual_hours": "8.00",
+    "completed_at": null,
+    "is_active": true,
+    "created_by_details": {
+      "id": 2,
+      "username": "admin_user",
+      "email": "admin@acme.com"
+    },
+    "updated_by_details": {
+      "id": 25,
+      "username": "rahul",
+      "email": "rahul@example.com"
+    },
+    "created_at": "2026-04-28T11:00:00Z",
+    "updated_at": "2026-04-29T09:30:00Z"
+  }
+}
+
+Response 403 (member trying to view another member's task):
+{
+  "status": false,
+  "message": "You do not have access to this task."
+}
+
+
+--------------------------------------------------------------------------------
+3.4  POST /projects/task/update/
+--------------------------------------------------------------------------------
+Permission: ADMIN or HEAD
+Purpose : Update task fields (NOT status — see 3.5)
+Request :
+{
+  "task_id": 500,
+  "title": "Build login + refresh API",
+  "priority": "urgent",
+  "assigned_to": 26,
+  "due_date": "2026-07-01",
+  "estimated_hours": "20.00",
+  "actual_hours": "18.00"
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Task updated successfully.",
+  "data": {
+    "id": 500,
+    "project_details": { ...same as detail... },
+    "title": "Build login + refresh API",
+    "description": "JWT-based auth with refresh tokens",
+    "status": "IN_PROGRESS",
+    "priority": "urgent",
+    "assigned_to_details": {
+      "id": 26,
+      "employee_code": "EMP-000026",
+      "name": "Amit Kumar",
+      "designation": "Backend Dev",
+      "department": "Engineering"
+    },
+    "due_date": "2026-07-01",
+    "estimated_hours": "20.00",
+    "actual_hours": "18.00",
+    "completed_at": null,
+    "is_active": true,
+    "created_by_details": { ... },
+    "updated_by_details": {
+      "id": 2,
+      "username": "admin_user",
+      "email": "admin@acme.com"
+    },
+    "created_at": "2026-04-28T11:00:00Z",
+    "updated_at": "2026-04-30T10:00:00Z"
+  }
+}
+
+NOTE: project and status are NOT writable here.
+
+
+--------------------------------------------------------------------------------
+3.5  POST /projects/task/status-update/
+--------------------------------------------------------------------------------
+Permission:
+  - ADMIN or HEAD: any transition
+  - Assignee (MEMBER who is assigned_to): limited to
+      TODO ↔ IN_PROGRESS
+      IN_PROGRESS → IN_REVIEW
+
+Request :
+{
+  "task_id": 500,
+  "status": "IN_REVIEW",
+  "actual_hours": "14.00"
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Task status updated successfully.",
+  "data": {
+    "id": 500,
+    "project_details": { ... },
+    "title": "Build login + refresh API",
+    "description": "...",
+    "status": "IN_REVIEW",
+    "priority": "urgent",
+    "assigned_to_details": {
+      "id": 26,
+      "employee_code": "EMP-000026",
+      "name": "Amit Kumar",
+      "designation": "Backend Dev",
+      "department": "Engineering"
+    },
+    "due_date": "2026-07-01",
+    "estimated_hours": "20.00",
+    "actual_hours": "14.00",
+    "completed_at": null,
+    "is_active": true,
+    "created_by_details": { ... },
+    "updated_by_details": {
+      "id": 26,
+      "username": "amit",
+      "email": "amit@example.com"
+    },
+    "created_at": "2026-04-28T11:00:00Z",
+    "updated_at": "2026-05-01T16:00:00Z"
+  }
+}
+
+Response 200 (marking DONE — head/admin only):
+{
+  "status": true,
+  "message": "Task status updated successfully.",
+  "data": {
+    ...
+    "status": "DONE",
+    "completed_at": "2026-05-02T10:00:00Z",
+    ...
+  }
+}
+
+Response 200 (same-status no-op):
+{
+  "status": true,
+  "message": "Task status unchanged.",
+  "data": { ...unchanged task... }
+}
+
+Response 400 (invalid transition for member):
+{
+  "status": false,
+  "message": "Transition from 'IN_PROGRESS' to 'DONE' is not allowed for your role."
+}
+
+Response 403 (not assignee, not head):
+{
+  "status": false,
+  "message": "You are not allowed to change the status of this task."
+}
+
+Side effects:
+  - new_status == "DONE" → completed_at = now
+  - leaving "DONE"       → completed_at = null
+
+
+--------------------------------------------------------------------------------
+3.6  POST /projects/task/deactivate/
+--------------------------------------------------------------------------------
+Permission: ADMIN or HEAD
+Request : { "task_id": 500 }
+
+Response 200:
+{
+  "status": true,
+  "message": "Task deactivated successfully."
+}
+
+Response 404:
+{ "status": false, "message": "Task not found." }
+
+Response 403:
+{
+  "status": false,
+  "message": "Only the project head or organization admin can deactivate tasks."
+}
+
+
+================================================================================
+QUICK REFERENCE — ADMIN ENDPOINTS
+================================================================================
+
+PROJECT (5)
+  POST /projects/create/
+  POST /projects/list/
+  POST /projects/detail/
+  POST /projects/update/
+  POST /projects/deactivate/
+
+TEAM ALLOCATION (8)
+  POST /projects/team-allocation/create/
+  POST /projects/team-allocation/list/
+  POST /projects/team-allocation/detail/
+  POST /projects/team-allocation/update/
+  POST /projects/team-allocation/deactivate/
+  POST /projects/team-allocation/project-team/
+  POST /projects/team-allocation/employee-projects/
+  POST /projects/team-allocation/assign-head/
+
+TASK (6)
+  POST /projects/task/create/
+  POST /projects/task/list/
+  POST /projects/task/detail/
+  POST /projects/task/update/
+  POST /projects/task/status-update/
+  POST /projects/task/deactivate/
+
+TOTAL ADMIN ENDPOINTS: 19
+
+
+================================================================================
+STATUS ENUMS — FOR UI MAPPING
+================================================================================
+
+PROJECT status:
+  new | in_progress | testing | completed | on_hold | cancelled
+
+PROJECT priority:
+  low | medium | high | urgent
+
+TASK status:
+  TODO | IN_PROGRESS | IN_REVIEW | DONE
+
+TASK priority (same as project):
+  low | medium | high | urgent
+
+EMPLOYMENT status (read-only from Employee):
+  ACTIVE | INACTIVE | ON_LEAVE | RESIGNED | TERMINATED
+
+
+================================================================================
+COMMON ERROR SHAPES
+================================================================================
+
+Validation failure (400):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": {
+    "field_name": ["Error message."],
+    "non_field_errors": ["Cross-field error."]
+  }
+}
+
+Not found (404):
+{ "status": false, "message": "Project not found." }
+
+Forbidden (403):
+{ "status": false, "message": "Only the project head or organization admin can create tasks." }
+
+Missing required param (400):
+{ "status": false, "message": "project_id is required." }
+
+
+================================================================================
+KEY NOTES FOR FRONTEND / UI DESIGNER
+================================================================================
+
+1. PROJECT HEAD is per-project, not per-org. One active head at a time.
+   - Set via /team-allocation/assign-head/
+   - Demote by assigning a different allocation as head
+   - No "revoke head" endpoint — replacing is the way to remove
+   - project_head appears in /project/detail/ and /project-team/
+
+2. DEACTIVATING THE HEAD'S ALLOCATION leaves the project with NO head.
+   UI should prompt: "This was the project head. Assign a new head?"
+   Admin still has ADMIN-level task access regardless.
+
+3. TASK STATUS LIFECYCLE
+   TODO → IN_PROGRESS → IN_REVIEW → DONE
+   - Employee (assignee) moves up to IN_REVIEW
+   - Head/Admin moves IN_REVIEW → DONE (the approval gate)
+   - Head/Admin can also reopen (DONE → IN_PROGRESS or DONE → TODO)
+   UI buttons should be gated by role + current status:
+     Member sees: "Start" (TODO), "Move to Review" / "Pause" (IN_PROGRESS)
+     Head/Admin sees: full status dropdown with all 4 values
+
+4. TASK ASSIGNMENT requires project allocation.
+   Assignee must already be on the project team. Non-members get
+   a 400 with "Selected employee is not allocated to this project."
+
+5. project_head object shape (identical everywhere it appears):
+   {
+     "allocation_id": 30,
+     "employee_id": 25,
+     "employee_code": "EMP-000025",
+     "name": "Rahul Patil",
+     "project_role": "Team Lead"
+   }
+   When null → no head assigned. UI should show "No head assigned"
+   with a CTA to assign one.
+
+6. Documents are S3 paths, not URLs.
+   "file": "https:/aws.com/abc/projects/documents/project-brief.pdf"
+   UI needs to build the full URL via your S3/CDN helper.
+
+7. employee_details shape (used in allocation detail + create + update):
+   {
+     "id": 25,
+     "employee_code": "EMP-000025",
+     "name": "Rahul Patil",
+     "designation": "Software Engineer",
+     "department": "Engineering",
+     "employment_status": "ACTIVE",
+     "mobile": "9876543210",
+     "email": "rahul@example.com"
+   }
+
+8. assigned_to_details shape (used in task endpoints):
+   {
+     "id": 25,
+     "employee_code": "EMP-000025",
+     "name": "Rahul Patil",
+     "designation": "Software Engineer",
+     "department": "Engineering"
+   }
+   (department may be null)
+
+9. created_by_details / updated_by_details / allocated_by_details shape:
+   {
+     "id": 2,
+     "username": "admin_user",
+     "email": "admin@acme.com"
+   }
+   Any of these may be null if the linked user was deleted.
+
+10. DEACTIVATED records are soft-deleted. Nothing is truly deleted.
+    - Deactivate project → all list endpoints skip it
+    - Deactivate allocation → removed from project-team response
+    - Deactivate task → removed from /my-tasks/ for the employee

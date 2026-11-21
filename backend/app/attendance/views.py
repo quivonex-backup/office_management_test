@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 
 from django.db import transaction
 from django.db.models import Q
@@ -37,6 +37,7 @@ from .serializers import (
     AttendancePunchRequestSerializer,
     AttendanceRecordSerializer,
     AttendanceCorrectionSerializer,
+    MyShiftAssignmentSerializer,
 )
 
 from .services import (
@@ -49,11 +50,13 @@ from .services import (
     bulk_assign_shift,
     bulk_assign_shift_pattern,
     bulk_mark_absent,
+    calculate_attendance,
 )
 from .face_recognition_service import (
     FaceVerificationError,
     verify_employee_face,
 )
+from app.communications.notification_service import notify
 
 
 # =========================================================
@@ -319,20 +322,46 @@ class ShiftDeactivateAPIView(AttendanceBaseAPIView):
 
     def post(self, request):
         organization, error_response = self.get_organization(request)
-
         if error_response:
             return error_response
 
         shift_id = request.data.get("shift_id")
-
         if not shift_id:
             return self.failure("shift_id is required.")
 
         shift = get_object_or_404(
-            Shift,
-            id=shift_id,
-            organization=organization,
+            Shift, id=shift_id, organization=organization,
         )
+
+        today = timezone.localdate()
+
+        # --- GUARD: block if the shift still has an active/future assignment ---
+        blocking = (
+            EmployeeShiftAssignment.objects
+            .filter(
+                organization=organization,
+                shift=shift,
+            )
+            .filter(
+                Q(effective_to__isnull=True) | Q(effective_to__gte=today)
+            )
+            .select_related("employee")
+            .order_by("employee_id")
+        )
+
+        blocking_list = list(blocking)
+        if blocking_list:
+            names = ", ".join(
+                f"{a.employee.employee_code} "
+                f"({a.effective_from} → {a.effective_to or 'open'})"
+                for a in blocking_list[:5]
+            )
+            more = "" if len(blocking_list) <= 5 else f" and {len(blocking_list) - 5} more"
+            return self.failure(
+                f"Cannot deactivate shift '{shift.name}': "
+                f"{len(blocking_list)} employee(s) still assigned — "
+                f"{names}{more}. Reassign or close those assignments first."
+            )
 
         shift.is_active = False
         shift.save(update_fields=["is_active", "updated_at"])
@@ -460,6 +489,21 @@ class EmployeeShiftAssignmentCreateAPIView(AttendanceBaseAPIView):
                 assignment, context={"organization": organization},
             ).data,
         )
+
+        # ---- Notify employee of shift assignment ----
+        if assignment.employee.user_id:
+            transaction.on_commit(lambda: notify(
+                users=assignment.employee.user,
+                event_code="ATTENDANCE_SHIFT_ASSIGNED",
+                title="New shift assigned",
+                body=(
+                    f"You have been assigned to '{assignment.shift.name}' "
+                    f"starting {assignment.effective_from}."
+                ),
+                reference_type="employee_shift_assignment",
+                reference_id=assignment.id,
+                priority="NORMAL",
+            ))
 
         return self.success(
             "Shift assigned successfully.",
@@ -621,6 +665,26 @@ class EmployeeShiftAssignmentBulkAPIView(AttendanceBaseAPIView):
             },
         )
 
+        # ---- Notify each employee of shift assignment ----
+        recipient_users = []
+        for a in assignments:
+            if a.employee.user_id:
+                recipient_users.append(a.employee.user)
+
+        if recipient_users:
+            transaction.on_commit(lambda: notify(
+                users=recipient_users,
+                event_code="ATTENDANCE_SHIFT_ASSIGNED",
+                title="New shift assigned",
+                body=(
+                    f"You have been assigned to a new shift "
+                    f"starting {effective_from}."
+                ),
+                reference_type="employee_shift_assignment_bulk",
+                reference_id=None,
+                priority="NORMAL",
+            ))
+
         return self.success(
             "Shift assigned to employees successfully.",
             serializer.data,
@@ -711,6 +775,26 @@ class EmployeeShiftAssignmentPatternAPIView(AttendanceBaseAPIView):
                 "pattern": pattern,
             },
         )
+
+        # ---- Notify each employee of rotating shift pattern ----
+        recipient_users = []
+        for a in assignments:
+            if a.employee.user_id:
+                recipient_users.append(a.employee.user)
+
+        if recipient_users:
+            transaction.on_commit(lambda: notify(
+                users=recipient_users,
+                event_code="ATTENDANCE_SHIFT_ASSIGNED",
+                title="New shift pattern assigned",
+                body=(
+                    f"You have been assigned a rotating shift pattern "
+                    f"starting {start_date}."
+                ),
+                reference_type="employee_shift_assignment_pattern",
+                reference_id=None,
+                priority="NORMAL",
+            ))
 
         return self.success(
             "Rotating shift pattern assigned successfully.",
@@ -1266,6 +1350,28 @@ class AttendanceCorrectionCreateAPIView(AttendanceBaseAPIView):
             },
         )
 
+        # ---- Notify admin of correction request ----
+        # Determine the admin to notify.
+        # Use the organization owner as the primary recipient.
+        admin_user = None
+        if organization.owner_id:
+            admin_user = organization.owner
+
+        if admin_user:
+            transaction.on_commit(lambda: notify(
+                users=admin_user,
+                event_code="ATTENDANCE_CORRECTION_SUBMITTED",
+                title="Attendance correction request",
+                body=(
+                    f"{attendance.employee.employee_code} requested a "
+                    f"correction for {attendance.work_date} "
+                    f"(field: {correction.field_name})."
+                ),
+                reference_type="attendance_correction",
+                reference_id=correction.id,
+                priority="HIGH",
+            ))
+
         return self.success(
             "Attendance correction submitted successfully.",
             AttendanceCorrectionSerializer(
@@ -1290,8 +1396,19 @@ class AttendanceCorrectionListAPIView(AttendanceBaseAPIView):
         if error_response:
             return error_response
 
+        # queryset = AttendanceCorrection.objects.filter(
+        #     attendance__organization=organization,
+        # ).select_related(
+        #     "attendance",
+        #     "attendance__employee",
+        #     "punch",
+        # )
+
         queryset = AttendanceCorrection.objects.filter(
             attendance__organization=organization,
+        ).exclude(
+            status="APPLIED",
+            reviewed_by__isnull=True,
         ).select_related(
             "attendance",
             "attendance__employee",
@@ -1413,6 +1530,33 @@ class AttendanceCorrectionReviewAPIView(AttendanceBaseAPIView):
                 "review_note": review_note,
             },
         )
+
+        # ---- Notify employee of review outcome ----
+        if correction.attendance.employee.user_id:
+            if approve:
+                notification_title = "Attendance correction approved"
+                notification_body = (
+                    f"Your correction for "
+                    f"{correction.attendance.work_date} was approved."
+                )
+            else:
+                notification_title = "Attendance correction rejected"
+                notification_body = (
+                    f"Your correction for "
+                    f"{correction.attendance.work_date} was rejected."
+                )
+                if review_note:
+                    notification_body += f" Reason: {review_note}"
+
+            transaction.on_commit(lambda: notify(
+                users=correction.attendance.employee.user,
+                event_code="ATTENDANCE_CORRECTION_REVIEWED",
+                title=notification_title,
+                body=notification_body,
+                reference_type="attendance_correction",
+                reference_id=correction.id,
+                priority="HIGH",
+            ))
 
         return self.success(
             "Correction reviewed successfully.",
@@ -1592,4 +1736,315 @@ class FaceRecognitionAPIView(AttendanceBaseAPIView):
                 },
             },
             status=status.HTTP_200_OK,
+        )
+
+
+# =========================================================
+# MY ATTENDANCE DIRECT CORRECTION
+# Employee can directly correct their own historical timings.
+# =========================================================
+
+class MyAttendanceCorrectionAPIView(AttendanceBaseAPIView):
+
+    @transaction.atomic
+    def post(self, request):
+
+        organization, error_response = self.get_organization(request)
+
+        if error_response:
+            return error_response
+
+        employee = get_employee_for_user(
+            request.user,
+            organization,
+        )
+
+        if not employee:
+            return self.failure(
+                "No active employee profile is linked to this user.",
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        attendance_id = request.data.get("attendance_id")
+        check_in_value = request.data.get("check_in")
+        check_out_value = request.data.get("check_out")
+        reason = str(request.data.get("reason", "")).strip()
+
+        if not attendance_id:
+            return self.failure("attendance_id is required.")
+
+        if check_in_value is None and check_out_value is None:
+            return self.failure(
+                "Provide check_in or check_out to correct attendance."
+            )
+
+        if not reason:
+            return self.failure("Correction reason is required.")
+
+        attendance = get_object_or_404(
+            AttendanceRecord.objects.select_for_update(),
+            id=attendance_id,
+            organization=organization,
+            employee=employee,
+        )
+
+        def parse_datetime(value, field_name):
+
+            if value in (None, ""):
+                return None
+
+            try:
+                parsed_value = datetime.fromisoformat(
+                    str(value).replace("Z", "+00:00")
+                )
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"{field_name} must be a valid ISO 8601 datetime."
+                )
+
+            if timezone.is_naive(parsed_value):
+                parsed_value = timezone.make_aware(
+                    parsed_value,
+                    timezone.get_current_timezone(),
+                )
+
+            return parsed_value
+
+        try:
+            new_check_in = (
+                parse_datetime(check_in_value, "check_in")
+                if check_in_value is not None
+                else attendance.check_in
+            )
+
+            new_check_out = (
+                parse_datetime(check_out_value, "check_out")
+                if check_out_value is not None
+                else attendance.check_out
+            )
+
+        except ValueError as exc:
+            return self.failure(str(exc))
+
+        if new_check_in and new_check_out:
+            if new_check_out <= new_check_in:
+                return self.failure(
+                    "Check-out must be later than check-in."
+                )
+
+        corrections = []
+
+        correction_values = [
+            (
+                "CHECK_IN",
+                "check_in",
+                attendance.check_in,
+                new_check_in,
+                check_in_value is not None,
+            ),
+            (
+                "CHECK_OUT",
+                "check_out",
+                attendance.check_out,
+                new_check_out,
+                check_out_value is not None,
+            ),
+        ]
+
+        for field_name, model_field, old_value, new_value, supplied in correction_values:
+
+            if not supplied:
+                continue
+
+            if old_value == new_value:
+                continue
+
+            if new_value is None:
+                return self.failure(
+                    f"{model_field} cannot be cleared through this API."
+                )
+
+            # Save the correction history as immediately applied.
+            correction = AttendanceCorrection.objects.create(
+                attendance=attendance,
+                field_name=field_name,
+                old_value=old_value.isoformat() if old_value else None,
+                new_value=new_value.isoformat(),
+                reason=reason,
+                status="APPLIED",
+                requested_by=request.user,
+            )
+
+            # Keep the corresponding punch record synchronized.
+            punch, _ = AttendancePunch.objects.update_or_create(
+                attendance=attendance,
+                punch_type=field_name,
+                defaults={
+                    "punched_at": new_value,
+                    "recorded_by": request.user,
+                    "is_manual": True,
+                    "verification_status": "MANUAL",
+                    "verification_details": {
+                        "source": "employee_direct_correction",
+                        "correction_id": correction.id,
+                        "reason": reason,
+                    },
+                },
+            )
+
+            correction.punch = punch
+            correction.save(update_fields=["punch", "updated_at"])
+
+            setattr(attendance, model_field, new_value)
+
+            corrections.append({
+                "field": field_name,
+                "old_value": old_value.isoformat() if old_value else None,
+                "new_value": new_value.isoformat(),
+                "correction_id": correction.id,
+            })
+
+        if not corrections:
+            return self.failure(
+                "No attendance changes were provided."
+            )
+
+        attendance.updated_by = request.user
+        attendance.save()
+
+        # Recalculate PRESENT / HALF_DAY using existing attendance rules.
+        calculate_attendance(attendance)
+
+        attendance.refresh_from_db()
+
+        self.audit(
+            organization=organization,
+            user=request.user,
+            action="UPDATE",
+            module="ATTENDANCE",
+            description=(
+                f"Employee directly corrected attendance "
+                f"for {attendance.work_date}."
+            ),
+        )
+
+        return self.success(
+            "Attendance corrected successfully.",
+            {
+                "attendance": AttendanceRecordSerializer(
+                    attendance,
+                    context={"request": request},
+                ).data,
+                "corrections": corrections,
+            },
+        )
+
+
+# =========================================================
+# MY SHIFT ASSIGNMENTS (EMPLOYEE)
+# =========================================================
+class MyShiftAssignmentListAPIView(AttendanceBaseAPIView):
+
+    def post(self, request):
+        organization, error_response = self.get_organization(request)
+
+        if error_response:
+            return error_response
+
+        employee = get_employee_for_user(
+            request.user,
+            organization,
+        )
+
+        if not employee:
+            return self.failure(
+                "No active employee profile is linked to this user.",
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        attendance_settings = get_attendance_settings(organization)
+        today = timezone.localdate()
+
+        include_inactive = request.data.get("include_inactive", False)
+
+        if isinstance(include_inactive, str):
+            include_inactive = (
+                include_inactive.lower() in ("true", "1", "yes")
+            )
+
+        queryset = (
+            EmployeeShiftAssignment.objects
+            .filter(
+                organization=organization,
+                employee=employee,
+            )
+            .select_related("shift")
+            .order_by("-effective_from")
+        )
+
+        if not include_inactive:
+            queryset = queryset.filter(
+                Q(effective_to__isnull=True)
+                | Q(effective_to__gte=today)
+            )
+
+        date_from = request.data.get("date_from")
+        date_to = request.data.get("date_to")
+
+        try:
+            if date_from:
+                queryset = queryset.filter(
+                    effective_from__gte=self.parse_date(
+                        date_from,
+                        "date_from",
+                    )
+                )
+
+            if date_to:
+                queryset = queryset.filter(
+                    effective_from__lte=self.parse_date(
+                        date_to,
+                        "date_to",
+                    )
+                )
+
+        except ValueError as exc:
+            return self.failure(str(exc))
+
+        assignments = list(queryset)
+
+        context = {
+            "request": request,
+            "organization": organization,
+            "attendance_settings": attendance_settings,
+        }
+
+        serializer = MyShiftAssignmentSerializer(
+            assignments,
+            many=True,
+            context=context,
+        )
+
+        # Pick the single row that is active today, if any.
+        current_row = next(
+            (
+                row for row in serializer.data
+                if row["is_current"]
+            ),
+            None,
+        )
+
+        return self.success(
+            "Your shift assignments fetched successfully.",
+            {
+                "employee_id": employee.id,
+                "employee_code": employee.employee_code,
+                "employee_name": (
+                    f"{employee.first_name} "
+                    f"{employee.middle_name or ''} "
+                    f"{employee.last_name}"
+                ).replace("  ", " ").strip(),
+                "current_shift": current_row,
+                "assignments": serializer.data,
+            },
         )

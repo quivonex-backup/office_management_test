@@ -88,17 +88,16 @@ def get_or_create_leave_balance(
         },
     )
 
-    if created:
-        if leave_type.annual_allocation > ZERO:
-            create_leave_transaction(
-                balance=balance,
-                transaction_type="ALLOCATION",
-                days=leave_type.annual_allocation,
-                created_by=created_by,
-                remarks=f"Annual allocation for {leave_year}.",
-            )
+    if created and leave_type.annual_allocation > ZERO:
+        create_leave_transaction(
+            balance=balance,
+            transaction_type="ALLOCATION",
+            days=leave_type.annual_allocation,
+            created_by=created_by,
+            remarks=f"Annual allocation for {leave_year}.",
+        )
 
-    return balance
+    return balance, created 
 
 
 @transaction.atomic
@@ -108,32 +107,27 @@ def initialize_leave_balances(
     leave_type_ids=None,
     created_by=None,
 ):
-    """
-    Initialize yearly balances for all active employees
-    and selected active leave types.
-
-    Existing balances are not overwritten.
-    """
-
-    employees = Employee.objects.filter(
+    # 1. Convert to list() so they can be iterated multiple times safely
+    employees = list(Employee.objects.filter(
         organization=organization,
         is_active=True,
         employment_status="ACTIVE",
-    )
+    ))
 
-    leave_types = LeaveType.objects.filter(
+    leave_types = list(LeaveType.objects.filter(
         organization=organization,
         is_active=True,
-    )
+    ))
 
     if leave_type_ids:
-        leave_types = leave_types.filter(id__in=leave_type_ids)
+        leave_types = [lt for lt in leave_types if lt.id in leave_type_ids]
 
     created_count = 0
     existing_count = 0
 
-    for employee in employees.iterator():
-        for leave_type in leave_types.iterator():
+    # Now iterate over the lists safely
+    for employee in employees:
+        for leave_type in leave_types:
             _, created = get_or_create_leave_balance(
                 employee=employee,
                 leave_type=leave_type,
@@ -310,7 +304,7 @@ def create_leave_application(
     balances = []
 
     for leave_year in sorted(yearly_days):
-        balance = get_or_create_leave_balance(
+        balance, _ = get_or_create_leave_balance(  # <-- FIX: Unpack the tuple
             employee=employee,
             leave_type=leave_type,
             leave_year=leave_year,

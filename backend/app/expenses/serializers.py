@@ -1,10 +1,13 @@
 from rest_framework import serializers
+from urllib.parse import quote
 from .models import (
     Expense,
     ExpenseDocument,
     RecurringExpense,
     RecurringExpenseEntry,
     RecurringExpenseEntryDocument,
+    EmployeeReimbursement,
+    EmployeeReimbursementDocument,
 )
 
 
@@ -616,3 +619,311 @@ class RecurringExpenseEntryUpdateSerializer(serializers.ModelSerializer):
                 })
 
         return attrs
+
+
+# =========================================================
+# REIMBURSEMENT SHARED HELPERS
+# =========================================================
+def _employee_full_name(employee):
+    if not employee:
+        return None
+    parts = [
+        employee.first_name,
+        employee.middle_name,
+        employee.last_name,
+    ]
+    name = " ".join(p for p in parts if p).strip()
+    return name or employee.employee_code
+
+
+def _user_display_name(user):
+    if not user:
+        return None
+    full = f"{user.first_name} {user.last_name}".strip()
+    return full or user.username
+
+
+def _build_reimbursement_upi_link(reimbursement):
+    """
+    Build a UPI deep link for an APPROVED reimbursement.
+    Returns None if status != APPROVED or payee UPI is missing.
+    """
+    if reimbursement.status != "APPROVED":
+        return None
+
+    payee_upi = None
+
+    if reimbursement.payee_upi_id:
+        payee_upi = reimbursement.payee_upi_id.strip()
+    elif reimbursement.employee and reimbursement.employee.upi_id:
+        payee_upi = reimbursement.employee.upi_id.strip()
+
+    if not payee_upi:
+        return None
+
+    payee_name = _employee_full_name(reimbursement.employee) or "Employee"
+    note = f"{reimbursement.reimbursement_number} - {reimbursement.title}"
+
+    return (
+        f"upi://pay?"
+        f"pa={quote(payee_upi)}"
+        f"&pn={quote(payee_name)}"
+        f"&am={reimbursement.amount}"
+        f"&cu=INR"
+        f"&tn={quote(note)}"
+    )
+
+
+# =========================================================
+# EMPLOYEE REIMBURSEMENT DOCUMENT SERIALIZER
+# =========================================================
+class EmployeeReimbursementDocumentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = EmployeeReimbursementDocument
+        fields = [
+            "id",
+            "title",
+            "file",
+            "description",
+            "created_at",
+        ]
+        read_only_fields = ["id", "created_at"]
+
+
+# =========================================================
+# EMPLOYEE REIMBURSEMENT CREATE SERIALIZER
+# =========================================================
+class EmployeeReimbursementCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = EmployeeReimbursement
+        fields = [
+            "title",
+            "description",
+            "expense_type",
+            "amount",
+            "expense_date",
+            "project",
+            "payee_upi_id",
+        ]
+
+    def validate_amount(self, value):
+        if value <= 0:
+            raise serializers.ValidationError(
+                "Amount must be greater than 0."
+            )
+        return value
+
+    def validate(self, attrs):
+        organization = self.context.get("organization")
+        project = attrs.get("project")
+
+        if project and organization:
+            if project.organization_id != organization.id:
+                raise serializers.ValidationError({
+                    "project": (
+                        "Selected project does not belong to "
+                        "this organization."
+                    )
+                })
+
+        if project and not project.is_active:
+            raise serializers.ValidationError({
+                "project": "Selected project is inactive."
+            })
+
+        return attrs
+
+
+# =========================================================
+# EMPLOYEE REIMBURSEMENT LIST SERIALIZER
+# =========================================================
+class EmployeeReimbursementListSerializer(serializers.ModelSerializer):
+
+    employee_code = serializers.CharField(
+        source="employee.employee_code", read_only=True
+    )
+    employee_name = serializers.SerializerMethodField()
+    project_name = serializers.CharField(
+        source="project.project_name", read_only=True
+    )
+    project_code = serializers.CharField(
+        source="project.project_code", read_only=True
+    )
+    expense_type_display = serializers.CharField(
+        source="get_expense_type_display", read_only=True
+    )
+    payment_method_display = serializers.CharField(
+        source="get_payment_method_display", read_only=True
+    )
+    payee_name = serializers.SerializerMethodField()
+    upi_link = serializers.SerializerMethodField()
+
+    class Meta:
+        model = EmployeeReimbursement
+        fields = [
+            "id",
+            "reimbursement_number",
+            "title",
+            "description",
+            "expense_type",
+            "expense_type_display",
+            "amount",
+            "expense_date",
+            "employee",
+            "employee_code",
+            "employee_name",
+            "project",
+            "project_name",
+            "project_code",
+            "payee_upi_id",
+            "payee_name",
+            "upi_link",
+            "status",
+            "payment_date",
+            "payment_method",
+            "payment_method_display",
+            "payment_reference",
+            "created_at",
+        ]
+
+    def get_employee_name(self, obj):
+        return _employee_full_name(obj.employee)
+
+    def get_payee_name(self, obj):
+        return _employee_full_name(obj.employee)
+
+    def get_upi_link(self, obj):
+        return _build_reimbursement_upi_link(obj)
+
+
+# =========================================================
+# EMPLOYEE REIMBURSEMENT DETAIL SERIALIZER
+# =========================================================
+class EmployeeReimbursementDetailSerializer(serializers.ModelSerializer):
+
+    employee_code = serializers.CharField(
+        source="employee.employee_code", read_only=True
+    )
+    employee_name = serializers.SerializerMethodField()
+    project_name = serializers.CharField(
+        source="project.project_name", read_only=True
+    )
+    project_code = serializers.CharField(
+        source="project.project_code", read_only=True
+    )
+    expense_type_display = serializers.CharField(
+        source="get_expense_type_display", read_only=True
+    )
+    payment_method_display = serializers.CharField(
+        source="get_payment_method_display", read_only=True
+    )
+    payee_name = serializers.SerializerMethodField()
+    upi_link = serializers.SerializerMethodField()
+    documents = EmployeeReimbursementDocumentSerializer(
+        many=True, read_only=True
+    )
+    reviewed_by_details = serializers.SerializerMethodField()
+    paid_by_details = serializers.SerializerMethodField()
+
+    class Meta:
+        model = EmployeeReimbursement
+        fields = [
+            "id",
+            "reimbursement_number",
+            "organization",
+            "title",
+            "description",
+            "expense_type",
+            "expense_type_display",
+            "amount",
+            "expense_date",
+            "employee",
+            "employee_code",
+            "employee_name",
+            "project",
+            "project_name",
+            "project_code",
+            "payee_upi_id",
+            "payee_name",
+            "upi_link",
+            "status",
+            "reviewed_by_details",
+            "reviewed_at",
+            "review_notes",
+            "rejection_reason",
+            "payment_date",
+            "payment_method",
+            "payment_method_display",
+            "payment_reference",
+            "paid_by_details",
+            "documents",
+            "is_active",
+            "created_at",
+            "updated_at",
+        ]
+
+    def get_employee_name(self, obj):
+        return _employee_full_name(obj.employee)
+
+    def get_payee_name(self, obj):
+        return _employee_full_name(obj.employee)
+
+    def get_upi_link(self, obj):
+        return _build_reimbursement_upi_link(obj)
+
+    def get_reviewed_by_details(self, obj):
+        if not obj.reviewed_by:
+            return None
+        return {
+            "id": obj.reviewed_by.id,
+            "name": _user_display_name(obj.reviewed_by),
+            "email": obj.reviewed_by.email,
+        }
+
+    def get_paid_by_details(self, obj):
+        if not obj.paid_by:
+            return None
+        return {
+            "id": obj.paid_by.id,
+            "name": _user_display_name(obj.paid_by),
+            "email": obj.paid_by.email,
+        }
+
+
+# =========================================================
+# REIMBURSEMENT REVIEW SERIALIZER
+# =========================================================
+class EmployeeReimbursementReviewSerializer(serializers.Serializer):
+    reimbursement_id = serializers.IntegerField()
+    approve = serializers.BooleanField()
+    review_notes = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+    rejection_reason = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+
+    def validate(self, attrs):
+        if not attrs.get("approve"):
+            rejection_reason = (attrs.get("rejection_reason") or "").strip()
+            if not rejection_reason:
+                raise serializers.ValidationError({
+                    "rejection_reason": (
+                        "Rejection reason is required when rejecting."
+                    )
+                })
+        return attrs
+
+
+# =========================================================
+# REIMBURSEMENT MARK-PAID SERIALIZER
+# =========================================================
+class EmployeeReimbursementMarkPaidSerializer(serializers.Serializer):
+    reimbursement_id = serializers.IntegerField()
+    payment_date = serializers.DateField()
+    payment_method = serializers.ChoiceField(
+        choices=Expense.PAYMENT_METHOD_CHOICES
+    )
+    payment_reference = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )

@@ -1,0 +1,432 @@
+================================================================================
+PAYROLL APP — EMPLOYEE SELF-SERVICE API REFERENCE
+================================================================================
+
+Base URL   : /
+Method     : All endpoints are POST
+Auth       : Bearer token (IsAuthenticated)
+Envelope   : { "status": true|false, "message": "...", "data": {...}?, "errors": {...}? }
+
+Who uses this document:
+  - Any user with an active Employee profile (linked via OneToOneField).
+  - Frontend employee-facing screens ONLY (payslips, salary view).
+  - Does NOT cover admin, org owner, or payroll-runner endpoints.
+
+CRITICAL IDENTITY RULE:
+  The client NEVER sends employee_id or user_id.
+  The backend derives identity from request.user.employee_profile.
+  Any employee_id sent in the body is IGNORED for scoping purposes.
+
+
+================================================================================
+BOOTSTRAP ORDER — EMPLOYEE SIDE
+================================================================================
+
+Before any of these endpoints work, an ORG ADMIN must have:
+
+  1. Enabled payroll settings for the org
+  2. Assigned a salary structure to the employee
+     (/payroll/assignments/create/)
+  3. Created a payroll run for the period
+     (/payroll/runs/create/)
+  4. Generated payroll records
+     (/payroll/runs/generate/)
+  5. Finalized the run
+     (/payroll/runs/finalize/)
+
+After finalize, the employee can call the 3 endpoints below and see
+their payslips.
+
+Until the run is FINALIZED, no payslip is visible to the employee —
+even if records have been generated. This is a hard gate.
+
+
+================================================================================
+COMMON EMPLOYEE-ENDPOINT BEHAVIOR
+================================================================================
+
+Every endpoint in this document:
+  - Resolves request.user.employee_profile → Employee
+  - Fails with 404 if the user has no employee profile
+  - Fails with 403 if the employee profile exists but is inactive
+  - Scopes every query to that resolved employee + their org
+  - Only exposes records whose parent PayrollRun.status = FINALIZED
+
+
+================================================================================
+SECTION 1 — MY PAYSLIPS (LIST)
+================================================================================
+
+--------------------------------------------------------------------------------
+1.1  POST /payroll/my/payslips/
+--------------------------------------------------------------------------------
+Purpose : List all my payslips (from FINALIZED runs only)
+Request : {}
+Response 200:
+{
+  "status": true,
+  "message": "Your payslips fetched.",
+  "data": [
+    {
+      "id": 101,
+      "payroll_run": 8,
+      "organization": 5,
+      "employee": 25,
+      "employee_code": "EMP-000025",
+      "employee_name": "Rahul Patil",
+      "period_start": "2026-03-01",
+      "period_end": "2026-03-31",
+      "payroll_month": "March 2026",
+
+      "present_days": "22.00",
+      "half_days": "0.00",
+      "absent_days": "1.00",
+      "paid_leave_days": "0.00",
+      "unpaid_leave_days": "0.00",
+      "holiday_days": "2.00",
+      "weekly_off_days": "4.00",
+      "overtime_hours": "0.00",
+
+      "monthly_salary": "28000.00",
+      "per_day_rate": "1000.00",
+
+      "pf_employee": "2400.00",
+      "pf_employer": "2400.00",
+      "eps": "1666.00",
+      "edli": "100.00",
+      "esi_employee": "0.00",
+      "esi_employer": "0.00",
+      "pt": "200.00",
+      "tds": "0.00",
+      "lwf_employee": "0.00",
+      "lwf_employer": "0.00",
+      "other_deductions": "0.00",
+
+      "gross_earnings": "28000.00",
+      "total_deductions": "2600.00",
+      "net": "25400.00",
+
+      "payment_status": "PAID",
+      "paid_amount": "25400.00",
+      "remaining": "0.00",
+      "upi_link": null,
+
+      "generation_status": "GENERATED",
+      "generation_notes": "",
+      "requires_review": false,
+      "review_notes": "",
+
+      "breakdown": { ...calculation audit snapshot... },
+      "line_items": [
+        {
+          "id": 501,
+          "payroll_record": 101,
+          "component_code": "BASIC",
+          "component_name": "Basic Salary",
+          "component_type": "EARNING",
+          "amount": "20000.00",
+          "calculation_details": { ... }
+        }
+      ],
+      "payments": [
+        {
+          "id": 45,
+          "amount": "25400.00",
+          "payment_date": "2026-04-05",
+          "payment_mode": "BANK_TRANSFER",
+          "transaction_reference": "NEFT-2026-04-05-001",
+          "notes": "April salary"
+        }
+      ],
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  ]
+}
+
+Response 404 (no employee profile):
+{ "status": false, "message": "No active employee profile is linked to this user." }
+
+Response 403 (inactive employee profile):
+{ "status": false, "message": "Your employee profile is inactive." }
+
+Response 200 with empty array when no finalized payslips exist yet:
+{ "status": true, "message": "Your payslips fetched.", "data": [] }
+
+
+================================================================================
+SECTION 2 — MY PAYSLIP (DETAIL)
+================================================================================
+
+--------------------------------------------------------------------------------
+2.1  POST /payroll/my/payslips/detail/
+--------------------------------------------------------------------------------
+Purpose : View one of my payslips in full detail
+Request :
+{
+  "payroll_record_id": 101
+}
+Response 200:
+{
+  "status": true,
+  "message": "Payslip fetched.",
+  "data": {
+    ...same full record shape as in Section 1, single object...
+    "remaining": "0.00",
+    "upi_link": null,
+    "line_items": [ ... ],
+    "payments": [ ... ],
+    "breakdown": { ... }
+  }
+}
+
+Response 404 (not mine, or not finalized, or doesn't exist):
+{ "status": false, "message": "Payslip not found." }
+
+Response 404 (no employee profile):
+{ "status": false, "message": "No active employee profile is linked to this user." }
+
+Response 403 (inactive employee profile):
+{ "status": false, "message": "Your employee profile is inactive." }
+
+IMPORTANT:
+  "Payslip not found." is returned for THREE distinct cases so we don't
+  leak information about other employees' payslips:
+    a) payroll_record_id exists but belongs to another employee
+    b) payroll_record_id exists but its run is not FINALIZED
+    c) payroll_record_id doesn't exist
+  All three → same 404 message.
+
+
+================================================================================
+SECTION 3 — MY SALARY
+================================================================================
+
+--------------------------------------------------------------------------------
+3.1  POST /payroll/my/salary/
+--------------------------------------------------------------------------------
+Purpose : Get the salary assignment currently in effect (as of today)
+Request : {}
+Response 200:
+{
+  "status": true,
+  "message": "Your salary assignment fetched.",
+  "data": {
+    "id": 12,
+    "organization": 5,
+    "employee": 25,
+    "employee_code": "EMP-000025",
+    "employee_name": "Rahul Patil",
+    "salary_structure": 1,
+    "salary_structure_name": "Junior Developer",
+    "effective_from": "2026-04-01",
+    "effective_to": null,
+    "reason": "Initial salary",
+    "assigned_by": 3,
+    "created_at": "...",
+    "updated_at": "..."
+  }
+}
+
+Response 404 (no active assignment):
+{ "status": false, "message": "No active salary assignment found." }
+
+Response 404 (no employee profile):
+{ "status": false, "message": "No active employee profile is linked to this user." }
+
+Response 403 (inactive employee profile):
+{ "status": false, "message": "Your employee profile is inactive." }
+
+NOTE:
+  "Currently in effect" = effective_from <= today AND
+                          (effective_to IS NULL OR effective_to >= today)
+  If the org later assigns a new structure with a future effective_from,
+  this endpoint continues to return the OLD structure until the future
+  date arrives.
+  If the org closes the current assignment (sets effective_to in the past)
+  with no replacement, this endpoint returns 404 until a new assignment
+  is created.
+
+
+================================================================================
+QUICK REFERENCE — EMPLOYEE ENDPOINTS
+================================================================================
+
+EMPLOYEE (3)
+  POST /payroll/my/payslips/
+  POST /payroll/my/payslips/detail/
+  POST /payroll/my/salary/
+
+TOTAL: 3 endpoints
+
+
+================================================================================
+KEY NOTES FOR FRONTEND — EMPLOYEE SIDE
+================================================================================
+
+1. IDENTITY IS DERIVED SERVER-SIDE.
+   There is NO employee_id or user_id in any request.
+   The frontend simply uses the auth token; the backend figures out
+   "who is calling" from the linked Employee profile.
+
+2. FINALIZED-ONLY VISIBILITY.
+   - /my/payslips/ only shows records where parent run.status = FINALIZED.
+   - /my/payslips/detail/ returns 404 for non-finalized records
+     (even if the record exists and belongs to the caller).
+   - /my/salary/ is NOT gated on run status — salary assignment is
+     always visible as it's configuration, not a payslip.
+
+3. ERROR DISAMBIGUATION ON 404.
+   404 "No active employee profile is linked to this user."  → user
+     has no employee record; contact HR/admin.
+   404 "Payslip not found."  → either the record doesn't belong to
+     this user, or the run isn't finalized yet. Do NOT distinguish
+     client-side; show "Payslip not available."
+
+4. PAYMENT STATUS DISPLAY.
+   - payment_status: "UNPAID" | "PARTIALLY_PAID" | "PAID"
+   - remaining: string decimal, always present, = net - paid_amount
+   - upi_link: null OR a UPI deep link
+       * When null → hide the "Pay Now" / QR button
+       * When present → render QR + "Open UPI App" button
+   See the ADMIN doc §11 for full UPI flow — employees CANNOT record
+   a payment themselves. Only the admin records payments after the
+   employee completes the transfer. The UPI link is a convenience
+   for the employee to initiate the transfer.
+
+5. PAYSLIP MODES affect the shape of line_items, not the endpoints.
+   - SIMPLE mode: line_items has 1–2 rows (GROSS, LOP, NET)
+   - FULL mode:   line_items has every earning + deduction component
+   Both modes return the same top-level fields
+   (gross_earnings, total_deductions, net, etc.) and the same endpoints.
+   The frontend should render whatever line_items is returned, without
+   hard-coding a fixed component set.
+
+6. STATUTORY SNAPSHOT IS PERMANENT.
+   Once a payslip is FINALIZED, its statutory numbers (pf_employee, esi,
+   pt, tds, etc.) never change — even if the org later updates statutory
+   settings. Payslips are historical snapshots.
+
+7. EMPLOYEE CANNOT EDIT ANYTHING HERE.
+   All 3 endpoints are read-only. There is no employee-side write API
+   for payslips, salary assignments, or payments. If an employee
+   believes a payslip is wrong, they escalate to the admin, who uses
+   /payroll/records/update-deductions/ (see ADMIN doc §8.2).
+
+8. PAGINATION IS NOT IMPLEMENTED.
+   /my/payslips/ returns all finalized payslips for the employee.
+   If you have long-tenured employees with years of history, the
+   frontend should paginate client-side (typically by year filter).
+   If the backend team later adds server-side pagination, this doc
+   will be updated with page/page_size params.
+
+9. TIMELINE CHECK.
+   The employee's "current salary" (/my/salary/) reflects CONFIGURATION.
+   The employee's "recent payslip" (/my/payslips/ → newest row) reflects
+   the last FINALIZED RUN. These can differ by up to one cycle if the
+   current month hasn't been finalized yet. That's expected — do not
+   assume the two are synchronized.
+
+
+================================================================================
+END OF EMPLOYEE PAYROLL REFERENCE
+================================================================================
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Employee Payroll & Payslip APIs
+All APIs use POST and require authentication.
+1. Get My Payslips
+URL
+
+POST /payroll/my/payslips/
+
+Request body
+
+{}
+
+Important response fields
+
+{
+    "status": true,
+    "message": "Your payslips fetched.",
+    "data": [
+        {
+            "id": 125,
+            "employee_name": "Rahul Patil",
+            "employee_code": "EMP001",
+            "payroll_month": "October 2026",
+            "period_start": "2026-10-01",
+            "period_end": "2026-10-31",
+            "gross_earnings": "25000.00",
+            "total_deductions": "5000.00",
+            "net": "20000.00",
+            "payment_status": "PARTIALLY_PAID",
+            "paid_amount": "15000.00",
+            "remaining": "5000.00"
+        }
+    ]
+}
+
+Use id as the payroll_record_id for the payslip detail and download APIs.
+2. Get My Payslip Details
+URL
+
+POST /payroll/my/payslips/detail/
+
+Request body
+
+{
+    "payroll_record_id": 125
+}
+
+Returns the selected payslip's salary, attendance, deductions, payment summary and line-item details.
+3. Download My Payslip PDF
+URL
+
+POST /payroll/my/payslips/download/
+
+Request body
+
+{
+    "payroll_record_id": 125
+}
+payroll_record_id: Take this from the id field of /my/payslips/.
+Do not send employee_id; the backend identifies the logged-in employee.
+Do not send organization_id when the active organization is resolved automatically.
+
+Success response headers
+
+Content-Type: application/pdf
+Content-Disposition: attachment; filename="Rahul_Patil_October_2026_Payslip.pdf"
+
+The response body contains the actual PDF binary data, not JSON.
+Error response
+
+{
+    "status": false,
+    "message": "Payslip not found.",
+    "data": null
+}
+
+Important UI behaviour
+
+Display payslips using the /my/payslips/ API.
+Display full details using /my/payslips/detail/.
+Use the id field from the payslip list as payroll_record_id.
+Download the PDF using /my/payslips/download/.
+Show payment_status, paid_amount, and remaining on the payslip screen.

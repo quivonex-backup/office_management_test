@@ -1,7 +1,8 @@
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
-from django.db import IntegrityError
+from django.db import transaction, IntegrityError
+from django.utils import timezone
 from django.shortcuts import get_object_or_404
 
 from rest_framework import status
@@ -35,6 +36,8 @@ from .services import (
     cancel_leave_application,
     adjust_leave_balance,
 )
+
+from app.communications.notification_service import notify
 
 
 # =========================================================
@@ -415,9 +418,12 @@ class LeaveBalanceInitializeAPIView(LeaveBaseAPIView):
                 leave_type_ids=leave_type_ids,
                 created_by=request.user,
             )
-        except Exception:
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            
             return self.failure(
-                "Unable to initialize leave balances.",
+                f"Unable to initialize leave balances: {str(e)}",
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -542,11 +548,33 @@ class LeaveApplicationCreateAPIView(LeaveBaseAPIView):
 
         except ValueError as exc:
             return self.failure(str(exc))
-        except Exception:
+        except Exception as e:
+            import traceback
+            traceback.print_exc()  # Prints the error in your terminal
             return self.failure(
-                "Unable to submit leave application.",
+                f"Unable to submit leave application: {str(e)}", # Shows the error in the API response
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+        # ---- Notify admin of leave application ----
+        admin_user = None
+        if organization.owner_id:
+            admin_user = organization.owner
+
+        if admin_user:
+            transaction.on_commit(lambda: notify(
+                users=admin_user,
+                event_code="LEAVE_APPLICATION_SUBMITTED",
+                title="Leave application received",
+                body=(
+                    f"{employee.employee_code} applied for "
+                    f"{application.total_days} day(s) of "
+                    f"{leave_type.name} from {start_date} to {end_date}."
+                ),
+                reference_type="leave_application",
+                reference_id=application.id,
+                priority="HIGH",
+            ))
 
         return self.success(
             "Leave application submitted successfully.",
@@ -721,6 +749,42 @@ class LeaveApplicationReviewAPIView(LeaveBaseAPIView):
                 "Unable to review leave application.",
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+        # ---- Notify employee of review outcome ----
+        if application.employee.user_id:
+            approved = decision == "APPROVED"
+
+            if approved:
+                notif_title = "Leave approved"
+                notif_body = (
+                    f"Your {application.leave_type.name} from "
+                    f"{application.start_date} to {application.end_date} "
+                    f"has been approved."
+                )
+                notif_priority = "NORMAL"
+            else:
+                notif_title = "Leave rejected"
+                notif_body = (
+                    f"Your {application.leave_type.name} from "
+                    f"{application.start_date} to {application.end_date} "
+                    f"was rejected."
+                )
+                if review_remarks:
+                    notif_body += f" Reason: {review_remarks}"
+                notif_priority = "HIGH"
+
+            transaction.on_commit(lambda: notify(
+                users=application.employee.user,
+                event_code=(
+                    "LEAVE_APPROVED" if approved
+                    else "LEAVE_REJECTED"
+                ),
+                title=notif_title,
+                body=notif_body,
+                reference_type="leave_application",
+                reference_id=application.id,
+                priority=notif_priority,
+            ))
 
         return self.success(
             f"Leave application {application.status.lower()} successfully.",

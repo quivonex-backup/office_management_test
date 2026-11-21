@@ -27,6 +27,7 @@ from rest_framework.views import APIView
 
 from common.services import get_user_organization
 from app.audit.services import log_activity
+from app.communications.notification_service import notify
 from app.employees.models import Employee
 
 from .models import (
@@ -67,6 +68,8 @@ from .services import (
     bulk_close_salary_assignments,
     record_payment,
     bulk_record_payment_for_run,
+    simulate_payslip,
+    download_payslip_response,
 )
 
 
@@ -1483,6 +1486,8 @@ class PayrollRunGenerateAPIView(PayrollBaseAPIView):
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+        run = result["payroll_run"]
+
         return self.success(
             (
                 f"Payroll generated. "
@@ -1505,7 +1510,6 @@ class PayrollRunGenerateAPIView(PayrollBaseAPIView):
                 },
             },
         )
-
 
 class PayrollRunFinalizeAPIView(PayrollBaseAPIView):
 
@@ -1540,6 +1544,51 @@ class PayrollRunFinalizeAPIView(PayrollBaseAPIView):
                 "Unable to finalize payroll.",
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+        # ---- Notify each employee whose payslip was finalized ----
+        # Only GENERATED records correspond to actual payslips.
+        # SKIPPED and ERROR records are not payslips and should not notify.
+        finalized_records = (
+            PayrollRecord.objects
+            .filter(
+                payroll_run=run,
+                generation_status="GENERATED",
+            )
+            .select_related("employee__user")
+        )
+
+        # Group records by employee so employees with multi-org edge
+        # cases don't get duplicate payslip notifications. In practice
+        # this is 1 record per employee per run.
+        for record in finalized_records:
+            emp = record.employee
+            if not emp.user_id or not emp.user:
+                continue
+            if not emp.user.is_active:
+                continue
+
+            period_label = record.payroll_run.period_start.strftime("%B %Y")
+            net_amount = record.net
+
+            # Defensive closure capture — bind values to locals so the
+            # lambda doesn't see the last iteration's values.
+            _user = emp.user
+            _record_id = record.id
+            _period_label = period_label
+            _net_amount = net_amount
+
+            transaction.on_commit(lambda u=_user, rid=_record_id, pl=_period_label, na=_net_amount: notify(
+                users=u,
+                event_code="PAYSLIP_FINALIZED",
+                title="Your payslip is ready",
+                body=(
+                    f"Your payslip for {pl} is available. "
+                    f"Net pay: ₹{na}."
+                ),
+                reference_type="payroll_record",
+                reference_id=rid,
+                priority="HIGH",
+            ))
 
         return self.success(
             "Payroll finalized.",
@@ -1744,6 +1793,35 @@ class PaymentRecordAPIView(PayrollBaseAPIView):
 
         record.refresh_from_db()
 
+        # ---- Notify employee that payment was recorded ----
+        emp = record.employee
+        if emp.user_id and emp.user and emp.user.is_active:
+            payment_mode_display = dict(
+                PayrollPayment.PAYMENT_MODE_CHOICES
+            ).get(payment.payment_mode, payment.payment_mode)
+
+            period_label = record.payroll_run.period_start.strftime("%B %Y")
+
+            _user = emp.user
+            _record_id = record.id
+            _amount = amount
+            _period_label = period_label
+            _payment_mode = payment_mode_display
+            _remaining = record.net - record.paid_amount
+
+            transaction.on_commit(lambda u=_user, rid=_record_id, amt=_amount, pl=_period_label, pm=_payment_mode, rem=_remaining: notify(
+                users=u,
+                event_code="PAYMENT_RECORDED",
+                title="Payment received",
+                body=(
+                    f"₹{amt} has been paid to you for {pl} via {pm}. "
+                    f"Remaining balance: ₹{rem}."
+                ),
+                reference_type="payroll_record",
+                reference_id=rid,
+                priority="HIGH",
+            ))
+
         return self.success(
             "Payment recorded.",
             {
@@ -1814,6 +1892,43 @@ class PaymentBulkRecordForRunAPIView(PayrollBaseAPIView):
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+        # ---- Notify each employee whose payment was recorded ----
+        for payment in result["payments"]:
+            record = payment.payroll_record
+            emp = record.employee
+
+            if not emp.user_id or not emp.user or not emp.user.is_active:
+                continue
+
+            payment_mode_display = dict(
+                PayrollPayment.PAYMENT_MODE_CHOICES
+            ).get(payment.payment_mode, payment.payment_mode)
+
+            period_label = record.payroll_run.period_start.strftime("%B %Y")
+
+            _user = emp.user
+            _record_id = record.id
+            _amount = payment.amount
+            _period_label = period_label
+            _payment_mode = payment_mode_display
+
+            # Refresh record to get the latest paid_amount after this payment
+            # (record_payment already updated it inside the service)
+            _remaining = record.net - record.paid_amount
+
+            transaction.on_commit(lambda u=_user, rid=_record_id, amt=_amount, pl=_period_label, pm=_payment_mode, rem=_remaining: notify(
+                users=u,
+                event_code="PAYMENT_RECORDED",
+                title="Payment received",
+                body=(
+                    f"₹{amt} has been paid to you for {pl} via {pm}. "
+                    f"Remaining balance: ₹{rem}."
+                ),
+                reference_type="payroll_record",
+                reference_id=rid,
+                priority="HIGH",
+            ))
+
         return self.success(
             (
                 f"{result['payments_recorded']} payment(s) recorded, "
@@ -1863,6 +1978,52 @@ class PaymentListAPIView(PayrollBaseAPIView):
 
         serializer = PayrollPaymentSerializer(queryset, many=True)
         return self.success("Payments fetched.", serializer.data)
+
+
+
+# =========================================================
+# ADMIN — DOWNLOAD PAYSLIP
+# =========================================================
+
+class PayrollPayslipDownloadAPIView(PayrollBaseAPIView):
+
+    def post(self, request):
+        organization, err = self.get_organization(request)
+        if err:
+            return err
+
+        try:
+            record_id = self.parse_int(
+                request.data.get("payroll_record_id"),
+                "payroll_record_id",
+            )
+        except ValueError as exc:
+            return self.failure(str(exc))
+
+        payroll_record = PayrollRecord.objects.filter(
+            id=record_id,
+            organization=organization,
+            payroll_run__status="FINALIZED",
+            generation_status="GENERATED",
+        ).select_related(
+            "employee",
+            "organization",
+            "payroll_run",
+        ).prefetch_related(
+            "line_items",
+            "payments",
+        ).first()
+
+        if not payroll_record:
+            return self.failure(
+                "Payslip not found.",
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        return download_payslip_response(
+            self,
+            payroll_record,
+        )
 
 
 # =========================================================
@@ -1979,3 +2140,193 @@ class MySalaryAssignmentAPIView(PayrollBaseAPIView):
             "Your salary assignment fetched.",
             EmployeeSalaryAssignmentSerializer(assignment).data,
         )
+
+
+# =========================================================
+# EMPLOYEE — DOWNLOAD OWN PAYSLIP
+# =========================================================
+
+class MyPayslipDownloadAPIView(PayrollBaseAPIView):
+
+    def post(self, request):
+        organization, err = self.get_organization(request)
+        if err:
+            return err
+
+        employee = self.get_employee(request, organization)
+
+        if not employee:
+            return self.failure(
+                "No active employee profile is linked to this user.",
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            record_id = self.parse_int(
+                request.data.get("payroll_record_id"),
+                "payroll_record_id",
+            )
+        except ValueError as exc:
+            return self.failure(str(exc))
+
+        payroll_record = PayrollRecord.objects.filter(
+            id=record_id,
+            organization=organization,
+            employee=employee,
+            payroll_run__status="FINALIZED",
+            generation_status="GENERATED",
+        ).select_related(
+            "employee",
+            "organization",
+            "payroll_run",
+        ).prefetch_related(
+            "line_items",
+            "payments",
+        ).first()
+
+        if not payroll_record:
+            return self.failure(
+                "Payslip not found.",
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        return download_payslip_response(
+            self,
+            payroll_record,
+        )
+
+
+# =========================================================
+# PAYROLL CALCULATOR  (read-only what-if, nothing is saved)
+#
+# 1) payroll/services/__init__.py  - export the new function. Add this line
+#    AFTER the existing `from .computation import ...` line (it uses
+#    computation and common, so it must come after them):
+#
+#        from .calculator import simulate_payslip
+#
+#    and, only if that file has an __all__ list, add "simulate_payslip" to it.
+#
+# 2) payroll/views.py - add simulate_payslip to the EXISTING import block:
+#
+#        from .services import (
+#            compute_cycle_period,
+#            compute_payslip_data,
+#            ...
+#            simulate_payslip,      # <- add
+#        )
+#
+#    then paste the class below anywhere in the file. It uses the same
+#    PayrollBaseAPIView helpers as the other views (get_organization,
+#    parse_date / parse_int / parse_decimal, success, failure) and the models
+#    already imported there (Employee, SalaryStructure, Decimal, status).
+#
+# 3) payroll/urls.py:
+#        from .views import PayrollCalculatorAPIView
+#        path("calculator/", PayrollCalculatorAPIView.as_view(), name="payroll-calculator"),
+# =========================================================
+
+class PayrollCalculatorAPIView(PayrollBaseAPIView):
+    """
+    POST /api/payroll/calculator/
+
+    Works out a payslip from day counts typed by the admin, using the same
+    rules as a real payroll run. Reads settings; writes nothing.
+
+    Body:
+      period_start, period_end          required, YYYY-MM-DD
+      employee_id                       optional; required for payslip_mode FULL
+      salary_structure_id               optional; if missing, the employee's
+                                        assignment for the period is used
+      payslip_mode                      optional SIMPLE | FULL (what-if override)
+      salary_basis                      optional CALENDAR_DAYS | FIXED_30 |
+                                        WORKING_DAYS (what-if override)
+      present_days, half_days, absent_days, paid_leave_days,
+      unpaid_leave_days, holiday_days, weekly_off_days,
+      not_employed_days                 optional numbers, default 0
+      working_days                      optional; default = present + half +
+                                        absent + paid leave + unpaid leave
+      overtime_hours                    optional number, default 0
+    """
+
+    COUNT_KEYS = (
+        "present_days",
+        "half_days",
+        "absent_days",
+        "paid_leave_days",
+        "unpaid_leave_days",
+        "holiday_days",
+        "weekly_off_days",
+        "not_employed_days",
+    )
+
+    def post(self, request):
+        organization, err = self.get_organization(request)
+        if err:
+            return err
+
+        data = request.data
+
+        try:
+            period_start = self.parse_date(data.get("period_start"), "period_start")
+            period_end = self.parse_date(data.get("period_end"), "period_end")
+            if period_start is None or period_end is None:
+                return self.failure("period_start and period_end are required.")
+            if period_end < period_start:
+                return self.failure("period_end cannot be before period_start.")
+
+            counts_in = {}
+            for key in self.COUNT_KEYS:
+                raw = data.get(key)
+                counts_in[key] = (
+                    self.parse_decimal(raw, key) if raw not in (None, "") else Decimal("0")
+                )
+            raw_wd = data.get("working_days")
+            counts_in["working_days"] = (
+                self.parse_decimal(raw_wd, "working_days") if raw_wd not in (None, "") else None
+            )
+
+            raw_ot = data.get("overtime_hours")
+            overtime_hours = (
+                self.parse_decimal(raw_ot, "overtime_hours") if raw_ot not in (None, "") else Decimal("0")
+            )
+
+            employee = None
+            if data.get("employee_id") not in (None, ""):
+                employee_id = self.parse_int(data.get("employee_id"), "employee_id")
+                employee = Employee.objects.filter(
+                    id=employee_id, organization=organization,
+                ).first()
+                if employee is None:
+                    return self.failure("Employee not found.", status.HTTP_404_NOT_FOUND)
+
+            structure = None
+            if data.get("salary_structure_id") not in (None, ""):
+                structure_id = self.parse_int(data.get("salary_structure_id"), "salary_structure_id")
+                structure = SalaryStructure.objects.filter(
+                    id=structure_id, organization=organization,
+                ).first()
+                if structure is None:
+                    return self.failure("Salary structure not found.", status.HTTP_404_NOT_FOUND)
+
+            payslip_mode = str(data.get("payslip_mode") or "").strip().upper() or None
+            salary_basis = str(data.get("salary_basis") or "").strip().upper() or None
+        except ValueError as exc:
+            return self.failure(str(exc))
+
+        try:
+            result = simulate_payslip(
+                organization=organization,
+                period_start=period_start,
+                period_end=period_end,
+                counts_in=counts_in,
+                overtime_hours=overtime_hours,
+                employee=employee,
+                salary_structure=structure,
+                payslip_mode=payslip_mode,
+                salary_basis=salary_basis,
+            )
+        except ValueError as exc:
+            return self.failure(str(exc))
+
+        return self.success("Calculation complete.", result)

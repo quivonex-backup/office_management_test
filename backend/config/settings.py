@@ -27,6 +27,7 @@ INSTALLED_APPS = [
     'django_celery_beat',
     'corsheaders',
     'rest_framework',
+    'rest_framework_simplejwt.token_blacklist',
     'storages',
     'drf_spectacular',
 
@@ -43,7 +44,8 @@ INSTALLED_APPS = [
     'app.attendance',
     'app.calendar_app',
     'app.leave',
-    'app.payroll'
+    'app.payroll',
+    'app.communications',
 ]
 
 # Middleware
@@ -110,7 +112,7 @@ AUTH_PASSWORD_VALIDATORS = [
 
 # Internationalization
 LANGUAGE_CODE = 'en-us'
-TIME_ZONE = 'UTC'
+TIME_ZONE = 'Asia/Kolkata'
 USE_I18N = True
 USE_TZ = True
 
@@ -222,4 +224,11 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": 300.0,
     },
 }
+
+
+# FIREBASE CREDENTIALS
+FIREBASE_CREDENTIALS_PATH = config(
+    "FIREBASE_CREDENTIALS_PATH",
+    default=None
+)
 

@@ -2,6 +2,25 @@ import random
 from django.utils import timezone
 
 
+# Used for organization_code generation
+def generate_organization_code():
+    import random
+    from django.utils import timezone
+    from app.accounts.models import Organization
+
+    date_part = timezone.now().strftime("%y%m%d")
+
+    while True:
+        random_part = f"{random.randint(0, 99999):05d}"
+        code = f"ORG-{date_part}-{random_part}"
+
+        if not Organization.objects.filter(
+            organization_code=code
+        ).exists():
+            return code
+
+
+
 # Used for client_code generation
 def generate_client_code():
     date_part = timezone.now().strftime("%y%m%d")
@@ -60,19 +79,18 @@ def generate_expense_code():
             return code
 
 
-# Used for organization_code generation
-def generate_organization_code():
-    import random
-    from django.utils import timezone
-    from app.accounts.models import Organization
-
+# Used for reimbursement_number generation
+def generate_reimbursement_code():
     date_part = timezone.now().strftime("%y%m%d")
 
     while True:
         random_part = f"{random.randint(0, 99999):05d}"
-        code = f"ORG-{date_part}-{random_part}"
+        code = f"REIMB-{date_part}-{random_part}"
 
-        if not Organization.objects.filter(
-            organization_code=code
+        from app.expenses.models import EmployeeReimbursement
+
+        if not EmployeeReimbursement.objects.filter(
+            reimbursement_number=code
         ).exists():
             return code
+

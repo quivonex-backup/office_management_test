@@ -9,6 +9,7 @@ from .views import (
     EmployeeDeactivateAPIView,
     EmployeeDocumentUploadAPIView,
     EmployeeDocumentDeleteAPIView,
+    MyEmployeeProfileAPIView,
 )
 
 urlpatterns = [
@@ -28,4 +29,9 @@ urlpatterns = [
     # =====================================================
     path("document/upload/", EmployeeDocumentUploadAPIView.as_view(), name="employee-document-upload"),
     path("document/delete/", EmployeeDocumentDeleteAPIView.as_view(), name="employee-document-delete"),
+
+    # =====================================================
+    # EMPLOYEE SELF-SERVICE
+    # =====================================================
+    path("my-profile/", MyEmployeeProfileAPIView.as_view(), name="employee-my-profile"),
 ]

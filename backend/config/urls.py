@@ -45,4 +45,5 @@ urlpatterns = [
     path('calendar/', include("app.calendar_app.urls")),
     path('leave/', include("app.leave.urls")),
     path("payroll/", include("app.payroll.urls")),
+    path("communications/", include("app.communications.urls")),
 ]

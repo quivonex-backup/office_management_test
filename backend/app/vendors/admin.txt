@@ -1,0 +1,437 @@
+================================================================================
+VENDORS APP — ADMIN API REFERENCE
+================================================================================
+
+Base URL   : /
+Method     : All endpoints are POST
+Auth       : Bearer token (IsAuthenticated)
+Envelope   : { "status": true|false, "message": "...", "data": {...}?, "errors": {...}? }
+
+Organization context:
+  - All endpoints are scoped to the caller's organization.
+  - The view resolves organization from the authenticated user.
+  - Do NOT send organization_id — it is ignored.
+  - A vendor from another org returns 404, never 403.
+
+Who uses this document:
+  - Organization owner (Admin role)
+  - Any org member with Admin-level access (typically procurement / accounts)
+
+This app has NO employee-side surface. All 5 endpoints are admin-only.
+Vendors are external supplier records — they are not system users and
+have no login, no bell, no notifications.
+
+
+================================================================================
+BOOTSTRAP ORDER — READ FIRST
+================================================================================
+
+  1. Create a vendor     (/vendors/create/)
+  2. Use vendor id in    (whatever module consumes vendors — currently none
+                          in the reviewed apps; possibly invoices, purchase
+                          orders, or expense entries in future)
+
+  Vendors are standalone. No dependency on client/project/employee exists.
+  A vendor can be created with zero downstream references.
+
+
+================================================================================
+SECTION 1 — VENDOR CRUD
+================================================================================
+
+--------------------------------------------------------------------------------
+1.1  POST /vendors/create/
+--------------------------------------------------------------------------------
+Purpose : Create a new vendor
+Type    : application/json (no file uploads in this endpoint)
+
+Request :
+{
+  "vendor_name": "Acme Supplies",                // required
+  "company_name": "Acme Supplies Pvt Ltd",       // optional
+  "email": "accounts@acmesupplies.com",          // optional, valid email
+  "phone": "9876543210",                          // optional
+  "address_line": "123 Industrial Area, Andheri", // optional
+  "state": "Maharashtra",                         // optional
+  "district": "Mumbai",                           // optional
+  "taluka": "Andheri",                            // optional
+  "pincode": "400001",                            // optional, must be 6 digits if provided
+  "tax_number": "27AAACT2727Q1ZS",                // optional (GST/TIN)
+  "notes": "Prefers email contact"                // optional
+}
+
+Response 201:
+{
+  "status": true,
+  "message": "Vendor created successfully.",
+  "data": {
+    "id": 42,
+    "vendor_code": "VEN-000042",
+    "vendor_name": "Acme Supplies",
+    "company_name": "Acme Supplies Pvt Ltd",
+    "email": "accounts@acmesupplies.com",
+    "phone": "9876543210",
+    "address_line": "123 Industrial Area, Andheri",
+    "state": "Maharashtra",
+    "district": "Mumbai",
+    "taluka": "Andheri",
+    "pincode": "400001",
+    "tax_number": "27AAACT2727Q1ZS",
+    "notes": "Prefers email contact",
+    "is_active": true,
+    "created_at": "2026-11-16T10:00:00Z",
+    "updated_at": "2026-11-16T10:00:00Z"
+  }
+}
+
+Response 400 (validation — pincode not 6 digits):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": {
+    "pincode": ["Pincode must be 6 digits."]
+  }
+}
+
+Response 400 (validation — pincode has non-digits):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": {
+    "pincode": ["Pincode must contain only digits."]
+  }
+}
+
+Response 400 (no vendor_name):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": {
+    "vendor_name": ["This field is required."]
+  }
+}
+
+Response 400 (no active org for caller):
+{ "status": false, "message": "<get_user_organization error message>" }
+
+Notes:
+  - vendor_code is auto-generated in the format "VEN-NNNNNN" — do NOT
+    send it in the request.
+  - organization is derived from request.user — do NOT send it.
+  - Pincode validation (custom in serializer):
+      * must contain only digits (no letters, no special chars)
+      * must be exactly 6 digits
+      * blank/null is allowed (validation skipped)
+  - No file uploads in create — documents are not part of this model.
+  - Response uses VendorDetailSerializer (full payload including
+    address_line, notes, updated_at).
+
+
+--------------------------------------------------------------------------------
+1.2  POST /vendors/list/
+--------------------------------------------------------------------------------
+Purpose : List all active vendors in the caller's organization
+Request (all optional):
+{
+  "search": "acme",              // matches vendor_code, vendor_name, company_name,
+                                 //         email, phone, state, district, taluka,
+                                 //         pincode, tax_number (icontains)
+  "state": "Maharashtra",        // exact match on state field
+  "district": "Mumbai",          // exact match on district field
+  "taluka": "Andheri"            // exact match on taluka field
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Vendors fetched successfully.",
+  "data": [
+    {
+      "id": 42,
+      "vendor_code": "VEN-000042",
+      "vendor_name": "Acme Supplies",
+      "company_name": "Acme Supplies Pvt Ltd",
+      "email": "accounts@acmesupplies.com",
+      "phone": "9876543210",
+      "state": "Maharashtra",
+      "district": "Mumbai",
+      "taluka": "Andheri",
+      "pincode": "400001",
+      "tax_number": "27AAACT2727Q1ZS",
+      "is_active": true,
+      "created_at": "2026-11-16T10:00:00Z"
+    }
+  ]
+}
+
+Notes:
+  - Only is_active=True vendors of the caller's organization.
+  - Sort: created_at DESC (newest first).
+  - List serializer does NOT include address_line, notes, or updated_at.
+    Only the detail serializer returns those. Use /detail/ for the full
+    record.
+  - search is substring, case-insensitive, across 10 fields.
+  - state / district / taluka are EXACT match (case-insensitive via iexact).
+    Different from search — use these for filter chips, not free-text.
+  - No pagination — returns full filtered list.
+
+
+--------------------------------------------------------------------------------
+1.3  POST /vendors/detail/
+--------------------------------------------------------------------------------
+Purpose : Full detail of one vendor
+Request :
+{
+  "vendor_id": 42
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Vendor details fetched successfully.",
+  "data": {
+    "id": 42,
+    "vendor_code": "VEN-000042",
+    "vendor_name": "Acme Supplies",
+    "company_name": "Acme Supplies Pvt Ltd",
+    "email": "accounts@acmesupplies.com",
+    "phone": "9876543210",
+    "address_line": "123 Industrial Area, Andheri",
+    "state": "Maharashtra",
+    "district": "Mumbai",
+    "taluka": "Andheri",
+    "pincode": "400001",
+    "tax_number": "27AAACT2727Q1ZS",
+    "notes": "Prefers email contact",
+    "is_active": true,
+    "created_at": "2026-11-16T10:00:00Z",
+    "updated_at": "2026-11-16T10:00:00Z"
+  }
+}
+
+Response 400 (missing param):
+{ "status": false, "message": "vendor_id is required." }
+
+Response 404 (not found / another org / inactive):
+{ "status": false, "message": "Vendor not found." }
+
+Notes:
+  - Cross-org vendor returns the same 404 as a missing one — no
+    information leak.
+  - Inactive vendor also returns 404.
+  - This endpoint logs a VIEW activity in the audit trail (create /
+    update / deactivate log their own actions; this is the only READ
+    that logs).
+
+
+--------------------------------------------------------------------------------
+1.4  POST /vendors/update/
+--------------------------------------------------------------------------------
+Purpose : Update vendor (partial)
+Type    : application/json (no file uploads in this endpoint)
+
+Request (all fields optional; send only what you want to change):
+{
+  "vendor_id": 42,                                // required
+  "vendor_name": "Acme Supplies (Renamed)",
+  "company_name": "Acme Supplies Pvt Ltd",
+  "email": "hello@acmesupplies.com",
+  "phone": "9876543211",
+  "address_line": "456 New Industrial Area",
+  "state": "Maharashtra",
+  "district": "Mumbai",
+  "taluka": "Bandra",
+  "pincode": "400050",
+  "tax_number": "27AAACT2727Q1ZS",
+  "notes": "Updated notes"
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Vendor updated successfully.",
+  "data": { ...full VendorDetailSerializer output... }
+}
+
+Response 400 (missing vendor_id):
+{ "status": false, "message": "vendor_id is required." }
+
+Response 400 (validation):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": {
+    "pincode": ["Pincode must be 6 digits."]
+  }
+}
+
+Response 404 (not found / another org / inactive):
+{ "status": false, "message": "Vendor not found." }
+
+Notes:
+  - Partial update — any field omitted keeps its current value.
+  - vendor_code is IMMUTABLE (auto-generated, not in the update serializer).
+  - organization is NOT changeable.
+  - is_active is NOT writable here — use /vendors/deactivate/.
+  - Same pincode validation rules apply (6 digits, digits only, blank ok).
+
+
+--------------------------------------------------------------------------------
+1.5  POST /vendors/deactivate/
+--------------------------------------------------------------------------------
+Purpose : Soft-delete (deactivate) a vendor
+Request :
+{
+  "vendor_id": 42
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Vendor deactivated successfully."
+}
+
+Response 400 (missing param):
+{ "status": false, "message": "vendor_id is required." }
+
+Response 404 (not found / another org / already inactive):
+{ "status": false, "message": "Vendor not found." }
+
+Notes:
+  - Soft delete: is_active=False. The row stays in DB.
+  - Deactivated vendors disappear from /vendors/list/.
+  - Deactivated vendors return 404 from /detail/ and /update/.
+  - Any downstream records (e.g. purchase orders, if they existed) are
+    NOT affected by the deactivation — FK still points to the now-inactive
+    vendor row. No cascading deactivation.
+  - No "reactivate" endpoint. Deactivation is terminal for the UI flow.
+
+
+================================================================================
+QUICK REFERENCE — ADMIN ENDPOINTS
+================================================================================
+
+VENDOR (5)
+  POST /vendors/create/
+  POST /vendors/list/
+  POST /vendors/detail/
+  POST /vendors/update/
+  POST /vendors/deactivate/
+
+TOTAL ADMIN ENDPOINTS: 5
+
+
+================================================================================
+DATA SHAPES — FOR UI TYPES
+================================================================================
+
+VendorListSerializer (used by /list/):
+{
+  "id": 42,
+  "vendor_code": "VEN-000042",
+  "vendor_name": "Acme Supplies",
+  "company_name": "Acme Supplies Pvt Ltd",
+  "email": "accounts@acmesupplies.com",
+  "phone": "9876543210",
+  "state": "Maharashtra",
+  "district": "Mumbai",
+  "taluka": "Andheri",
+  "pincode": "400001",
+  "tax_number": "27AAACT2727Q1ZS",
+  "is_active": true,
+  "created_at": "2026-11-16T10:00:00Z"
+}
+  // NOTE: NO address_line, notes, or updated_at in the list serializer.
+
+VendorDetailSerializer (used by /create/, /detail/, /update/):
+  // Same as VendorListSerializer PLUS:
+  //   address_line  (string or null)
+  //   notes         (string or null)
+  //   updated_at    (datetime)
+  // Everything else identical.
+
+
+================================================================================
+COMMON ERROR SHAPES
+================================================================================
+
+Validation failure (400):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": {
+    "field_name": ["Error message."]
+  }
+}
+
+Not found (404):
+{ "status": false, "message": "Vendor not found." }
+
+Missing required param (400):
+{ "status": false, "message": "vendor_id is required." }
+
+Org context error (400):
+{ "status": false, "message": "<get_user_organization error message>" }
+
+
+================================================================================
+KEY NOTES FOR FRONTEND / UI DESIGNER
+================================================================================
+
+1. NO FILE UPLOADS IN THIS APP.
+   Unlike Clients, Vendors have no documents model and no multipart
+   upload. Every endpoint is JSON-only. If you send files, they're
+   silently dropped.
+
+2. VENDOR CODE IS IMMUTABLE AND AUTO-GENERATED.
+   Format: "VEN-NNNNNN". Display read-only. Never send in create/update.
+
+3. LIST vs DETAIL PAYLOAD DIFFERENCE.
+   - List item:    NO address_line, NO notes, NO updated_at.
+   - Detail item:  includes address_line, notes, AND updated_at.
+   If your list screen needs to show notes or a full address, you must
+   call /detail/ per row — or show only the fields present in the list.
+
+4. PINCODE VALIDATION IS STRICT.
+   Must be exactly 6 digits (if provided). Non-digits 400. Wrong length
+   400. Blank/null allowed. This is the ONLY custom validation in the
+   vendor serializer — all other fields accept any value (within model
+   length limits).
+
+5. SEARCH vs FILTER IS DIFFERENT.
+   - "search": substring match across 10 fields (case-insensitive).
+     Good for a single search box.
+   - "state" / "district" / "taluka": EXACT match (case-insensitive).
+     Good for filter chips or dropdowns. Don't pass partial values here
+     — "maha" won't match "Maharashtra" via the state param.
+   You can combine them: {"search": "acme", "state": "Maharashtra"}
+   narrows results to Acme vendors in Maharashtra.
+
+6. STATE / DISTRICT / TALUKA ARE FREE TEXT.
+   Unlike the Location Master app, vendor state/district/taluka are
+   just CharFields — not FK references. So a vendor created with
+   state="Maharastra" (typo) will NOT match a filter of
+   state="Maharashtra". The UI should either:
+     - Use the Location Master endpoints for the dropdown values,
+       OR
+     - Validate/normalize client-side before submit.
+   The backend does not enforce any enum.
+
+7. NO PAGINATION.
+   /list/ returns the full filtered list. For orgs with many vendors,
+   always pass a search term or state filter to keep response small.
+
+8. DEACTIVATION IS SOFT AND TERMINAL.
+   No "undo deactivate" endpoint exists. Deactivated vendors disappear
+   from lists. If you need to re-enable a vendor, there's no UI path —
+   a new vendor must be created.
+
+9. VENDORS ARE NOT SYSTEM USERS.
+   No login, no bell, no notifications for vendors. This app does NOT
+   trigger any notification. Vendors exist purely as org-scoped records
+   for procurement / payables.
+
+10. AUDIT LOG IS SILENT FROM UI PERSPECTIVE.
+    Every create/update/deactivate/view is logged to the audit trail,
+    but no notification is fired. Admin sees the action in the audit log
+    if they look — no bell, no push, no email.

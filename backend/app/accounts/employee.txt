@@ -1,0 +1,632 @@
+================================================================================
+ACCOUNTS APP — EMPLOYEE SELF-SERVICE API REFERENCE
+================================================================================
+
+Base URL   : /accounts/
+Method     : All endpoints are POST
+Auth       : Bearer token (IsAuthenticated) UNLESS marked PUBLIC
+Envelope   : { "status": true|false, "message": "...", "data": {...}?, "errors": {...}? }
+
+Who uses this document:
+  - Employee app (mobile/web) — the login and self-service shell
+  - Any authenticated user (Employee, Admin, Super Admin alike) for
+    profile endpoints; the flow is identical for all three roles
+
+This document covers the following endpoints the employee app touches:
+  1. POST /accounts/login/
+  2. POST /accounts/refresh-token/          ← NEW
+  3. POST /accounts/send-otp/
+  4. POST /accounts/verify-otp/
+  5. POST /accounts/forgot-password/
+  6. POST /accounts/my-profile/
+  7. POST /accounts/my-profile/update/
+  8. POST /accounts/organization/my-organizations/
+
+Everything else in the Accounts app (user management, role management,
+organization CRUD, assign-owner, assign-user) is admin/super-admin only
+and is NOT used by the employee app.
+
+Organization context:
+  - Single-org users: organization_id is auto-resolved
+  - Multi-org users: pass organization_id in the body
+
+
+================================================================================
+FLOW OVERVIEW — HOW THESE FIT TOGETHER
+================================================================================
+
+LOGIN FLOW (existing user):
+  /login/  →  receive { access, refresh, user }
+          →  store access+refresh
+          →  all subsequent calls use Authorization: Bearer <access>
+
+TOKEN REFRESH FLOW:
+  On 401 from any endpoint:
+    1. POST /refresh-token/ with { refresh }
+    2. If 200 → overwrite BOTH stored tokens, retry original request
+    3. If 401 → clear all tokens, redirect to Login
+
+FORGOT PASSWORD (must be OTP-gated):
+  1. /send-otp/  { email, purpose: "FORGOT_PASSWORD" }
+  2. /verify-otp/ { email, otp, purpose: "FORGOT_PASSWORD" }
+       → MUST return status: true  (gate)
+  3. /forgot-password/ — only after step 2 succeeds
+       → resets password
+       → returns no token, no auto-login
+
+WHY THE ORDER MATTERS:
+  The forgot-password endpoint returns no token or session. After
+  success, redirect to Login. Do NOT auto-log-in.
+
+
+================================================================================
+SECTION 1 — LOGIN
+================================================================================
+
+--------------------------------------------------------------------------------
+1.1  POST /accounts/login/
+--------------------------------------------------------------------------------
+Auth : PUBLIC
+Purpose : Authenticate with username + password. Returns JWT tokens.
+
+Request :
+{
+  "username": "rahul",
+  "password": "SecurePass@123"
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Login successful.",
+  "data": {
+    "access": "eyJ0eXAiOiJKV1Qi...",
+    "refresh": "eyJ0eXAiOiJKV1Qi...",
+    "user": {
+      "id": 25,
+      "username": "rahul",
+      "first_name": "Rahul",
+      "last_name": "Patil",
+      "email": "rahul@example.com",
+      "mobile": "9876543210",
+      "profile_photo": "users/profile/abc.jpg",
+      "role": 1,
+      "role_details": {
+        "id": 1,
+        "name": "Admin",
+        "is_active": true,
+        "created_at": "...",
+        "updated_at": "..."
+      },
+      "is_active": true,
+      "date_joined": "...",
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  }
+}
+
+Response 400 (missing fields):
+{ "status": false, "message": "Username and password are required." }
+
+Response 401 (bad credentials):
+{ "status": false, "message": "Invalid username or password." }
+
+Response 403 (deactivated account):
+{ "status": false, "message": "Your account is inactive." }
+
+Client responsibilities:
+  - Store "access" and "refresh" securely
+  - Attach "Authorization: Bearer <access>" to every subsequent call
+  - On 401 from any endpoint, use /refresh-token/ (Section 2)
+  - "user" object is the SAME shape returned by /my-profile/
+
+
+================================================================================
+SECTION 2 — REFRESH TOKEN
+================================================================================
+
+The login endpoint returns BOTH an access token (short-lived) and a
+refresh token (long-lived). When the access expires, use this endpoint
+to get a new pair WITHOUT forcing the user to log in again.
+
+The old refresh token is invalidated on success (blacklisted). A NEW
+refresh token is issued in the response. Both must be stored — the old
+one will no longer work.
+
+--------------------------------------------------------------------------------
+2.1  POST /accounts/refresh-token/
+--------------------------------------------------------------------------------
+Auth : PUBLIC (no access token required)
+Purpose : Exchange a valid refresh token for a new access + refresh pair.
+
+Request :
+{
+  "refresh": "eyJ0eXAiOiJKV1Qi...long.refresh.token..."
+}
+
+Response 200 (success — BOTH tokens are new):
+{
+  "status": true,
+  "message": "Token refreshed successfully.",
+  "data": {
+    "access": "eyJ0eXAiOiJKV1Qi...new.access.token...",
+    "refresh": "eyJ0eXAiOiJKV1Qi...new.refresh.token..."
+  }
+}
+
+Response 400 (missing refresh field):
+{
+  "status": false,
+  "message": "Refresh token is required.",
+  "data": null
+}
+
+Response 401 (invalid/expired/already-rotated refresh token):
+{
+  "status": false,
+  "message": "Invalid or expired refresh token. Please login again.",
+  "data": null
+}
+
+Response 401 (user deactivated after token was issued):
+{
+  "status": false,
+  "message": "User not found or inactive.",
+  "data": null
+}
+
+⚠ CRITICAL NOTES FOR FRONTEND:
+
+1. TOKEN ROTATION — OLD REFRESH TOKEN IS DEAD
+   After a successful refresh:
+     - The OLD refresh token is INVALID forever.
+     - The OLD access token stays valid until natural expiry (not
+       blacklisted).
+   YOU MUST OVERWRITE BOTH STORED TOKENS:
+     storage.access  ← data.access
+     storage.refresh ← data.refresh
+   If the client keeps using the old refresh token on the next refresh
+   call, it will get 401 "Invalid or expired refresh token."
+
+2. NO REQUEST LOOP
+   On 401 from any endpoint:
+     a) Call /refresh-token/ with stored refresh
+     b) If 200 → overwrite BOTH tokens, RETRY original request ONCE
+     c) If 401 → clear all tokens, redirect to Login
+   Do NOT retry more than once. Do NOT loop the refresh call.
+
+3. CONCURRENT REQUESTS — HANDLE PARALLEL REFRESH
+   If multiple API calls fire simultaneously and all hit 401, all will
+   try to refresh. Only the FIRST will succeed (the rest hit the
+   blacklisted old refresh). Frontend must use a shared promise:
+
+     let refreshing = null;
+     function refreshTokens() {
+       if (refreshing) return refreshing;
+       refreshing = api.post("/accounts/refresh-token/", { refresh })
+         .then(res => {
+           storage.access = res.data.data.access;
+           storage.refresh = res.data.data.refresh;
+           refreshing = null;
+           return res;
+         })
+         .catch(err => {
+           refreshing = null;
+           logout();
+           throw err;
+         });
+       return refreshing;
+     }
+
+4. REFRESH LIFETIME
+   Currently 7 days. Each refresh issues a NEW refresh token, so the
+   7-day clock RESETS on each use. An actively-used app keeps the user
+   logged in indefinitely. Only inactive users expire after 7 days.
+
+5. DO NOT SEND REFRESH AS BEARER
+   The refresh token is ONLY used in the body of /refresh-token/.
+   Never attach it as "Authorization: Bearer <refresh>".
+
+
+================================================================================
+SECTION 3 — OTP FLOW
+================================================================================
+
+OTP is a 6-digit code, valid for 5 minutes, max 5 verification attempts.
+
+PURPOSE_CHOICES (what the "purpose" field accepts):
+  - "EMAIL_VERIFICATION"   → verifying ownership of an email (onboarding)
+  - "FORGOT_PASSWORD"      → the ONLY purpose allowed before /forgot-password/
+  - "LOGIN"                → OTP-based login (optional second factor)
+  - "CHANGE_EMAIL"         → verifying a new email before switching
+
+The employee app should send the exact purpose string that matches the
+flow being executed.
+
+--------------------------------------------------------------------------------
+3.1  POST /accounts/send-otp/
+--------------------------------------------------------------------------------
+Auth : PUBLIC
+Purpose : Send a 6-digit OTP to an email.
+
+Request :
+{
+  "email": "rahul@example.com",
+  "purpose": "FORGOT_PASSWORD"
+}
+
+Valid purpose values:
+  EMAIL_VERIFICATION | FORGOT_PASSWORD | LOGIN | CHANGE_EMAIL
+
+Response 200:
+{
+  "status": true,
+  "message": "OTP sent successfully.",
+  "data": {
+    "expires_at": "2026-03-15T10:35:00Z"
+  }
+}
+
+Response 400 (validation failure):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": { "email": ["Enter a valid email address."] }
+}
+
+Response 500 (email send failure):
+{ "status": false, "message": "Unable to send OTP. Please try again." }
+
+Behavior:
+  - OTP expires in 5 minutes (data.expires_at tells you exactly when)
+  - Any previous unverified OTP for the same (email, purpose) is
+    immediately expired when a new one is requested
+  - If email sending fails, the OTP record is expired instantly
+
+Client responsibilities:
+  - Countdown from "expires_at" — do NOT use a local timer
+  - Allow "Resend OTP" only after a short grace (30s)
+
+--------------------------------------------------------------------------------
+3.2  POST /accounts/verify-otp/
+--------------------------------------------------------------------------------
+Auth : PUBLIC
+Purpose : Verify an OTP previously sent for the given (email, purpose).
+
+Request :
+{
+  "email": "rahul@example.com",
+  "otp": "123456",
+  "purpose": "FORGOT_PASSWORD"
+}
+
+Response 200 (SUCCESS — the gate to proceed):
+{
+  "status": true,
+  "message": "OTP verified successfully.",
+  "data": null
+}
+
+Response 400 variants:
+{ "status": false, "message": "No OTP found. Please request a new OTP." }
+{ "status": false, "message": "OTP has expired. Please request a new OTP." }
+{ "status": false, "message": "Maximum OTP attempts exceeded. Please request a new OTP." }
+{
+  "status": false,
+  "message": "Invalid OTP.",
+  "data": { "remaining_attempts": 3 }
+}
+
+Behavior:
+  - OTP must be exactly 6 digits
+  - Max 5 attempts per OTP record
+  - On success, the OTP row is marked is_verified=true
+  - On failure, the attempts counter increments
+
+Client responsibilities:
+  - Show "remaining_attempts" prominently when invalid
+  - On "No OTP found" / "expired" / "max attempts" → restart from /send-otp/
+  - GATE RULE: only proceed to the next step when status: true
+  - Do NOT cache OTP-verified state — the server issues no ticket.
+    If the user reloads the app mid-flow, they must restart.
+
+
+================================================================================
+SECTION 4 — FORGOT PASSWORD (OTP-GATED)
+================================================================================
+
+--------------------------------------------------------------------------------
+4.1  POST /accounts/forgot-password/
+--------------------------------------------------------------------------------
+Auth : PUBLIC
+Purpose : Reset a user's password by email match.
+
+⚠ IMPORTANT — READ THIS BEFORE USING:
+
+  This endpoint does NOT issue a token, does NOT log the user in, and
+  does NOT verify that the caller proved email ownership by itself.
+  The backend accepts any valid email + new password and resets it.
+
+  The employee app MUST enforce the OTP gate in the UI:
+    1. Call /send-otp/   with purpose="FORGOT_PASSWORD"
+    2. Call /verify-otp/ with purpose="FORGOT_PASSWORD"
+    3. ONLY IF step 2 returned status: true, call /forgot-password/
+    4. On success, navigate to Login — not into the app.
+
+Request :
+{
+  "email": "rahul@example.com",
+  "new_password": "NewPass@123",
+  "confirm_password": "NewPass@123"
+}
+
+Response 200 (success — NO token issued):
+{
+  "status": true,
+  "message": "Password reset successfully. Please login with your new password.",
+  "data": null
+}
+
+Response 400 (validation failure):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": {
+    "new_password": ["This password is too short."],
+    "confirm_password": ["Passwords do not match."]
+  }
+}
+
+Response 404 (email not registered):
+{ "status": false, "message": "User not found." }
+
+Response 500 (unexpected failure):
+{ "status": false, "message": "Unable to reset password. Please try again." }
+
+Client-side checklist:
+  ✅ On success → clear local flow state, clear stale tokens,
+     navigate to Login
+  ✅ Show toast: "Password updated. Please log in."
+  ❌ Do NOT auto-populate the login screen with the new password
+  ❌ Do NOT attempt to log in automatically
+  ❌ Do NOT call /login/ on the user's behalf
+
+
+================================================================================
+SECTION 5 — MY PROFILE
+================================================================================
+
+--------------------------------------------------------------------------------
+5.1  POST /accounts/my-profile/
+--------------------------------------------------------------------------------
+Auth : Any authenticated user
+Purpose : Fetch own profile.
+
+Request : {}
+
+Response 200:
+{
+  "status": true,
+  "message": "Profile fetched successfully.",
+  "data": {
+    "id": 25,
+    "username": "rahul",
+    "first_name": "Rahul",
+    "last_name": "Patil",
+    "email": "rahul@example.com",
+    "mobile": "9876543210",
+    "profile_photo": "users/profile/abc.jpg",
+    "role": 1,
+    "role_details": {
+      "id": 1,
+      "name": "Admin",
+      "is_active": true,
+      "created_at": "...",
+      "updated_at": "..."
+    },
+    "is_active": true,
+    "date_joined": "...",
+    "created_at": "...",
+    "updated_at": "..."
+  }
+}
+
+Notes:
+  - Identical shape to the "user" object from /login/
+  - No employee-specific fields — those come from /employees/my-profile/
+  - "role_details.name" is the label for the badge
+  - "profile_photo" is the S3 path — build the URL client-side
+
+--------------------------------------------------------------------------------
+5.2  POST /accounts/my-profile/update/
+--------------------------------------------------------------------------------
+Auth : Any authenticated user
+Purpose : Update own profile. Cannot change role, is_active, username.
+Type : multipart/form-data
+
+Request (all fields optional):
+{
+  "first_name": "Rahul",
+  "last_name": "Patil",
+  "email": "rahul.new@example.com",
+  "mobile": "9876543211",
+  "profile_photo": <file>
+}
+
+Response 200: { ...full user object... }
+
+Response 400 (validation failure):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": {
+    "email": ["user with this email already exists."],
+    "mobile": ["user with this mobile already exists."]
+  }
+}
+
+Behavior:
+  - Partial update: only sent fields change
+  - Email uniqueness checked against ALL users (excluding self)
+  - Mobile uniqueness checked against ALL users (excluding self)
+  - New profile_photo: uploaded to S3 first, old deleted after save
+  - "role", "is_active", "username" are read-only via this endpoint
+
+Client responsibilities:
+  - After success, update cached profile so UI reflects changes
+  - Do NOT attempt to send "role" or "is_active" — they'll be ignored
+  - Re-render the avatar with the new profile_photo path
+
+
+================================================================================
+SECTION 6 — MY ORGANIZATIONS
+================================================================================
+
+--------------------------------------------------------------------------------
+6.1  POST /accounts/organization/my-organizations/
+--------------------------------------------------------------------------------
+Auth : Any authenticated user
+Purpose : List all organizations the caller belongs to (owner or member).
+
+Request : {}
+
+Response 200:
+{
+  "status": true,
+  "message": "Your organizations fetched successfully.",
+  "data": [
+    {
+      "id": 5,
+      "organization_name": "Acme Pvt Ltd",
+      "legal_name": "Acme Private Limited",
+      "organization_code": "ORG-261101-00412",
+      "business_type": "Private Limited",
+      "industry": "Software",
+      "description": "ERP product company",
+      "email": "info@acme.com",
+      "phone_number": "02212345678",
+      "alternate_phone_number": "9876543210",
+      "website": "https://acme.com",
+      "address_line_1": "Plot 12, Tech Park",
+      "address_line_2": "Andheri East",
+      "city": "Mumbai",
+      "district": "Mumbai",
+      "state": "Maharashtra",
+      "pincode": "400069",
+      "country": "India",
+      "latitude": "19.119000",
+      "longitude": "72.846000",
+      "logo": "organizations/logos/acme.png",
+      "owner": 25,
+      "is_active": true,
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  ]
+}
+
+Notes:
+  - Returns only ACTIVE orgs where caller is owner or active member
+  - For single-org employee this returns a 1-element array
+  - Employee app rarely needs it, but useful for:
+      * Displaying org name/logo in the header
+      * Populating an org switcher (multi-org users)
+      * Confirming org membership after login
+
+  - Multi-org caveat:
+    If the user belongs to >1 org, most endpoints (/projects/, /attendance/,
+    /payroll/, /leave/, etc.) require "organization_id" in the body.
+    Use this endpoint to build the org list, then pass "id" as
+    "organization_id" in subsequent requests.
+
+  - Single-org: most APIs work without "organization_id" (auto-resolved)
+
+
+================================================================================
+QUICK REFERENCE — EMPLOYEE ENDPOINTS
+================================================================================
+
+PUBLIC (5)
+  POST /accounts/login/
+  POST /accounts/refresh-token/               ← NEW
+  POST /accounts/send-otp/
+  POST /accounts/verify-otp/
+  POST /accounts/forgot-password/
+
+AUTHENTICATED (3)
+  POST /accounts/my-profile/
+  POST /accounts/my-profile/update/
+  POST /accounts/organization/my-organizations/
+
+TOTAL: 8 endpoints
+
+
+================================================================================
+KEY NOTES FOR FRONTEND — EMPLOYEE SIDE
+================================================================================
+
+1. FORGOT PASSWORD IS OTP-GATED — ALWAYS
+   Three-step flow: send-otp → verify-otp (status:true) → forgot-password
+   Response data is null. No token, no shortcut, no auto-login.
+   UI should:
+     ✅ Block submit until verify-otp returns status:true
+     ✅ Force restart from /send-otp/ if verification expires
+     ❌ Never expose the reset form without OTP verification
+     ❌ Never auto-log-in after reset
+
+2. REFRESH TOKEN — ROTATION IS ON
+   Both access AND refresh change on every successful refresh.
+   Overwrite both. Use a shared promise for concurrent 401s.
+   Full lifecycle in Section 2 above.
+
+3. OTP PURPOSES — USE THE RIGHT ONE PER FLOW
+   Forgot password → purpose="FORGOT_PASSWORD"
+   Onboarding → EMAIL_VERIFICATION or CHANGE_EMAIL
+   Login → LOGIN
+   Wrong purpose → 400 "No OTP found" on verify.
+
+4. OTP LIFECYCLE
+   - 6 digits, 5 min expiry, 5 max attempts
+   - Build resend timer from server's expires_at
+   - Any resend invalidates all prior unverified OTPs for (email, purpose)
+
+5. TOKENS
+   - Store access + refresh securely
+   - On 401 → refresh once, then logout
+   - After logout, clear BOTH tokens + cached profile
+
+6. PROFILE PHOTO
+   Response contains S3 path, NOT full URL. Build URL client-side.
+
+7. ROLE LABEL
+   Use "role_details.name" for badges. Don't hard-code role IDs.
+
+8. MULTI-ORG USERS
+   - >1 org → show org switcher
+   - After selection, include "organization_id" in subsequent bodies
+   - Exactly 1 → no switcher; backend auto-resolves
+
+9. WHAT'S NOT IN THIS DOCUMENT
+   These exist in Accounts but are admin/super-admin only:
+     /register/                    (super admin)
+     /user/*                       (super admin)
+     /role/*                       (super admin)
+     /organization/create/         (super admin)
+     /organization/list/           (super admin view; employees use
+                                    my-organizations/ instead)
+     /organization/detail/         (admin/super — but the scoped result
+                                    is same as my-organizations/ detail)
+     /organization/update/         (owner)
+     /organization/deactivate/     (owner)
+     /organization/assign-owner/   (super admin)
+     /organization/assign-user/    (owner or super admin)
+     /change-password/             (self, but excluded per product request)
+
+10. CHANGE PASSWORD IS NOT IN THIS DOCUMENT
+    You specified /my-profile/ and /my-profile/update/ but did NOT ask
+    for /change-password/. The endpoint exists but is excluded per your
+    request. If the employee UI later needs in-app password change
+    (without OTP reset), the endpoint is:
+    POST /accounts/change-password/ with
+    { old_password, new_password, confirm_password }

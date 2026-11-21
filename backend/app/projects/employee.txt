@@ -1,0 +1,766 @@
+================================================================================
+PROJECTS APP — EMPLOYEE / PROJECT HEAD API REFERENCE
+================================================================================
+
+Base URL   : /
+Method     : All endpoints are POST
+Auth       : Bearer token (IsAuthenticated)
+Envelope   : { "status": true|false, "message": "...", "data": {...}?, "errors": {...}? }
+
+Who uses this document:
+  - Any user with an active Employee profile (linked via OneToOneField)
+  - The project head for a specific project (gets extra task-management
+    endpoints on that project through the ADMIN task endpoints — see NOTE)
+
+CRITICAL IDENTITY RULE:
+  The client NEVER sends employee_id or user_id for "who am I".
+  The backend derives identity from request.user.employee_profile.
+  Sending employee_id has no effect — it's ignored for scoping.
+
+
+================================================================================
+BOOTSTRAP — WHAT EMPLOYEE UI NEEDS
+================================================================================
+
+  1. After login, call POST /projects/my-projects/
+     → returns all projects I'm on (badge: "Head" or "Member")
+
+  2. Call POST /projects/my-projects-as-head/
+     → returns ONLY projects I head
+     → store as a set of project IDs to gate task-create buttons on
+
+  3. On project-open, call POST /projects/my-project-detail/
+     → shows description, dates, client, head, team, my role
+
+  4. Task list screen, call POST /projects/task/my-tasks/
+     → my assigned tasks
+
+  5. Task detail, call POST /projects/task/detail/
+     → works for me if I'm the assignee (MEMBER) or the head (HEAD)
+
+  6. Task status, call POST /projects/task/status-update/
+     → I can only move TODO↔IN_PROGRESS and IN_PROGRESS→IN_REVIEW
+
+  7. If I'm a project head, all task endpoints work for me on that project
+     (task/create, task/list, task/update, task/status-update full matrix,
+      task/deactivate) — same endpoints as admin, but scoped to that project.
+
+
+================================================================================
+SECTION 1 — MY PROJECTS
+================================================================================
+
+--------------------------------------------------------------------------------
+1.1  POST /projects/my-projects/
+--------------------------------------------------------------------------------
+Purpose : All projects I'm an active member of (head OR member)
+Request : {}
+Response 200:
+{
+  "status": true,
+  "message": "My projects fetched successfully.",
+  "data": {
+    "project_count": 3,
+    "projects": [
+      {
+        "id": 30,                    // ← this is the ALLOCATION id, not project id
+        "project_id": 1,
+        "project_name": "Website Revamp",
+        "project_status": "in_progress",
+        "project_priority": "high",
+        "client_name": "Acme Corp",
+        "project_role": "Backend Dev",
+        "allocation_percentage": "80.00",
+        "start_date": "2026-05-01",
+        "end_date": "2026-08-31",
+        "is_project_head": false,
+        "is_active": true,
+        "notes": ""
+      },
+      {
+        "id": 31,
+        "project_id": 2,
+        "project_name": "Mobile App",
+        "project_status": "testing",
+        "project_priority": "medium",
+        "client_name": "Beta Inc",
+        "project_role": "Team Lead",
+        "allocation_percentage": "100.00",
+        "is_project_head": true,     // ← I'm the head here
+        ...
+      }
+    ]
+  }
+}
+
+Response 404 (no employee profile):
+{ "status": false, "message": "No employee profile linked to your account." }
+
+
+--------------------------------------------------------------------------------
+1.2  POST /projects/my-projects-as-head/
+--------------------------------------------------------------------------------
+Purpose : Only projects where I am the active head
+Request : {}
+Response 200:
+{ Same shape as 1.1, all rows have is_project_head=true }
+
+Frontend use:
+  Save as const headOfProjectIds = data.projects.map(p => p.project_id)
+  (Note: "id" here is the allocation id, not the project id — but for
+   the task-create guard, you only need the boolean per row. If you need
+   a project id map, use /my-project-detail's response.project_code + id.)
+
+Actually, use this simpler approach for the guard:
+  const headOfIds = new Set(data.projects.map(p => p.project_name));
+  Or better — cache the fact "I am head of project X" via /my-project-detail
+  on each project-open and store in local state.
+
+
+================================================================================
+SECTION 2 — MY PROJECT DETAIL
+================================================================================
+
+--------------------------------------------------------------------------------
+2.1  POST /projects/my-project-detail/
+--------------------------------------------------------------------------------
+Purpose : Detail of one project I'm allocated to
+Request : { "project_id": 12 }
+Response 200:
+{
+  "status": true,
+  "message": "Project detail fetched successfully.",
+  "data": {
+    "id": 12,
+    "project_code": "PRJ-000012",
+    "project_name": "Website Revamp",
+    "client": 5,
+    "client_name": "Acme Corp",
+    "project_type": "Web Development",
+    "description": "...",
+    "start_date": "2026-05-01",
+    "end_date": "2026-08-31",
+    "deadline": "2026-08-15",
+    "priority": "high",
+    "status": "in_progress",
+    "live_url": "https://example.com",
+    "documents": [ ... ],
+    "project_head": {
+      "allocation_id": 30,
+      "employee_id": 25,
+      "employee_code": "EMP-000025",
+      "name": "Rahul Patil",
+      "project_role": "Team Lead"
+    },
+    "team": [
+      {
+        "allocation_id": 30,
+        "employee_id": 25,
+        "employee_code": "EMP-000025",
+        "name": "Rahul Patil",
+        "designation": "Senior Dev",
+        "project_role": "Team Lead",
+        "allocation_percentage": "100.00",
+        "is_project_head": true,
+        "start_date": "2026-05-01",
+        "end_date": "2026-08-31"
+      },
+      { ...more members... }
+    ],
+    "my_role": {
+      "allocation_id": 32,
+      "is_project_head": false,
+      "project_role": "Backend Dev",
+      "allocation_percentage": "80.00",
+      "start_date": "2026-05-01",
+      "end_date": "2026-08-31"
+    },
+    "created_at": "...",
+    "updated_at": "..."
+  }
+}
+
+Response 404: not allocated to that project.
+
+
+================================================================================
+SECTION 3 — MY TASKS
+================================================================================
+
+--------------------------------------------------------------------------------
+3.1  POST /projects/task/my-tasks/
+--------------------------------------------------------------------------------
+Purpose : Tasks assigned to me
+Request (all optional):
+{
+  "status": "IN_PROGRESS",           // TODO | IN_PROGRESS | IN_REVIEW | DONE
+  "priority": "high",
+  "project_id": 12,
+  "search": "login"
+}
+Response 200:
+{
+  "status": true,
+  "message": "My tasks fetched successfully.",
+  "data": {
+    "task_count": 5,
+    "tasks": [
+      {
+        "id": 500,
+        "project_id": 12,
+        "project_name": "Website Revamp",
+        "project_code": "PRJ-000012",
+        "title": "Build login API",
+        "description": "...",
+        "status": "IN_PROGRESS",
+        "priority": "high",
+        "due_date": "2026-06-15",
+        "estimated_hours": "16.00",
+        "actual_hours": "8.00",
+        "completed_at": null,
+        "created_at": "...",
+        "updated_at": "..."
+      }
+    ]
+  }
+}
+
+Response 404: no employee profile linked.
+
+
+================================================================================
+SECTION 4 — TASK DETAIL (assignee view)
+================================================================================
+
+--------------------------------------------------------------------------------
+4.1  POST /projects/task/detail/
+--------------------------------------------------------------------------------
+Same endpoint as the admin one. The backend auto-scopes:
+  - HEAD / ADMIN → sees any task in the project
+  - MEMBER (assignee) → sees only their own assigned task
+  - MEMBER (not assignee) → 403
+
+Request : { "task_id": 500 }
+Response 200: { full TaskDetailSerializer }
+Response 403: "You do not have access to this task."
+
+
+================================================================================
+SECTION 5 — TASK STATUS UPDATE (assignee view)
+================================================================================
+
+--------------------------------------------------------------------------------
+5.1  POST /projects/task/status-update/
+--------------------------------------------------------------------------------
+Same endpoint as the admin one. Assignee is restricted:
+
+Allowed for ME (as assignee):
+  TODO        → IN_PROGRESS
+  IN_PROGRESS → TODO
+  IN_PROGRESS → IN_REVIEW
+
+NOT allowed for me:
+  IN_REVIEW   → DONE          (only head/admin)
+  IN_REVIEW   → IN_PROGRESS   (only head/admin)
+  DONE        → anything      (only head/admin)
+
+Request :
+{
+  "task_id": 500,
+  "status": "IN_REVIEW",
+  "actual_hours": "14.00"     // optional
+}
+Response 200: { full TaskDetailSerializer }
+
+Response 400 (bad transition for my role):
+{
+  "status": false,
+  "message": "Transition from 'IN_PROGRESS' to 'DONE' is not allowed for your role."
+}
+
+Response 403 (not my task, not head):
+{ "status": false, "message": "You are not allowed to change the status of this task." }
+
+
+================================================================================
+SECTION 6 — AS A PROJECT HEAD
+================================================================================
+
+If I am the active head of a project, these ADMIN endpoints become available
+to me scoped to THAT project (not other projects):
+
+  POST /projects/task/create/          — create task on my project
+  POST /projects/task/list/            — list all tasks on my project
+  POST /projects/task/detail/          — see any task on my project
+  POST /projects/task/update/          — edit any task on my project
+  POST /projects/task/status-update/   — full transition matrix
+  POST /projects/task/deactivate/      — soft-delete a task
+
+For OTHER projects where I'm just a member:
+  - task/create → 403
+  - task/list   → 403
+  - task/update → 403
+  - task/deactivate → 403
+  - task/detail → only my assigned tasks
+  - task/status-update → only my assigned tasks, assignee transitions
+
+For OTHER projects where I have NO allocation at all:
+  - All task endpoints → 403 "You do not have access to this project."
+
+Frontend pattern:
+  On project-open (from /my-project-detail/):
+    const iAmHead = data.my_role?.is_project_head === true;
+    Show "Create Task" button if iAmHead
+    Show "All Tasks" tab if iAmHead
+    Show "My Tasks on this project" tab always
+
+
+================================================================================
+SECTION — TASK MANAGEMENT
+================================================================================
+
+Permission matrix for this section:
+  ADMIN  — super admin, org owner (full access)
+  HEAD   — active project head (full access on their project)
+  MEMBER — active team member (only their own tasks, limited transitions)
+
+
+--------------------------------------------------------------------------------
+6.1  POST /projects/task/create/
+--------------------------------------------------------------------------------
+Permission: ADMIN or HEAD
+Request :
+{
+  "project": 12,
+  "title": "Build login API",
+  "description": "JWT-based auth with refresh tokens",
+  "priority": "high",
+  "assigned_to": 25,
+  "due_date": "2026-06-15",
+  "estimated_hours": "16.00"
+}
+
+Response 201:
+{
+  "status": true,
+  "message": "Task created successfully.",
+  "data": {
+    "id": 500,
+    "project_details": {
+      "id": 12,
+      "project_name": "Website Revamp",
+      "project_code": "PRJ-000012",
+      "client_id": 5,
+      "client_name": "Acme Corp",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    "title": "Build login API",
+    "description": "JWT-based auth with refresh tokens",
+    "status": "TODO",
+    "priority": "high",
+    "assigned_to_details": {
+      "id": 25,
+      "employee_code": "EMP-000025",
+      "name": "Rahul Patil",
+      "designation": "Software Engineer",
+      "department": "Engineering"
+    },
+    "due_date": "2026-06-15",
+    "estimated_hours": "16.00",
+    "actual_hours": null,
+    "completed_at": null,
+    "is_active": true,
+    "created_by_details": {
+      "id": 2,
+      "username": "admin_user",
+      "email": "admin@acme.com"
+    },
+    "updated_by_details": {
+      "id": 2,
+      "username": "admin_user",
+      "email": "admin@acme.com"
+    },
+    "created_at": "2026-04-28T11:00:00Z",
+    "updated_at": "2026-04-28T11:00:00Z"
+  }
+}
+
+Response 400 (assignee not allocated to project):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": {
+    "assigned_to": ["Selected employee is not allocated to this project."]
+  }
+}
+
+Response 403 (member trying to create):
+{
+  "status": false,
+  "message": "Only the project head or organization admin can create tasks."
+}
+
+
+--------------------------------------------------------------------------------
+6.2  POST /projects/task/list/
+--------------------------------------------------------------------------------
+Permission: ADMIN or HEAD
+Request (all optional):
+{
+  "project_id": 12,
+  "status": "IN_PROGRESS",
+  "priority": "high",
+  "assigned_to_id": 25,
+  "search": "login"
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Tasks fetched successfully.",
+  "data": [
+    {
+      "id": 500,
+      "project_id": 12,
+      "project_name": "Website Revamp",
+      "title": "Build login API",
+      "status": "IN_PROGRESS",
+      "priority": "high",
+      "assigned_to_details": {
+        "id": 25,
+        "employee_code": "EMP-000025",
+        "name": "Rahul Patil",
+        "designation": "Software Engineer"
+      },
+      "due_date": "2026-06-15",
+      "estimated_hours": "16.00",
+      "actual_hours": "8.00",
+      "completed_at": null,
+      "created_at": "2026-04-28T11:00:00Z"
+    },
+    {
+      "id": 499,
+      "project_id": 12,
+      "project_name": "Website Revamp",
+      "title": "Design login form",
+      "status": "TODO",
+      "priority": "medium",
+      "assigned_to_details": {
+        "id": 30,
+        "employee_code": "EMP-000030",
+        "name": "Priya Sharma",
+        "designation": "UI Designer"
+      },
+      "due_date": "2026-06-10",
+      "estimated_hours": "8.00",
+      "actual_hours": null,
+      "completed_at": null,
+      "created_at": "2026-04-27T14:00:00Z"
+    }
+  ]
+}
+
+Response 403 (member trying to list):
+{
+  "status": false,
+  "message": "Only the project head or organization admin can view the task list."
+}
+
+
+--------------------------------------------------------------------------------
+6.3  POST /projects/task/detail/
+--------------------------------------------------------------------------------
+Permission: ADMIN, HEAD, or the task's assignee (MEMBER)
+Request : { "task_id": 500 }
+
+Response 200:
+{
+  "status": true,
+  "message": "Task detail fetched successfully.",
+  "data": {
+    "id": 500,
+    "project_details": {
+      "id": 12,
+      "project_name": "Website Revamp",
+      "project_code": "PRJ-000012",
+      "client_id": 5,
+      "client_name": "Acme Corp",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    "title": "Build login API",
+    "description": "JWT-based auth with refresh tokens",
+    "status": "IN_PROGRESS",
+    "priority": "high",
+    "assigned_to_details": {
+      "id": 25,
+      "employee_code": "EMP-000025",
+      "name": "Rahul Patil",
+      "designation": "Software Engineer",
+      "department": "Engineering"
+    },
+    "due_date": "2026-06-15",
+    "estimated_hours": "16.00",
+    "actual_hours": "8.00",
+    "completed_at": null,
+    "is_active": true,
+    "created_by_details": {
+      "id": 2,
+      "username": "admin_user",
+      "email": "admin@acme.com"
+    },
+    "updated_by_details": {
+      "id": 25,
+      "username": "rahul",
+      "email": "rahul@example.com"
+    },
+    "created_at": "2026-04-28T11:00:00Z",
+    "updated_at": "2026-04-29T09:30:00Z"
+  }
+}
+
+Response 403 (member trying to view another member's task):
+{
+  "status": false,
+  "message": "You do not have access to this task."
+}
+
+
+--------------------------------------------------------------------------------
+6.4  POST /projects/task/update/
+--------------------------------------------------------------------------------
+Permission: ADMIN or HEAD
+Purpose : Update task fields (NOT status — see 3.5)
+Request :
+{
+  "task_id": 500,
+  "title": "Build login + refresh API",
+  "priority": "urgent",
+  "assigned_to": 26,
+  "due_date": "2026-07-01",
+  "estimated_hours": "20.00",
+  "actual_hours": "18.00"
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Task updated successfully.",
+  "data": {
+    "id": 500,
+    "project_details": { ...same as detail... },
+    "title": "Build login + refresh API",
+    "description": "JWT-based auth with refresh tokens",
+    "status": "IN_PROGRESS",
+    "priority": "urgent",
+    "assigned_to_details": {
+      "id": 26,
+      "employee_code": "EMP-000026",
+      "name": "Amit Kumar",
+      "designation": "Backend Dev",
+      "department": "Engineering"
+    },
+    "due_date": "2026-07-01",
+    "estimated_hours": "20.00",
+    "actual_hours": "18.00",
+    "completed_at": null,
+    "is_active": true,
+    "created_by_details": { ... },
+    "updated_by_details": {
+      "id": 2,
+      "username": "admin_user",
+      "email": "admin@acme.com"
+    },
+    "created_at": "2026-04-28T11:00:00Z",
+    "updated_at": "2026-04-30T10:00:00Z"
+  }
+}
+
+NOTE: project and status are NOT writable here.
+
+
+--------------------------------------------------------------------------------
+6.5  POST /projects/task/status-update/
+--------------------------------------------------------------------------------
+Permission:
+  - ADMIN or HEAD: any transition
+  - Assignee (MEMBER who is assigned_to): limited to
+      TODO ↔ IN_PROGRESS
+      IN_PROGRESS → IN_REVIEW
+
+Request :
+{
+  "task_id": 500,
+  "status": "IN_REVIEW",
+  "actual_hours": "14.00"
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Task status updated successfully.",
+  "data": {
+    "id": 500,
+    "project_details": { ... },
+    "title": "Build login + refresh API",
+    "description": "...",
+    "status": "IN_REVIEW",
+    "priority": "urgent",
+    "assigned_to_details": {
+      "id": 26,
+      "employee_code": "EMP-000026",
+      "name": "Amit Kumar",
+      "designation": "Backend Dev",
+      "department": "Engineering"
+    },
+    "due_date": "2026-07-01",
+    "estimated_hours": "20.00",
+    "actual_hours": "14.00",
+    "completed_at": null,
+    "is_active": true,
+    "created_by_details": { ... },
+    "updated_by_details": {
+      "id": 26,
+      "username": "amit",
+      "email": "amit@example.com"
+    },
+    "created_at": "2026-04-28T11:00:00Z",
+    "updated_at": "2026-05-01T16:00:00Z"
+  }
+}
+
+Response 200 (marking DONE — head/admin only):
+{
+  "status": true,
+  "message": "Task status updated successfully.",
+  "data": {
+    ...
+    "status": "DONE",
+    "completed_at": "2026-05-02T10:00:00Z",
+    ...
+  }
+}
+
+Response 200 (same-status no-op):
+{
+  "status": true,
+  "message": "Task status unchanged.",
+  "data": { ...unchanged task... }
+}
+
+Response 400 (invalid transition for member):
+{
+  "status": false,
+  "message": "Transition from 'IN_PROGRESS' to 'DONE' is not allowed for your role."
+}
+
+Response 403 (not assignee, not head):
+{
+  "status": false,
+  "message": "You are not allowed to change the status of this task."
+}
+
+Side effects:
+  - new_status == "DONE" → completed_at = now
+  - leaving "DONE"       → completed_at = null
+
+
+--------------------------------------------------------------------------------
+6.6  POST /projects/task/deactivate/
+--------------------------------------------------------------------------------
+Permission: ADMIN or HEAD
+Request : { "task_id": 500 }
+
+Response 200:
+{
+  "status": true,
+  "message": "Task deactivated successfully."
+}
+
+Response 404:
+{ "status": false, "message": "Task not found." }
+
+Response 403:
+{
+  "status": false,
+  "message": "Only the project head or organization admin can deactivate tasks."
+}
+
+
+
+
+================================================================================
+QUICK REFERENCE — EMPLOYEE ENDPOINTS (explicit employee-only)
+================================================================================
+
+EMPLOYEE-ONLY (4)
+  POST /projects/my-projects/
+  POST /projects/my-projects-as-head/
+  POST /projects/my-project-detail/
+  POST /projects/task/my-tasks/
+
+SHARED WITH ADMIN BUT SCOPED (2)
+  POST /projects/task/detail/              — assignee sees own tasks
+  POST /projects/task/status-update/       — assignee limited transitions
+
+HEAD (not admin) MAY ALSO CALL (6)
+  POST /projects/task/create/
+  POST /projects/task/list/
+  POST /projects/task/detail/
+  POST /projects/task/update/
+  POST /projects/task/status-update/
+  POST /projects/task/deactivate/
+
+
+================================================================================
+KEY NOTES FOR FRONTEND — EMPLOYEE / HEAD SIDE
+================================================================================
+
+1. IDENTITY IS DERIVED SERVER-SIDE.
+   There is NO employee_id or user_id in any request.
+   If the user has no employee_profile → 404 across all endpoints.
+   If the employee_profile.is_active=false → 403.
+
+2. HEAD BADGE / TASK-CREATE BUTTON GATING
+   Best pattern:
+     a) On app load:    call /my-projects-as-head/
+     b) Cache set of project ids the user heads
+     c) On project-open: gate UI on isHead(projectId)
+   The backend still enforces this on the write endpoints — the frontend
+   gating is UI polish only.
+
+3. EMPLOYEE CANNOT CREATE TASKS.
+   Task-create is HEAD/ADMIN only. Assignee sees tasks assigned to them
+   in /my-tasks/ and updates status up to IN_REVIEW.
+
+4. ASSIGNEE STATUS TRANSITIONS ARE NARROW.
+   If the frontend blindly shows all four statuses as buttons, three of them
+   will 400. Only render:
+     - "Start" button when status=TODO
+     - "Move to Review" / "Pause" buttons when status=IN_PROGRESS
+     - No action buttons when status=IN_REVIEW or DONE for a member
+   For a head, all four statuses are valid targets (with the transition
+   matrix above).
+
+5. HEAD AND ADMIN SEE THE SAME TASK ENDPOINTS.
+   There is no separate "head-create-task" endpoint. The backend's
+   get_project_permission helper returns "HEAD" for the head and the
+   permission check accepts both "ADMIN" and "HEAD" — so the SAME URLs
+   work for both. This keeps URL surface small.
+
+6. "MY PROJECTS" USES ALLOCATION IDS, NOT PROJECT IDS.
+   The "id" field in /my-projects/ rows is ProjectTeamAllocation.id.
+   To get the project_id, use /my-project-detail/ with the project_id
+   from the caller's context (they tapped a specific project).
+   If you need project_id in the list, we can add it — say so.
+
+7. NO "MY TEAM" ENDPOINT.
+   The full team is already included in /my-project-detail/ response under
+   the "team" key. No separate call needed.
+
+8. EMPLOYEE VISIBILITY SCOPE
+   - Sees only: active allocations on active projects
+   - Sees only: active tasks (is_active=True)
+   - Does NOT see: other employees' tasks unless they are the head
+   - Does NOT see: deactivated projects, allocations, or tasks

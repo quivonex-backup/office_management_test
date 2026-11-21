@@ -1,0 +1,600 @@
+================================================================================
+ATTENDANCE APP — EMPLOYEE SELF-SERVICE API REFERENCE
+================================================================================
+
+Base URL   : /attendance/
+Method     : All endpoints are POST
+Auth       : Bearer token (IsAuthenticated)
+Envelope   : { "status": true|false, "message": "...", "data": {...}?, "errors": {...}? }
+
+Who uses this document:
+  - Any user with an active Employee profile
+  - Frontend employee-facing screens:
+      * Check in / Check out
+      * My attendance list
+      * Attendance detail
+      * Request attendance correction
+      * My corrections
+      * Face verification test
+      * My shift assignments
+
+CRITICAL IDENTITY RULE:
+  The client NEVER sends employee_id.
+  The backend derives the employee from request.user.employee_profile.
+  Missing profile → 404. Inactive profile → 403 (or "no active employee"
+  message depending on endpoint).
+
+BOOTSTRAP:
+  1. Admin creates org settings (photo_required, location_required)
+  2. Admin creates shifts and assigns one to you
+  3. Read /attendance/my-shifts/ to see your current + upcoming shift
+  4. Read /attendance/my-attendance/ to see today's state
+  5. Call /attendance/punch/ to check-in or check-out
+  6. Use /attendance/corrections/create/ if you missed a punch
+
+
+================================================================================
+CONTENT TYPE PER ENDPOINT
+================================================================================
+
+Endpoint                                    Content-Type
+-----------------------------------------   ------------------
+POST /attendance/punch/                     multipart/form-data
+POST /attendance/my-attendance/             application/json
+POST /attendance/my-shifts/                 application/json
+POST /attendance/detail/                    application/json
+POST /attendance/corrections/create/        application/json
+POST /attendance/corrections/list/          application/json
+POST /attendance/face-recognition/          multipart/form-data
+
+RULE FOR THE FRONTEND:
+  - /punch/ and /face-recognition/ MUST use FormData (selfie uploads).
+  - Everything else is JSON.
+  - Do not mix content types per endpoint.
+
+
+================================================================================
+CHOICE ENUMS — FOR UI DROPDOWNS, FILTERS, BADGES
+================================================================================
+
+ATTENDANCE STATUS (badges):
+  PRESENT         → green
+  HALF_DAY        → orange
+  INCOMPLETE      → yellow ("In progress")
+  PENDING_REVIEW  → red ("Needs correction")
+  ABSENT          → red
+  ON_LEAVE        → blue
+  WEEKLY_OFF      → grey
+  HOLIDAY         → purple
+
+CORRECTION STATUS (badges):
+  PENDING    → yellow
+  APPROVED   → green
+  REJECTED   → red
+  APPLIED    → dark green
+
+CORRECTION FIELD (dropdown):
+  CHECK_IN | CHECK_OUT | STATUS
+
+PUNCH TYPE (informational):
+  CHECK_IN | CHECK_OUT
+
+
+================================================================================
+SECTION 1 — PUNCH (CHECK-IN / CHECK-OUT)
+================================================================================
+
+--------------------------------------------------------------------------------
+1.1  POST /attendance/punch/
+--------------------------------------------------------------------------------
+Purpose : Automatic check-in OR check-out depending on current state
+Access  : Employee (self only)
+Type    : multipart/form-data (accepts selfie upload)
+Request fields:
+  latitude              decimal (10,7)   conditional — required if
+                                                        location_required=true
+  longitude             decimal (10,7)   conditional — required if
+                                                        location_required=true
+  gps_accuracy_meters   float >= 0        optional — if provided, must be
+                                                      <= max_gps_accuracy_meters
+  selfie                image file        conditional — required if
+                                                      photo_required=true
+
+NOTE: Even though some fields are optional, make them necessary in UI.
+      Location should auto-fetch.
+
+Form example:
+  latitude=19.0760000
+  longitude=72.8777000
+  gps_accuracy_meters=12.5
+  selfie=<file>
+
+Response 201 (check-in):
+{
+  "status": true,
+  "message": "Check-in recorded successfully.",
+  "data": {
+    "punch": {
+      "id": 7,
+      "attendance": 4,
+      "punch_type": "CHECK_IN",
+      "punched_at": "2026-10-28T10:09:24.734580Z",
+      "latitude": "17.6736970",
+      "longitude": "74.0313850",
+      "gps_accuracy_meters": 10.0,
+      "office_distance_meters": 0.0,
+      "location_verified": true,
+      "selfie": "https://.../attendance/selfies/7fbdaa.jpg",
+      "face_similarity": 0.4375,
+      "face_verified": true,
+      "verification_status": "VERIFIED",
+      "verification_details": {
+        "location_message": "Location verified.",
+        "photo_provided": true,
+        "face_verification": "Verified",
+        "face_model": "OpenCV SFace",
+        "face_similarity": 0.4375,
+        "face_threshold": 0.3
+      },
+      "recorded_by": 12,
+      "is_manual": false,
+      "created_at": "..."
+    },
+    "attendance": {
+      "id": 4,
+      "employee_code": "EMP-000010",
+      "work_date": "2026-10-28",
+      "shift_name": "Night Shift",
+      "scheduled_start": "...",
+      "scheduled_end": "...",
+      "check_in": "2026-10-28T10:09:24Z",
+      "check_out": null,
+      "status": "INCOMPLETE",
+      "punches": [ {punch}, ... ]
+    }
+  }
+}
+
+Response 201 (check-out): same shape, message = "Check-out recorded successfully."
+
+Response 400 scenarios (all with {status: false, message: "..."}):
+  - "A selfie is required for face verification."
+  - "Face does not match your registered profile photo."
+  - "GPS coordinates are required."
+  - "GPS accuracy is insufficient."
+  - "You are outside the permitted attendance location."
+  - "This shift has already ended. Contact your manager if you need an
+     attendance correction."
+  - "Attendance already exists for this work date."
+  - "You have already checked out."
+  - "Your attendance is still open for today. Use the correction API if
+     you forgot to check out."
+
+Response 500 (network/processing failure):
+  "Unable to process attendance punch. Please try again."
+
+AUTO BEHAVIOR:
+  - First punch of the day (or after midnight on a previous night shift) = CHECK_IN
+  - Next punch within the checkout window = CHECK_OUT
+  - No punch_type parameter — server decides
+
+
+================================================================================
+SECTION 2 — MY ATTENDANCE LIST
+================================================================================
+
+--------------------------------------------------------------------------------
+2.1  POST /attendance/my-attendance/
+--------------------------------------------------------------------------------
+Purpose : List my attendance records
+Access  : Employee (self only)
+Request (all optional):
+{
+  "work_date": "2026-10-26",
+  "from_date": "2026-10-01",
+  "to_date": "2026-10-31"
+}
+Response 200:
+{
+  "status": true,
+  "message": "Your attendance fetched successfully.",
+  "data": [
+    {
+      "id": 3,
+      "organization": 1,
+      "employee": 10,
+      "employee_code": "EMP-000010",
+      "employee_name": "Akshay Kumar",
+      "shift": 1,
+      "shift_name": "General Shift",
+      "work_date": "2026-10-26",
+      "scheduled_start": "...",
+      "scheduled_end": "...",
+      "late_grace_minutes": 15,
+      "early_departure_grace_minutes": 15,
+      "check_in": "...",
+      "check_out": null,
+      "net_work_minutes": 0,
+      "overtime_minutes": 0,
+      "late_minutes": 0,
+      "early_departure_minutes": 0,
+      "status": "INCOMPLETE",
+      "punches": [ {punch1}, {punch2}, ... ],
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  ]
+}
+
+Response 404: "No active employee profile is linked to this user."
+
+STATUS VALUES you'll see:
+  INCOMPLETE, PRESENT, HALF_DAY, ABSENT, ON_LEAVE, WEEKLY_OFF,
+  HOLIDAY, PENDING_REVIEW
+
+
+================================================================================
+SECTION 3 — MY SHIFT ASSIGNMENTS
+================================================================================
+
+--------------------------------------------------------------------------------
+3.1  POST /attendance/my-shifts/
+--------------------------------------------------------------------------------
+Purpose : List my shift assignments — current, future, and (optionally)
+          past ones
+Access  : Employee (self only)
+Type    : application/json
+
+Request (all optional):
+{
+  "include_inactive": false,      // default false → current + future only
+                                  // true  → full history
+  "date_from": "2025-01-01",      // filter by assignment.effective_from >=
+  "date_to": "2026-12-31"         // filter by assignment.effective_from <=
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Your shift assignments fetched successfully.",
+  "data": {
+    "employee_id": 25,
+    "employee_code": "EMP-000025",
+    "employee_name": "Rahul Patil",
+    "current_shift": {
+      "assignment_id": 88,
+      "shift_id": 3,
+      "shift_name": "General Shift",
+      "start_time": "09:30:00",
+      "end_time": "18:30:00",
+      "crosses_midnight": false,
+      "late_grace_minutes": 15,
+      "early_departure_grace_minutes": 15,
+      "effective_from": "2026-01-01",
+      "effective_to": null,
+      "is_current": true,
+      "is_future": false,
+      "is_past": false
+    },
+    "assignments": [
+      {
+        "assignment_id": 88,
+        "shift_id": 3,
+        "shift_name": "General Shift",
+        "start_time": "09:30:00",
+        "end_time": "18:30:00",
+        "crosses_midnight": false,
+        "late_grace_minutes": 15,
+        "early_departure_grace_minutes": 15,
+        "effective_from": "2026-01-01",
+        "effective_to": null,
+        "is_current": true,
+        "is_future": false,
+        "is_past": false
+      },
+      {
+        "assignment_id": 72,
+        "shift_id": 1,
+        "shift_name": "Morning Shift",
+        "start_time": "06:00:00",
+        "end_time": "14:00:00",
+        "crosses_midnight": false,
+        "late_grace_minutes": 10,
+        "early_departure_grace_minutes": 5,
+        "effective_from": "2025-07-01",
+        "effective_to": "2025-12-31",
+        "is_current": false,
+        "is_future": false,
+        "is_past": true
+      }
+    ]
+  }
+}
+
+Response 200 (no shift assigned yet):
+{
+  "status": true,
+  "message": "Your shift assignments fetched successfully.",
+  "data": {
+    "employee_id": 25,
+    "employee_code": "EMP-000025",
+    "employee_name": "Rahul Patil",
+    "current_shift": null,
+    "assignments": []
+  }
+}
+
+Response 404 (no employee profile):
+{ "status": false, "message": "No active employee profile is linked to this user." }
+
+FIELD NOTES:
+  - current_shift is a convenience — the single assignment active today,
+    or null. Use it for "My shift" card without scanning the array.
+  - assignments[] sorted by effective_from descending (newest first).
+  - is_current / is_future / is_past are precomputed. Do NOT recompute
+    client-side.
+  - late_grace_minutes / early_departure_grace_minutes are the EFFECTIVE
+    values (shift override if set, else org default) — no extra call to
+    /settings/ needed.
+  - crosses_midnight tells you if the shift ends next day — important for
+    "You check out on Nov 16 at 06:00" style messages.
+  - effective_to: null means the assignment has no scheduled end date.
+
+RENDERING SUGGESTIONS:
+  - Top card: "My shift" using current_shift (or "No active shift").
+  - Tabs: "Current" (is_current) / "Upcoming" (is_future) / "History"
+    (is_past — requires include_inactive: true).
+  - Badge: "Overnight" when crosses_midnight=true.
+  - Tooltip: "15 min grace before marked late" from late_grace_minutes.
+
+
+================================================================================
+SECTION 4 — MY ATTENDANCE DETAIL
+================================================================================
+
+--------------------------------------------------------------------------------
+4.1  POST /attendance/detail/
+--------------------------------------------------------------------------------
+Purpose : Detail of a specific attendance record
+Access  : Employee (must own the record) OR Admin
+Request :
+{
+  "attendance_id": 1
+}
+Response 200: { full attendance record }
+
+Response 403:
+  "You do not have permission to view this attendance record."
+
+Response 404:
+  Attendance id not found in your org.
+
+NOTE: Shared endpoint. Backend scopes by caller role:
+  - Admin → any record in org
+  - Employee → only their own
+
+
+================================================================================
+SECTION 5 — REQUEST A CORRECTION
+================================================================================
+
+--------------------------------------------------------------------------------
+5.1  POST /attendance/corrections/create/
+--------------------------------------------------------------------------------
+Purpose : Submit a request to fix a wrong/missing punch
+Access  : Employee (self only)
+Request :
+{
+  "attendance": 2,
+  "punch": 3,
+  "field_name": "CHECK_OUT",
+  "new_value": "2026-12-25T18:30:00+05:30",
+  "reason": "Forgot to check out, left at 6:30 PM."
+}
+Response 201:
+{
+  "status": true,
+  "message": "Attendance correction submitted successfully.",
+  "data": {
+    "id": 1,
+    "attendance": 2,
+    "work_date": "2026-10-25",
+    "employee_code": "EMP-000002",
+    "employee_name": "Akshay Kumar",
+    "punch": 3,
+    "field_name": "CHECK_OUT",
+    "old_value": "2026-10-25T14:29:46Z",
+    "new_value": "2026-12-25T18:30:00+05:30",
+    "reason": "Forgot to check out, left at 6:30 PM.",
+    "status": "PENDING",
+    "requested_by": 2,
+    "reviewed_by": null,
+    "reviewed_at": null,
+    "review_note": "",
+    "created_at": "...",
+    "updated_at": "..."
+  }
+}
+
+Response 403:
+  "You can only request corrections to your own attendance."
+
+FIELD NOTES:
+  attendance  — attendance record id (must belong to you)
+  punch       — optional, specific AttendancePunch row to correct
+  field_name  — CHECK_IN | CHECK_OUT | STATUS
+  new_value   — CHECK_IN/CHECK_OUT: ISO 8601 datetime with timezone;
+                STATUS: any value from STATUS VALUES
+  reason      — free text, required
+
+
+================================================================================
+SECTION 6 — MY CORRECTIONS
+================================================================================
+
+--------------------------------------------------------------------------------
+6.1  POST /attendance/corrections/list/
+--------------------------------------------------------------------------------
+Purpose : List correction requests (scoped to your own by default)
+Access  : Employee + Admin (auto-scoped)
+Request (all optional):
+{
+  "status": "PENDING",
+  "work_date": "2026-10-25",
+  "from_date": "2026-10-01",
+  "to_date": "2026-10-31"
+}
+Response 200:
+{
+  "status": true,
+  "message": "Attendance corrections fetched successfully.",
+  "data": [ {correction1}, {correction2} ]
+}
+
+IMPORTANT — SCOPING:
+  - Employee → sees ONLY their own corrections (backend auto-scopes)
+  - Admin with employee_id → sees that employee's corrections
+  - Admin without employee_id → sees all org corrections
+
+Response 404 (no employee profile):
+  "No active employee profile is linked to this user."
+
+
+================================================================================
+SECTION 7 — FACE VERIFICATION TEST
+================================================================================
+
+--------------------------------------------------------------------------------
+7.1  POST /attendance/face-recognition/
+--------------------------------------------------------------------------------
+Purpose : Test face match against registered profile photo (before punching)
+Access  : Employee (self only)
+Type    : multipart/form-data
+Request :
+  selfie = <image file>
+
+Response 200 (match):
+{
+  "status": true,
+  "message": "Face recognized successfully.",
+  "data": {
+    "verified": true,
+    "employee_code": "EMP-000010",
+    "similarity": 0.4375
+  }
+}
+
+Response 400 (no match):
+{ "status": false, "message": "Face does not match your registered profile photo." }
+
+Response 400 (missing file):
+{ "status": false, "message": "Upload a selfie using the 'selfie' field." }
+
+Response 404 (no employee profile):
+  "No active employee profile is linked to this user."
+
+Use case:
+  Frontend can call this BEFORE /attendance/punch/ to give immediate
+  feedback ("Face verified!" or "Face doesn't match — try again") without
+  committing a punch.
+
+
+================================================================================
+QUICK REFERENCE — EMPLOYEE ENDPOINTS
+================================================================================
+
+PUNCH (1)
+  POST /attendance/punch/                         multipart
+
+MY ATTENDANCE (2)
+  POST /attendance/my-attendance/                 JSON
+  POST /attendance/detail/                        JSON (shared with admin)
+
+MY SHIFTS (1)
+  POST /attendance/my-shifts/                     JSON
+
+CORRECTIONS (2)
+  POST /attendance/corrections/create/            JSON
+  POST /attendance/corrections/list/              JSON (shared with admin)
+
+FACE VERIFICATION (1)
+  POST /attendance/face-recognition/              multipart
+
+TOTAL EMPLOYEE ENDPOINTS: 7
+
+
+================================================================================
+KEY NOTES FOR FRONTEND — EMPLOYEE SIDE
+================================================================================
+
+1. PUNCH FLOW — READ SETTINGS FIRST
+   Before showing the punch button, the app should know:
+   - Is photo_required? → if yes, force camera capture
+   - Is location_required? → if yes, request GPS and block if not obtained
+
+   If punch fails with "selfie required" or "location required", surface
+   that error and retry.
+
+2. PUNCH — NO punch_type PARAM
+   The server decides CHECK_IN vs CHECK_OUT. Call the same endpoint for
+   both. Show the message from the response.
+
+3. GPS ACCURACY MATTERS
+   If the client can read accuracy from the GPS library, send it as
+   gps_accuracy_meters. The backend rejects if accuracy > max (default 50m).
+
+4. FACE VERIFICATION ORDER
+   Recommended flow:
+     a) Capture selfie + location + accuracy
+     b) OPTIONAL: call /face-recognition/ as a pre-check for UX
+     c) Call /attendance/punch/ with all data
+
+5. CHECKOUT WINDOW
+   - Same-day checkout: any time before shift end + grace
+   - Cross-midnight shifts: up to 4 hours after scheduled_end on next day
+   - After that window → PENDING_REVIEW and requires correction
+
+6. MISSED CHECKOUT = PENDING_REVIEW
+   Next morning's punch will NOT create a checkout for yesterday.
+   Yesterday flips to PENDING_REVIEW. Submit a CHECK_OUT correction.
+
+7. STATUS DISPLAY
+   INCOMPLETE      → yellow "In progress"
+   PRESENT         → green "Present"
+   HALF_DAY        → orange "Half Day"
+   ABSENT          → red "Absent"
+   ON_LEAVE        → blue "On Leave"
+   WEEKLY_OFF      → grey "Weekly Off"
+   HOLIDAY         → purple "Holiday"
+   PENDING_REVIEW  → red "Needs correction"
+
+8. CORRECTION — DATETIME FORMAT
+   new_value for CHECK_IN / CHECK_OUT must be ISO 8601 with timezone.
+   Example: "2026-12-25T18:30:00+05:30".
+
+9. CORRECTIONS NEED ADMIN APPROVAL
+   Submitting doesn't change your attendance immediately. Stays PENDING
+   until admin reviews (APPLIED / REJECTED).
+
+10. MY SHIFTS — USE current_shift FOR THE TOP CARD
+    Don't scan assignments[]. Use the top-level current_shift for the
+    "My shift" header. Use assignments[] for the history/upcoming list.
+
+11. MY SHIFTS — HISTORY NEEDS include_inactive: true
+    Default call returns only current + future. To show past shift
+    assignments, send {"include_inactive": true}. Sort order is already
+    newest-first — do not re-sort client-side.
+
+12. MY SHIFTS — is_current / is_future / is_past ARE PRECOMPUTED
+    Do NOT recompute these on the client by comparing dates. The backend
+    already did it using the server's "today". A client in a different
+    timezone might disagree — trust the server.
+
+13. NO WRITE ACCESS TO SHIFTS, SETTINGS, OR ATTENDANCE ROWS
+    The employee can:
+    - Punch
+    - View own attendance
+    - View own shift assignments
+    - Request corrections
+    - Test face recognition
+    Everything else is admin-only. Do NOT call those endpoints.

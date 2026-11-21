@@ -102,6 +102,7 @@ class ProjectTeamAllocation(models.Model):
     start_date = models.DateField(blank=True, null=True)
     end_date = models.DateField(blank=True, null=True)
     notes = models.TextField(blank=True, null=True)
+    is_project_head = models.BooleanField(default=False, db_index=True)
     is_active = models.BooleanField(default=True, db_index=True)
 
     allocated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="project_team_allocations_created")
@@ -115,7 +116,57 @@ class ProjectTeamAllocation(models.Model):
             models.Index(fields=["project", "is_active"]),
             models.Index(fields=["employee", "is_active"]),
             models.Index(fields=["project", "employee"]),
+            models.Index(fields=["project", "is_project_head", "is_active"]),
         ]
 
     def __str__(self):
         return f"{self.project.project_name} - {self.employee.employee_code}"
+
+
+# =========================================================
+# TASK MODEL
+# =========================================================
+class Task(models.Model):
+
+    STATUS_CHOICES = [
+        ("TODO", "To Do"),
+        ("IN_PROGRESS", "In Progress"),
+        ("IN_REVIEW", "In Review"),
+        ("DONE", "Done"),
+    ]
+
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="tasks")
+    organization = models.ForeignKey("accounts.Organization", on_delete=models.PROTECT, related_name="tasks", db_index=True)
+
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True, null=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="TODO", db_index=True)
+    priority = models.CharField(max_length=20, choices=Project.PRIORITY_CHOICES, default="medium")
+
+    assigned_to = models.ForeignKey(Employee, on_delete=models.SET_NULL, null=True, blank=True, related_name="assigned_tasks")
+    due_date = models.DateField(blank=True, null=True)
+
+    estimated_hours = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
+    actual_hours = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
+
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    is_active = models.BooleanField(default=True, db_index=True)
+
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="tasks_created")
+    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="tasks_updated")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "tasks"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["organization", "project", "is_active"]),
+            models.Index(fields=["assigned_to", "status"]),
+            models.Index(fields=["project", "status"]),
+        ]
+
+    def __str__(self):
+        return f"{self.project.project_name} - {self.title} - {self.status}"

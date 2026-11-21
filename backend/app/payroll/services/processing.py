@@ -17,15 +17,18 @@ from app.employees.models import Employee
 from ..models import (
     SalaryStructure,
     EmployeeSalaryAssignment,
+    PayrollSettings,
     PayrollRun,
     PayrollRecord,
     PayrollLineItem,
+    PayrollPayment,
 )
 from .common import (
     ZERO,
     PAYROLL_ELIGIBLE_STATUSES,
     q2,
     audit_log,
+    compute_cycle_period,
 )
 from .computation import compute_payslip_data
 
@@ -143,24 +146,28 @@ def _roll_up_totals(payroll_run):
 @transaction.atomic
 def generate_payroll(payroll_run, generated_by=None):
     """
-    Generate payroll records for a DRAFT run.
+    Generate (or regenerate) payroll records for a DRAFT or GENERATED run.
+
+    Regenerating rebuilds every record from current attendance, salary and
+    statutory data. Hand-entered TDS and other deductions are carried over.
+    Review notes are not: a payslip that is still flagged must be accepted again.
 
     Guard: reject generation when ANY finalised payroll run already covers
-    an overlapping period. This closes the double-payment hole where two
-    parallel runs both generate before either is paid, then both finalise
-    and both pay.
+    an overlapping period (prevents double payment).
     """
-    if payroll_run.status != "DRAFT":
+    payroll_run = PayrollRun.objects.select_for_update().get(pk=payroll_run.pk)
+
+    if payroll_run.status not in ("DRAFT", "GENERATED"):
         raise ValueError(
-            f"Only DRAFT runs can be generated. "
+            f"Only DRAFT or GENERATED runs can be generated. "
             f"This run is {payroll_run.status}."
         )
 
-    if payroll_run.records.exists():
-        raise ValueError(
-            "This run already has records. Use a fresh run or "
-            "clear this one before regenerating."
-        )
+    # Defensive: payments should be impossible before FINALIZED.
+    if PayrollPayment.objects.filter(
+        payroll_record__payroll_run=payroll_run
+    ).exists():
+        raise ValueError("Cannot regenerate: payments exist on this run.")
 
     organization = payroll_run.organization
     period_start = payroll_run.period_start
@@ -188,7 +195,14 @@ def generate_payroll(payroll_run, generated_by=None):
             f"period, or the existing run must be reversed first."
         )
 
-    # ---- Proceed with normal generation ----
+    # ---- Remember hand-entered deductions, then clear old records ----
+    manual = {
+        r.employee_id: (r.tds, r.other_deductions)
+        for r in payroll_run.records.filter(generation_status="GENERATED")
+    }
+    payroll_run.records.all().delete()   # line items cascade
+
+    # ---- Generate ----
     employees = (
         Employee.objects.filter(
             organization=organization,
@@ -226,8 +240,20 @@ def generate_payroll(payroll_run, generated_by=None):
                 })
             continue
 
-        _persist_payroll_record(payroll_run, employee, data)
+        record = _persist_payroll_record(payroll_run, employee, data)
         generated_count += 1
+
+        # Re-apply hand-entered deductions from before the regenerate.
+        old_tds, old_other = manual.get(employee.id, (ZERO, ZERO))
+        if (old_tds and old_tds > ZERO) or (old_other and old_other > ZERO):
+            update_payroll_record_deductions(
+                record=record,
+                tds=old_tds if old_tds and old_tds > ZERO else None,
+                other_deductions=(
+                    old_other if old_other and old_other > ZERO else None
+                ),
+                updated_by=generated_by,
+            )
 
     _roll_up_totals(payroll_run)
 
@@ -621,6 +647,7 @@ def bulk_assign_salary(
       - employees belong to organization
       - employees are payroll-eligible
       - structure belongs to organization and is active
+      - effective_from is a payroll cycle start date
       - no overlapping assignment for each employee
 
     All validation happens BEFORE any writes.
@@ -633,6 +660,23 @@ def bulk_assign_salary(
 
     if effective_to is not None and effective_to < effective_from:
         raise ValueError("effective_to cannot be before effective_from.")
+
+    # Assignments must start on a cycle boundary (same rule as the
+    # single-assignment serializer); mid-cycle revisions are not supported.
+    settings_obj = PayrollSettings.objects.filter(
+        organization=organization
+    ).first()
+    if settings_obj is not None:
+        cycle_start, _ = compute_cycle_period(
+            cycle_start_day=settings_obj.cycle_start_day,
+            reference=effective_from,
+        )
+        if effective_from != cycle_start:
+            raise ValueError(
+                f"Salary assignment must start on a cycle boundary. The "
+                f"cycle containing {effective_from} starts on {cycle_start}. "
+                f"Use {cycle_start} or a later cycle start as effective_from."
+            )
 
     employees = list(
         Employee.objects.select_for_update()

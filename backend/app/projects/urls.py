@@ -13,6 +13,20 @@ from .views import (
     ProjectTeamAllocationDeactivateAPIView,
     ProjectTeamAPIView,
     EmployeeProjectsAPIView,
+
+    ProjectHeadAssignAPIView,
+
+    MyProjectsAPIView,
+    MyProjectsAsHeadAPIView,
+    MyProjectDetailAPIView,
+
+    TaskCreateAPIView,
+    TaskListAPIView,
+    TaskDetailAPIView,
+    TaskUpdateAPIView,
+    TaskStatusUpdateAPIView,
+    TaskDeactivateAPIView,
+    MyTasksAPIView,
 )
 
 urlpatterns = [
@@ -31,4 +45,20 @@ urlpatterns = [
     path("team-allocation/deactivate/", ProjectTeamAllocationDeactivateAPIView.as_view(), name="project-team-allocation-deactivate"),
     path("team-allocation/project-team/", ProjectTeamAPIView.as_view(), name="project-team"),
     path("team-allocation/employee-projects/", EmployeeProjectsAPIView.as_view(), name="employee-projects"),
+
+    path("team-allocation/assign-head/", ProjectHeadAssignAPIView.as_view(), name="project-head-assign"),
+
+    # Employee self-service
+    path("my-projects/", MyProjectsAPIView.as_view(), name="project-my-projects"),
+    path("my-projects-as-head/", MyProjectsAsHeadAPIView.as_view(), name="project-my-projects-as-head"),
+    path("my-project-detail/", MyProjectDetailAPIView.as_view(), name="project-my-project-detail"),
+
+    # Tasks
+    path("task/create/", TaskCreateAPIView.as_view(), name="task-create"),
+    path("task/list/", TaskListAPIView.as_view(), name="task-list"),
+    path("task/detail/", TaskDetailAPIView.as_view(), name="task-detail"),
+    path("task/update/", TaskUpdateAPIView.as_view(), name="task-update"),
+    path("task/status-update/", TaskStatusUpdateAPIView.as_view(), name="task-status-update"),
+    path("task/deactivate/", TaskDeactivateAPIView.as_view(), name="task-deactivate"),
+    path("task/my-tasks/", MyTasksAPIView.as_view(), name="task-my-tasks"),
 ]

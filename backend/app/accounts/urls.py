@@ -1,6 +1,6 @@
 from django.urls import path
 from .views import (
-    RegisterAPIView, LoginAPIView, ChangePasswordAPIView, ForgotPasswordAPIView,
+    RegisterAPIView, LoginAPIView, RefreshTokenAPIView, ChangePasswordAPIView, ForgotPasswordAPIView,
     MyProfileAPIView,MyProfileUpdateAPIView,
     SendOTPAPIView, VerifyOTPAPIView,
     UserListAPIView, UserDetailAPIView, UserUpdateAPIView, UserDeactivateAPIView,
@@ -8,12 +8,14 @@ from .views import (
     OrganizationCreateAPIView, OrganizationListAPIView, OrganizationDetailAPIView,
     OrganizationUpdateAPIView, OrganizationDeactivateAPIView,
     OrganizationAssignOwnerAPIView, OrganizationAssignUserAPIView, MyOrganizationsAPIView,
+    DatabaseBackupCreateAPIView, DatabaseBackupListAPIView, DatabaseBackupDownloadAPIView, DatabaseBackupRestoreAPIView,
 )
 
 urlpatterns = [
     # Authentication
     path("register/", RegisterAPIView.as_view()),                                   #SU
     path("login/", LoginAPIView.as_view()),                                         #E #A #SU
+    path("refresh-token/", RefreshTokenAPIView.as_view()),                          #E #A #SU
     path("change-password/", ChangePasswordAPIView.as_view()),                      #E #A #SU
     path("forgot-password/", ForgotPasswordAPIView.as_view()),                      #E #A #SU
 
@@ -47,5 +49,11 @@ urlpatterns = [
     path("organization/assign-owner/", OrganizationAssignOwnerAPIView.as_view()),   #SU
     path("organization/assign-user/", OrganizationAssignUserAPIView.as_view()),     #A #SU
     path("organization/my-organizations/", MyOrganizationsAPIView.as_view()),       #E #A #SU
+
+    # DATABASE BACKUP
+    path("database/backup/create/", DatabaseBackupCreateAPIView.as_view()),         #SU
+    path("database/backup/list/", DatabaseBackupListAPIView.as_view()),             #SU
+    path("database/backup/download/", DatabaseBackupDownloadAPIView.as_view()),     #SU
+    path("database/backup/restore/", DatabaseBackupRestoreAPIView.as_view()),       #SU
    
 ]

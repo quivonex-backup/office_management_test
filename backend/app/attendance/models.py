@@ -20,7 +20,7 @@ class AttendanceSettings(models.Model):
     photo_required = models.BooleanField(default=True)
     location_required = models.BooleanField(default=True)
     allowed_radius_meters = models.PositiveIntegerField(default=100)
-    max_gps_accuracy_meters = models.PositiveIntegerField(default=50)
+    max_gps_accuracy_meters = models.PositiveIntegerField(default=1000)
 
     # Face verification threshold (0-100)
     face_match_threshold = models.DecimalField(
@@ -48,6 +48,10 @@ class AttendanceSettings(models.Model):
 
     # Late arrival minutes beyond this threshold can trigger half-day.
     late_half_day_threshold_minutes = models.PositiveIntegerField(default=120, validators=[MinValueValidator(0)])
+
+    # Overtime rules
+    overtime_minimum_minutes = models.PositiveIntegerField(default=0, validators=[MinValueValidator(0)])
+    overtime_include_threshold = models.BooleanField(default=True)
 
     # Automatic absent/finalization settings
     auto_mark_absent = models.BooleanField(default=False)

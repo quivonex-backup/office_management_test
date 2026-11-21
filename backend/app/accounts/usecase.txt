@@ -59,7 +59,7 @@ SECTION 1 — AUTHENTICATION (PUBLIC)
 ================================================================================
 
 --------------------------------------------------------------------------------
-1.1  POST /login/
+1.1  POST /accounts/login/
 --------------------------------------------------------------------------------
 Auth : #PUB
 Purpose : Authenticate and receive JWT tokens.
@@ -111,7 +111,7 @@ NOTE:
     "Authorization: Bearer <access>" on every subsequent request.
 
 --------------------------------------------------------------------------------
-1.2  POST /forgot-password/
+1.2  POST /accounts/forgot-password/
 --------------------------------------------------------------------------------
 Auth : #PUB
 Purpose : Reset password by email (no OTP required — email match only).
@@ -138,7 +138,7 @@ NOTE:
   - A PASSWORD_RESET audit log is written.
 
 --------------------------------------------------------------------------------
-1.3  POST /send-otp/
+1.3  POST /accounts/send-otp/
 --------------------------------------------------------------------------------
 Auth : #PUB
 Purpose : Send a 6-digit OTP to an email (for verification flows).
@@ -167,7 +167,7 @@ NOTE:
   - If email sending fails, the OTP record is expired immediately.
 
 --------------------------------------------------------------------------------
-1.4  POST /verify-otp/
+1.4  POST /accounts/verify-otp/
 --------------------------------------------------------------------------------
 Auth : #PUB
 Purpose : Verify an OTP previously sent.
@@ -204,7 +204,7 @@ Only super admins should create users. Registration sends a welcome email
 with login credentials.
 
 --------------------------------------------------------------------------------
-2.1  POST /register/
+2.1  POST /accounts/register/
 --------------------------------------------------------------------------------
 Auth : #SU   (intended; see NOTE)
 Purpose : Create a new user (optionally with profile photo).
@@ -260,7 +260,7 @@ SECTION 3 — MY PROFILE (any authenticated user)
 ================================================================================
 
 --------------------------------------------------------------------------------
-3.1  POST /my-profile/
+3.1  POST /accounts/my-profile/
 --------------------------------------------------------------------------------
 Auth : #E #A #SU
 Purpose : Fetch the logged-in user's own profile.
@@ -275,7 +275,7 @@ Response 200:
 }
 
 --------------------------------------------------------------------------------
-3.2  POST /my-profile/update/
+3.2  POST /accounts/my-profile/update/
 --------------------------------------------------------------------------------
 Auth : #E #A #SU
 Purpose : Update the logged-in user's own profile.
@@ -305,7 +305,7 @@ NOTE:
   - Audit log "UPDATE USER" is written.
 
 --------------------------------------------------------------------------------
-3.3  POST /change-password/
+3.3  POST /accounts/change-password/
 --------------------------------------------------------------------------------
 Auth : #E #A #SU
 Purpose : Change own password (requires old password).
@@ -346,7 +346,7 @@ user (including employees) can call them. The endpoints below describe
 INTENDED #SU behavior.
 
 --------------------------------------------------------------------------------
-4.1  POST /user/list/
+4.1  POST /accounts/user/list/
 --------------------------------------------------------------------------------
 Auth : #SU   (intended; currently #E #A #SU)
 Purpose : List all active users.
@@ -361,7 +361,7 @@ Response 200:
 }
 
 --------------------------------------------------------------------------------
-4.2  POST /user/detail/
+4.2  POST /accounts/user/detail/
 --------------------------------------------------------------------------------
 Auth : #SU   (intended; currently #E #A #SU)
 Purpose : Fetch a single active user.
@@ -379,7 +379,7 @@ Response 400: { "status": false, "message": "Account id is required." }
 Response 404: { "status": false, "message": "Account not found." }
 
 --------------------------------------------------------------------------------
-4.3  POST /user/update/
+4.3  POST /accounts/user/update/
 --------------------------------------------------------------------------------
 Auth : #SU   (intended; currently #E #A #SU)
 Purpose : Admin-level update of another user (including role and is_active).
@@ -412,7 +412,7 @@ NOTE:
   - Audit log "UPDATE USER" with old/new data.
 
 --------------------------------------------------------------------------------
-4.4  POST /user/deactivate/
+4.4  POST /accounts/user/deactivate/
 --------------------------------------------------------------------------------
 Auth : #SU   (intended; currently #E #A #SU)
 Purpose : Soft-delete a user (sets is_active=false).
@@ -440,7 +440,7 @@ SECTION 5 — ROLE MANAGEMENT (#SU only)
 Intended: super admin only.
 
 --------------------------------------------------------------------------------
-5.1  POST /role/create/
+5.1  POST /accounts/role/create/
 --------------------------------------------------------------------------------
 Auth : #SU
 Purpose : Create a new global role.
@@ -472,7 +472,7 @@ NOTE:
   - Audit log "CREATE ROLE".
 
 --------------------------------------------------------------------------------
-5.2  POST /role/list/
+5.2  POST /accounts/role/list/
 --------------------------------------------------------------------------------
 Auth : #SU
 Purpose : List all active roles.
@@ -487,7 +487,7 @@ Response 200:
 }
 
 --------------------------------------------------------------------------------
-5.3  POST /role/detail/
+5.3  POST /accounts/role/detail/
 --------------------------------------------------------------------------------
 Auth : #SU
 Purpose : Fetch a single active role.
@@ -505,7 +505,7 @@ Response 400: { "status": false, "message": "Role id is required." }
 Response 404: { "status": false, "message": "Role not found." }
 
 --------------------------------------------------------------------------------
-5.4  POST /role/update/
+5.4  POST /accounts/role/update/
 --------------------------------------------------------------------------------
 Auth : #SU
 Purpose : Update a role (partial).
@@ -531,7 +531,7 @@ Response 400 variants:
 NOTE: Audit log "UPDATE ROLE" with old/new data.
 
 --------------------------------------------------------------------------------
-5.5  POST /role/delete/
+5.5  POST /accounts/role/delete/
 --------------------------------------------------------------------------------
 Auth : #SU
 Purpose : Soft-delete a role (sets is_active=false).
@@ -555,7 +555,7 @@ SECTION 6 — ORGANIZATION MANAGEMENT
 ================================================================================
 
 --------------------------------------------------------------------------------
-6.1  POST /organization/create/
+6.1  POST /accounts/organization/create/
 --------------------------------------------------------------------------------
 Auth : #SU   (✅ enforced)
 Purpose : Create a new tenant organization. Owner is set later via
@@ -605,7 +605,7 @@ NOTE:
   - Audit log "CREATE ORGANIZATION".
 
 --------------------------------------------------------------------------------
-6.2  POST /organization/list/
+6.2  POST /accounts/organization/list/
 --------------------------------------------------------------------------------
 Auth : #E #A #SU
 Purpose : List organizations the caller can see.
@@ -622,7 +622,7 @@ Response 200:
 }
 
 --------------------------------------------------------------------------------
-6.3  POST /organization/detail/
+6.3  POST /accounts/organization/detail/
 --------------------------------------------------------------------------------
 Auth : #E #A #SU
 Purpose : Fetch one organization (same scoping as list).
@@ -640,7 +640,7 @@ Response 400: { "status": false, "message": "Organization id is required." }
 Response 404: { "status": false, "message": "Organization not found or access denied." }
 
 --------------------------------------------------------------------------------
-6.4  POST /organization/my-organizations/
+6.4  POST /accounts/organization/my-organizations/
 --------------------------------------------------------------------------------
 Auth : #E #A #SU
 Purpose : Convenience alias — same as list but always scoped to caller.
@@ -655,7 +655,7 @@ Response 200:
 }
 
 --------------------------------------------------------------------------------
-6.5  POST /organization/update/
+6.5  POST /accounts/organization/update/
 --------------------------------------------------------------------------------
 Auth : #A   (owner of that org only)
 Purpose : Update an organization's profile (partial). Cannot change
@@ -688,7 +688,7 @@ NOTE:
   - Audit log "UPDATE ORGANIZATION".
 
 --------------------------------------------------------------------------------
-6.6  POST /organization/deactivate/
+6.6  POST /accounts/organization/deactivate/
 --------------------------------------------------------------------------------
 Auth : #A   (owner of that org only)
 Purpose : Soft-delete an organization.
@@ -709,7 +709,7 @@ NOTE:
   - Audit log "DELETE ORGANIZATION".
 
 --------------------------------------------------------------------------------
-6.7  POST /organization/assign-owner/
+6.7  POST /accounts/organization/assign-owner/
 --------------------------------------------------------------------------------
 Auth : #SU   (✅ enforced)
 Purpose : Assign an Admin (owner) to an organization.
@@ -756,7 +756,7 @@ NOTE:
   - Audit log "UPDATE ORGANIZATION".
 
 --------------------------------------------------------------------------------
-6.8  POST /organization/assign-user/
+6.8  POST /accounts/organization/assign-user/
 --------------------------------------------------------------------------------
 Auth : #A #SU
 Purpose : Assign a non-owner member to an organization with a role.

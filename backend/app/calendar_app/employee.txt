@@ -1,0 +1,259 @@
+================================================================================
+CALENDAR APP — EMPLOYEE API REFERENCE
+================================================================================
+
+Base URL   : /calendar/
+Method     : All endpoints are POST
+Auth       : Bearer token (IsAuthenticated)
+Envelope   : { "status": true|false, "message": "...", "data": {...}?, "errors": {...}? }
+
+Who uses this document:
+  - Any user with an active Employee profile
+  - Frontend employee-facing calendar / schedule screen
+
+CRITICAL IDENTITY RULE:
+  The client NEVER sends employee_id.
+  The backend derives the employee from request.user.employee_profile
+  and the active organization from the caller's org membership.
+
+NOTE: There is currently only ONE employee-facing endpoint in the
+      Calendar app. That is intentional — holidays and weekly-offs
+      are consumed THROUGH the employee calendar endpoint, not by
+      calling admin list endpoints.
+
+      If the employee UI needs a "list of upcoming holidays" as a
+      standalone screen, either:
+        (a) call /calendar/employee/ over a date range and filter
+            day_type == "HOLIDAY" client-side, OR
+        (b) request a dedicated employee holiday-list endpoint from
+            the backend team.
+
+      Do NOT call /calendar/holidays/list/ from the employee UI — that
+      endpoint is admin-scoped and expects org-admin permissions.
+      (It will still return data for an employee in a single-org setup,
+      but relying on it is fragile — if permissions are tightened later,
+      the employee UI will break.)
+
+
+================================================================================
+BOOTSTRAP ORDER — EMPLOYEE SIDE
+================================================================================
+
+Prerequisites for a meaningful employee calendar:
+
+  1. Admin created the org's shifts
+  2. Admin created weekly-off rules per shift
+  3. Admin created holidays for the year
+  4. Admin assigned the employee to a shift
+     (via /attendance/employee-shift-assignments/...)
+
+If the employee has no shift assignment:
+  - All working days return day_type = "NO_SHIFT_ASSIGNED"
+  - Holidays still resolve as HOLIDAY (holidays are org-wide, not
+    shift-scoped, so they show up regardless of shift assignment)
+  - Weekly-offs will NOT resolve (they are shift-scoped)
+
+So the employee may see holidays but not weekly-offs if they have no
+shift assigned.
+
+
+================================================================================
+SECTION 1 — EMPLOYEE CALENDAR
+================================================================================
+
+--------------------------------------------------------------------------------
+1.1  POST /calendar/employee/
+--------------------------------------------------------------------------------
+Purpose : Get the merged calendar (working days + weekly offs + holidays)
+          for the logged-in employee over a date range
+Access  : Employee (self only; backend resolves identity)
+Request :
+{
+  "date_from": "2026-11-01",
+  "date_to":   "2026-11-30"
+}
+Response 200:
+{
+  "status": true,
+  "message": "Employee calendar fetched successfully.",
+  "data": {
+    "employee_id": 15,
+    "date_from": "2026-11-01",
+    "date_to": "2026-11-30",
+    "calendar": [
+      {
+        "date": "2026-11-01",
+        "day_type": "HOLIDAY",
+        "is_working_day": false,
+        "shift_id": 3,
+        "shift_name": "General Shift",
+        "shift_start_time": "09:00:00",
+        "shift_end_time": "18:00:00",
+        "holiday_name": "Kannada Rajyotsava",
+        "holiday_type": "PUBLIC",
+        "pay_type": "PAID",
+        "is_optional": false,
+        "weekly_off_rule_id": null,
+        "week_of_month": null
+      },
+      {
+        "date": "2026-11-02",
+        "day_type": "WORKING_DAY",
+        "is_working_day": true,
+        "shift_id": 3,
+        "shift_name": "General Shift",
+        "shift_start_time": "09:00:00",
+        "shift_end_time": "18:00:00",
+        "holiday_name": null,
+        "holiday_type": null,
+        "pay_type": null,
+        "is_optional": false,
+        "weekly_off_rule_id": null,
+        "week_of_month": null
+      },
+      {
+        "date": "2026-11-03",
+        "day_type": "WEEKLY_OFF",
+        "is_working_day": false,
+        "shift_id": 3,
+        "shift_name": "General Shift",
+        "shift_start_time": "09:00:00",
+        "shift_end_time": "18:00:00",
+        "holiday_name": null,
+        "holiday_type": null,
+        "pay_type": null,
+        "is_optional": false,
+        "weekly_off_rule_id": 20,
+        "week_of_month": null
+      }
+    ]
+  }
+}
+
+Response 400 (invalid date range):
+{
+  "status": false,
+  "message": "Invalid request data.",
+  "errors": {
+    "date_to": ["End date must be on or after start date."]
+  }
+}
+
+Response 400 (range too long):
+{
+  "status": false,
+  "message": "Invalid request data.",
+  "errors": {
+    "date_to": ["Maximum calendar range is 367 days."]
+  }
+}
+
+Response 404 (no active employee record in this org):
+{
+  "status": false,
+  "message": "No active employee record found for this organization.",
+  "data": null
+}
+
+
+================================================================================
+FIELD EXPLANATIONS
+================================================================================
+
+day_type (string, enum):
+  - "WORKING_DAY"         → normal working day (shift required)
+  - "WEEKLY_OFF"          → day is a weekly off for the assigned shift
+  - "HOLIDAY"             → org-wide holiday (highest precedence)
+  - "NO_SHIFT_ASSIGNED"   → employee has no active shift on this date
+
+Precedence (highest to lowest):
+  1. HOLIDAY            (org-wide, ignores shift)
+  2. WEEKLY_OFF         (shift-scoped recurring rule)
+  3. WORKING_DAY        (default when shift exists)
+  4. NO_SHIFT_ASSIGNED  (when employee has no shift on that date)
+
+is_working_day (bool):
+  true only for WORKING_DAY. false for WEEKLY_OFF, HOLIDAY, NO_SHIFT_ASSIGNED.
+  Use this as the single source of truth for rendering "is this a
+  working day?" — don't infer from day_type strings on the frontend.
+
+shift_id / shift_name / shift_start_time / shift_end_time:
+  Populated from the employee's active shift assignment on that date.
+  null when day_type = "NO_SHIFT_ASSIGNED".
+  Even when the day is a HOLIDAY or WEEKLY_OFF, the shift fields still
+  show the employee's assigned shift (useful for context:
+  "Your General Shift is off today for Diwali").
+
+holiday_name / holiday_type / pay_type / is_optional:
+  Populated only when day_type = "HOLIDAY".
+  null for all other day types.
+
+weekly_off_rule_id / week_of_month:
+  Populated only when day_type = "WEEKLY_OFF".
+  weekly_off_rule_id → points to the WeeklyOffRule that triggered this day.
+  week_of_month      → echoes the rule's week_of_month (null = every occurrence,
+                        1–5 = specific occurrence like "2nd Sunday").
+
+
+================================================================================
+QUICK REFERENCE — EMPLOYEE ENDPOINTS
+================================================================================
+
+  POST /calendar/employee/
+
+TOTAL: 1 endpoint
+
+
+================================================================================
+KEY NOTES FOR FRONTEND — EMPLOYEE SIDE
+================================================================================
+
+1. IDENTITY IS DERIVED SERVER-SIDE.
+   No employee_id in the request. The backend uses request.user's
+   employee_profile and active org membership to determine whose
+   calendar to return.
+
+2. DATE RANGE LIMITS
+   - date_to must be >= date_from
+   - max range is 367 days (about a year)
+   For a full-year calendar view, request two ranges and stitch them
+   client-side, or request by month.
+
+3. RENDER BY day_type, NOT BY COLOR GUESSING
+   Recommended palette:
+     WORKING_DAY       → plain / neutral
+     WEEKLY_OFF        → light grey (paid off)
+     HOLIDAY           → highlighted (badge with holiday_name)
+     NO_SHIFT_ASSIGNED → warning (greyed out + "No shift assigned" tooltip)
+
+4. OPTIONAL HOLIDAYS
+   When is_optional = true on a HOLIDAY:
+     - Render a toggle: "I choose to take this holiday" vs "I'll work"
+     - The toggle action belongs to a different app (likely /leave/ or
+       /attendance/) — the calendar endpoint only READS the holiday;
+       it does not accept opt-in/opt-out writes.
+
+5. HOLIDAY vs WEEKLY_OFF ON THE SAME DATE
+   If a holiday coincides with a weekly-off date (e.g. a festival on
+   a Sunday), the day is reported as HOLIDAY, not WEEKLY_OFF.
+   The holiday's pay_type (PAID / UNPAID) is what matters for payroll,
+   not the weekly-off status.
+
+6. NO SHIFT ASSIGNED — COMMON CASE FOR NEW JOINERS
+   If the admin forgot to assign a shift, the employee sees
+   NO_SHIFT_ASSIGNED for all dates except holidays.
+   Show a clear message: "Your shift is not yet assigned. Contact HR."
+   Do NOT hide the calendar entirely — holidays are still useful.
+
+7. NO SEPARATE "MY HOLIDAYS" ENDPOINT
+   If you want a simple "list of holidays this year" for the employee:
+     a) Call /calendar/employee/ with date_from/date_to spanning the year
+     b) Filter day_type === "HOLIDAY" client-side
+   This is cheap (max 366 days) and avoids a second endpoint.
+   If the product requires it, ask the backend to add
+   /calendar/my-holidays/ later — but it's not needed for v1.
+
+8. NO WRITE ENDPOINTS
+   The employee calendar is READ-ONLY. All changes to weekly-offs,
+   holidays, and shift assignments are admin-side. Employees cannot
+   create or modify anything through the Calendar app.

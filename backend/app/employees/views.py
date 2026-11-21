@@ -16,9 +16,10 @@ from .serializers import (
     EmployeeListSerializer,
     EmployeeDetailSerializer,
     EmployeeUpdateSerializer,
+    MyEmployeeProfileSerializer,
 )
 
-from common.services import get_user_organization
+from common.services import get_user_organization, get_current_employee
 from common.s3_utils import upload_to_s3, delete_from_s3
 from app.audit.services import log_activity
 from .services import create_employee_user
@@ -1237,6 +1238,61 @@ class EmployeeDocumentDeleteAPIView(APIView):
             {
                 "status": True,
                 "message": "Employee document deleted successfully.",
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+# =========================================================
+# MY EMPLOYEE PROFILE (employee self-service)
+# =========================================================
+class MyEmployeeProfileAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        employee, error_response = get_current_employee(request)
+        if error_response:
+            return error_response
+
+        # Refresh from DB to include prefetched relations cleanly.
+        employee = (
+            Employee.objects
+            .filter(id=employee.id, is_active=True)
+            .select_related("work_state", "organization")
+            .prefetch_related("documents")
+            .first()
+        )
+
+        if not employee:
+            return Response(
+                {
+                    "status": False,
+                    "message": "Your employee profile is no longer active.",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = MyEmployeeProfileSerializer(
+            employee,
+            context={"request": request},
+        )
+
+        log_activity(
+            request=request,
+            action="VIEW",
+            module="EMPLOYEE",
+            object_type="Employee",
+            object_id=employee.id,
+            description=(
+                f"Employee {employee.employee_code} viewed their own profile."
+            ),
+        )
+
+        return Response(
+            {
+                "status": True,
+                "message": "Your profile fetched successfully.",
+                "data": serializer.data,
             },
             status=status.HTTP_200_OK,
         )

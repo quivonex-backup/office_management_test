@@ -1,0 +1,430 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+
+    <style>
+        @page {
+            size: A4;
+            margin: 25px;
+        }
+
+        body {
+            font-family: Helvetica, sans-serif;
+            font-size: 10px;
+            color: #222222;
+        }
+
+        .header {
+            width: 100%;
+            border-bottom: 2px solid #263b58;
+            padding-bottom: 12px;
+            margin-bottom: 15px;
+        }
+
+        .company-name {
+            font-size: 20px;
+            font-weight: bold;
+            color: #263b58;
+        }
+
+        .company-info {
+            font-size: 9px;
+            line-height: 15px;
+        }
+
+        .logo {
+            width: 75px;
+            height: 65px;
+        }
+
+        .document-title {
+            font-size: 17px;
+            font-weight: bold;
+            text-align: center;
+            margin: 15px 0;
+            color: #263b58;
+        }
+
+        .section-title {
+            background-color: #263b58;
+            color: white;
+            padding: 7px;
+            font-weight: bold;
+            margin-top: 14px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 5px;
+        }
+
+        th {
+            background-color: #edf1f5;
+            font-weight: bold;
+        }
+
+        th, td {
+            border: 1px solid #d5dce5;
+            padding: 7px;
+            text-align: left;
+        }
+
+        .no-border td {
+            border: none;
+            padding: 4px;
+        }
+
+        .right {
+            text-align: right;
+        }
+
+        .center {
+            text-align: center;
+        }
+
+        .total-row {
+            font-weight: bold;
+            background-color: #edf1f5;
+        }
+
+        .net-box {
+            border: 2px solid #263b58;
+            padding: 12px;
+            margin-top: 15px;
+        }
+
+        .net-label {
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .net-amount {
+            font-size: 19px;
+            font-weight: bold;
+            color: #263b58;
+        }
+
+        .words {
+            margin-top: 8px;
+            font-style: italic;
+        }
+
+        .footer {
+            margin-top: 25px;
+            border-top: 1px solid #cccccc;
+            padding-top: 10px;
+            font-size: 9px;
+            text-align: center;
+            color: #666666;
+        }
+
+        .muted {
+            color: #666666;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- COMPANY HEADER -->
+
+    <table class="header no-border">
+        <tr>
+            <td width="20%" valign="middle">
+                {% if logo_data_uri %}
+                    <img src="{{ logo_data_uri }}" class="logo">
+                {% endif %}
+            </td>
+
+            <td width="80%" valign="middle">
+                <div class="company-name">
+                    {{ company_name }}
+                </div>
+
+                <div class="company-info">
+                    {{ company_address }}<br>
+
+                    {% if company_phone %}
+                        Phone: {{ company_phone }}<br>
+                    {% endif %}
+
+                    {% if company_email %}
+                        Email: {{ company_email }}<br>
+                    {% endif %}
+
+                    {% if company_gst %}
+                        GST: {{ company_gst }}<br>
+                    {% endif %}
+
+                    {% if company_website %}
+                        {{ company_website }}
+                    {% endif %}
+                </div>
+            </td>
+        </tr>
+    </table>
+
+    <div class="document-title">
+        PAYSLIP - {{ payroll_month }}
+    </div>
+
+    <!-- EMPLOYEE DETAILS -->
+
+    <div class="section-title">
+        Employee Details
+    </div>
+
+    <table>
+        <tr>
+            <th width="25%">Employee Name</th>
+            <td width="25%">{{ employee_name }}</td>
+
+            <th width="25%">Employee Code</th>
+            <td width="25%">{{ employee.employee_code }}</td>
+        </tr>
+
+        <tr>
+            <th>Designation</th>
+            <td>{{ employee.designation|default:"-" }}</td>
+
+            <th>Department</th>
+            <td>{{ employee.department|default:"-" }}</td>
+        </tr>
+
+        <tr>
+            <th>Joining Date</th>
+            <td>{{ employee.joining_date|default:"-" }}</td>
+
+            <th>Mobile</th>
+            <td>{{ employee.mobile|default:"-" }}</td>
+        </tr>
+
+        <tr>
+            <th>Pay Period</th>
+            <td colspan="3">
+                {{ period_start }} to {{ period_end }}
+            </td>
+        </tr>
+    </table>
+
+    <!-- ATTENDANCE -->
+
+    <div class="section-title">
+        Attendance Summary
+    </div>
+
+    <table>
+        <tr>
+            <th>Present</th>
+            <th>Half Days</th>
+            <th>Absent</th>
+            <th>Paid Leave</th>
+        </tr>
+
+        <tr>
+            <td>{{ attendance.present_days }}</td>
+            <td>{{ attendance.half_days }}</td>
+            <td>{{ attendance.absent_days }}</td>
+            <td>{{ attendance.paid_leave_days }}</td>
+        </tr>
+
+        <tr>
+            <th>Unpaid Leave</th>
+            <th>Holidays</th>
+            <th>Weekly Offs</th>
+            <th>Overtime Hours</th>
+        </tr>
+
+        <tr>
+            <td>{{ attendance.unpaid_leave_days }}</td>
+            <td>{{ attendance.holiday_days }}</td>
+            <td>{{ attendance.weekly_off_days }}</td>
+            <td>{{ attendance.overtime_hours }}</td>
+        </tr>
+    </table>
+
+    <!-- FULL MODE -->
+
+    {% if payslip_mode == "FULL" %}
+
+        <div class="section-title">
+            Earnings
+        </div>
+
+        <table>
+            <tr>
+                <th width="70%">Component</th>
+                <th width="30%" class="right">Amount ({{ currency }})</th>
+            </tr>
+
+            {% for item in earnings %}
+                <tr>
+                    <td>{{ item.name }}</td>
+                    <td class="right">{{ item.amount }}</td>
+                </tr>
+            {% empty %}
+                <tr>
+                    <td colspan="2" class="center">No earnings found</td>
+                </tr>
+            {% endfor %}
+
+            <tr class="total-row">
+                <td>Gross Earnings</td>
+                <td class="right">{{ gross_earnings }}</td>
+            </tr>
+        </table>
+
+        <div class="section-title">
+            Deductions
+        </div>
+
+        <table>
+            <tr>
+                <th width="70%">Component</th>
+                <th width="30%" class="right">Amount ({{ currency }})</th>
+            </tr>
+
+            {% for item in deductions %}
+                <tr>
+                    <td>{{ item.name }}</td>
+                    <td class="right">{{ item.amount }}</td>
+                </tr>
+            {% endfor %}
+
+            {% for item in lop_items %}
+                <tr>
+                    <td>{{ item.name }}</td>
+                    <td class="right">{{ item.amount }}</td>
+                </tr>
+            {% endfor %}
+
+            <tr class="total-row">
+                <td>Total Deductions</td>
+                <td class="right">{{ total_deductions }}</td>
+            </tr>
+        </table>
+
+        {% if employer_contributions %}
+            <div class="section-title">
+                Employer Statutory Contributions
+            </div>
+
+            <table>
+                <tr>
+                    <th width="70%">Contribution</th>
+                    <th width="30%" class="right">Amount ({{ currency }})</th>
+                </tr>
+
+                {% for item in employer_contributions %}
+                    <tr>
+                        <td>{{ item.name }}</td>
+                        <td class="right">{{ item.amount }}</td>
+                    </tr>
+                {% endfor %}
+            </table>
+        {% endif %}
+
+    {% else %}
+
+        <!-- SIMPLE MODE -->
+
+        <div class="section-title">
+            Salary Summary
+        </div>
+
+        <table>
+            <tr>
+                <th>Gross Earnings</th>
+                <td class="right">{{ gross_earnings }}</td>
+            </tr>
+
+            <tr>
+                <th>Total Deductions</th>
+                <td class="right">{{ total_deductions }}</td>
+            </tr>
+
+            <tr class="total-row">
+                <th>Net Salary</th>
+                <td class="right">{{ net_salary }}</td>
+            </tr>
+        </table>
+
+    {% endif %}
+
+    <!-- NET SALARY -->
+
+    <div class="net-box">
+        <table class="no-border">
+            <tr>
+                <td width="55%">
+                    <div class="net-label">Net Salary Payable</div>
+                    <div class="muted">Amount in {{ currency }}</div>
+                </td>
+
+                <td width="45%" class="right">
+                    <div class="net-amount">
+                        {{ net_salary }}
+                    </div>
+                </td>
+            </tr>
+        </table>
+
+        <div class="words">
+            Amount in words: {{ net_salary_words }}
+        </div>
+    </div>
+
+    <!-- PAYMENT DETAILS -->
+
+    <div class="section-title">
+        Payment Summary
+    </div>
+
+    <table>
+        <tr>
+            <th>Payment Status</th>
+            <td>{{ payment_status }}</td>
+
+            <th>Paid Amount</th>
+            <td class="right">{{ paid_amount }}</td>
+        </tr>
+
+        <tr>
+            <th>Remaining Amount</th>
+            <td colspan="3" class="right">
+                {{ remaining_amount }}
+            </td>
+        </tr>
+    </table>
+
+    {% if payments %}
+        <table>
+            <tr>
+                <th>Payment Date</th>
+                <th>Amount</th>
+                <th>Mode</th>
+                <th>Reference</th>
+            </tr>
+
+            {% for payment in payments %}
+                <tr>
+                    <td>{{ payment.date }}</td>
+                    <td>{{ payment.amount }}</td>
+                    <td>{{ payment.mode }}</td>
+                    <td>{{ payment.reference }}</td>
+                </tr>
+            {% endfor %}
+        </table>
+    {% endif %}
+
+    <div class="footer">
+        This is a computer-generated payslip and does not require a signature.
+        <br>
+        {{ company_name }}
+    </div>
+
+</body>
+</html>

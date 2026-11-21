@@ -1,0 +1,574 @@
+================================================================================
+ATTENDANCE APP — ADMIN / ORG OWNER API REFERENCE
+================================================================================
+
+Base URL   : /
+Method     : All endpoints are POST
+Auth       : Bearer token (IsAuthenticated)
+Envelope   : { "status": true|false, "message": "...", "data": {...}?, "errors": {...}? }
+
+Organization context:
+  - Single-org users: omit organization_id
+  - Multi-org users: include organization_id in body
+
+Who uses this document:
+  - Org owner / Admin
+  - HR / attendance managers
+  - Anyone configuring shifts, viewing org-wide attendance, reviewing corrections
+
+NOTE: Employees DO NOT use the endpoints in this document — they have their
+      own set (see the Employee document). A few endpoints appear in both
+      because they work for both audiences (e.g. /detail/ scoped by role).
+
+BOOTSTRAP ORDER:
+  1. Attendance settings           → /attendance/settings/    (one-time)
+  2. Shifts                        → /attendance/shifts/...   (one-time)
+  3. Shift assignments             → /attendance/shift-assignments/...
+  4. Weekly-offs and holidays      → /calendar/...            (separate app)
+  5. Employee check-ins start flowing in
+  6. Review corrections            → /attendance/corrections/review/
+  7. Bulk mark absent if needed    → /attendance/bulk-mark-absent/
+
+
+================================================================================
+SECTION 1 — ATTENDANCE SETTINGS
+================================================================================
+One row per org, upserted on first call. Controls photo/location verification
+requirements, shift defaults, grace periods, half-day thresholds, and
+auto-mark-absent behavior.
+
+--------------------------------------------------------------------------------
+1.1  POST /attendance/settings/
+--------------------------------------------------------------------------------
+Purpose : Get or partially update org attendance settings
+Access  : Admin (org owner)
+Request (partial update — all fields optional):
+{
+  "photo_required": true,
+  "location_required": true,
+  "allowed_radius_meters": 100,
+  "max_gps_accuracy_meters": 50,
+  "face_match_threshold": "30.00",
+  "default_start_time": "09:00:00",
+  "default_end_time": "18:00:00",
+  "late_grace_minutes": 15,
+  "early_departure_grace_minutes": 0,
+  "half_day_threshold_minutes": 240,
+  "early_departure_half_day_threshold_minutes": 120,
+  "late_half_day_threshold_minutes": 120,
+  "overtime_minimum_minutes": 30,
+  "overtime_include_threshold": true,
+  "auto_mark_absent": true,
+  "absent_after_minutes": 30
+}
+Response 200:
+{
+  "status": true,
+  "message": "Attendance settings retrieved/updated successfully.",
+  "data": {
+    "id": 1,
+    "organization": 1,
+    "photo_required": true,
+    "location_required": true,
+    "allowed_radius_meters": 100,
+    "max_gps_accuracy_meters": 50,
+    "face_match_threshold": "30.00",
+    "default_start_time": "09:00:00",
+    "default_end_time": "18:00:00",
+    "late_grace_minutes": 15,
+    "early_departure_grace_minutes": 0,
+    "half_day_threshold_minutes": 240,
+    "early_departure_half_day_threshold_minutes": 120,
+    "late_half_day_threshold_minutes": 120,
+    "overtime_minimum_minutes": 30,
+    "overtime_include_threshold": true,
+    "auto_mark_absent": true,
+    "absent_after_minutes": 30,
+    "created_by": null,
+    "updated_by": 2,
+    "created_at": "2026-10-25T10:37:45Z",
+    "updated_at": "2026-10-28T08:05:25Z"
+  }
+}
+
+IMPORTANT FIELDS:
+  photo_required          — selfie mandatory on every punch
+  location_required       — GPS mandatory on every punch
+  allowed_radius_meters   — how far from office lat/lng is "at work"
+  max_gps_accuracy_meters — reject punches with poor GPS
+  auto_mark_absent        — enables /bulk-mark-absent/ to actually write
+  absent_after_minutes    — how long after shift start before auto-absent
+
+
+================================================================================
+SECTION 2 — SHIFTS
+================================================================================
+Shifts are org-scoped, named, and can cross midnight (night shifts).
+Each has its own late/early grace overrides (nullable — falls back to
+AttendanceSettings).
+
+--------------------------------------------------------------------------------
+2.1  POST /attendance/shifts/list/
+--------------------------------------------------------------------------------
+Request (optional):
+{ "is_active": true }
+Response 200:
+{
+  "status": true,
+  "message": "Shifts fetched successfully.",
+  "data": [
+    {
+      "id": 1,
+      "organization": 1,
+      "name": "General Shift",
+      "start_time": "09:30:00",
+      "end_time": "18:30:00",
+      "crosses_midnight": false,
+      "late_grace_minutes": 15,
+      "early_departure_grace_minutes": 15,
+      "is_active": true,
+      "created_by": 2,
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  ]
+}
+
+--------------------------------------------------------------------------------
+2.2  POST /attendance/shifts/create/
+--------------------------------------------------------------------------------
+Request :
+{
+  "name": "Night Shift",
+  "start_time": "22:00",
+  "end_time": "06:00",
+  "crosses_midnight": true,
+  "late_grace_minutes": 30,
+  "early_departure_grace_minutes": 15,
+  "is_active": true
+}
+Response 201: { full shift object }
+
+Validations:
+  - name is unique per org.
+  - start_time != end_time.
+  - If end_time < start_time → crosses_midnight must be true.
+  - If end_time > start_time → crosses_midnight must be false.
+
+--------------------------------------------------------------------------------
+2.3  POST /attendance/shifts/update/
+--------------------------------------------------------------------------------
+Request (partial):
+{
+  "shift_id": 2,
+  "name": "Night Shift",
+  "start_time": "22:00",
+  "end_time": "06:00",
+  "crosses_midnight": true,
+  "late_grace_minutes": 30,
+  "early_departure_grace_minutes": 15,
+  "is_active": true
+}
+Response 200: { full shift object }
+
+--------------------------------------------------------------------------------
+2.4  POST /attendance/shifts/deactivate/
+--------------------------------------------------------------------------------
+Request :
+{ "shift_id": 2 }
+Response 200:
+{ "status": true, "message": "Shift deactivated successfully." }
+
+Behavior:
+  - Sets is_active = false
+  - Existing EmployeeShiftAssignments are untouched
+  - Historical attendance snapshots (on AttendanceRecord.shift) still resolve
+
+
+================================================================================
+SECTION 3 — EMPLOYEE SHIFT ASSIGNMENTS
+================================================================================
+Effective-dated mapping of employee → shift. Non-overlapping per employee.
+
+--------------------------------------------------------------------------------
+3.1  POST /attendance/shift-assignments/list/
+--------------------------------------------------------------------------------
+Request (all optional):
+{
+  "employee_id": 10,
+  "shift_id": 3,
+  "effective_from": "2026-11-15"    // filters assignments active ON that date
+}
+Response 200:
+{
+  "status": true,
+  "message": "Shift assignments fetched successfully.",
+  "data": [
+    {
+      "id": 7,
+      "organization": 1,
+      "employee": 10,
+      "employee_code": "EMP-000010",
+      "employee_name": "Akshay Kumar",
+      "shift": 1,
+      "shift_name": "General Shift",
+      "effective_from": "2026-10-01",
+      "effective_to": null,
+      "assigned_by": 2,
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  ]
+}
+
+--------------------------------------------------------------------------------
+3.2  POST /attendance/shift-assignments/create/
+--------------------------------------------------------------------------------
+Request :
+{
+  "employee": 10,
+  "shift": 2,
+  "effective_from": "2026-11-01",
+  "effective_to": null
+}
+Response 201: { full assignment object }
+
+Validations:
+  - Employee must be active, same org, employment_status = "ACTIVE".
+  - Shift must be active, same org.
+  - effective_to >= effective_from.
+  - No overlap with another active assignment for the same employee.
+
+--------------------------------------------------------------------------------
+3.3  POST /attendance/shift-assignments/update/
+--------------------------------------------------------------------------------
+Request (partial):
+{
+  "assignment_id": 7,
+  "shift": 2,
+  "effective_from": "2026-10-25",
+  "effective_to": null
+}
+Response 200: { full assignment object }
+
+--------------------------------------------------------------------------------
+3.4  POST /attendance/shift-assignments/bulk-assign/
+--------------------------------------------------------------------------------
+Purpose : Assign ONE shift to MANY employees at once (all-or-nothing)
+Request :
+{
+  "employee_ids": [12, 15, 18],
+  "shift_id": 3,
+  "effective_from": "2026-11-01",
+  "effective_to": "2026-11-30"
+}
+Response 201:
+{
+  "status": true,
+  "message": "Shift assigned to employees successfully.",
+  "data": [ {assignment1}, {assignment2}, {assignment3} ]
+}
+
+Behavior:
+  - Validates every employee before creating any row.
+  - If ANY employee fails (wrong org, inactive, overlap) → 400 and nothing created.
+
+--------------------------------------------------------------------------------
+3.5  POST /attendance/shift-assignments/bulk-assign-pattern/
+--------------------------------------------------------------------------------
+Purpose : Assign a rotating shift pattern to many employees
+Request :
+{
+  "employee_ids": [12, 15],
+  "start_date": "2026-11-02",
+  "pattern": [
+    { "shift_id": 3, "duration_days": 7 },
+    { "shift_id": 4, "duration_days": 7 }
+  ],
+  "repetitions": 2,
+  "auto_close_prior": true
+}
+Response 201: { list of all created assignments }
+
+How the pattern works:
+  Day shift: Nov 2–8
+  Night shift: Nov 9–15
+  Day shift: Nov 16–22
+  Night shift: Nov 23–29
+  (4 assignment blocks per employee when repetitions=2)
+
+Validations:
+  - duration_days must be positive integer (booleans rejected).
+  - All pattern shifts must be active in org.
+  - All pattern shifts must share compatible weekly-off schedules
+    (checked day-by-day via Calendar app — this is a hard requirement).
+  - auto_close_prior=true will close prior OPEN-ENDED assignments
+    (with safety check: rejects if attendance records exist on/after start_date
+    for the previous shift).
+
+--------------------------------------------------------------------------------
+3.6  POST /attendance/shift-assignments/bulk-close/
+--------------------------------------------------------------------------------
+Purpose : Set effective_to on multiple existing assignments
+Request :
+{
+  "assignment_ids": [101, 102, 103],
+  "effective_to": "2026-10-31"
+}
+Response 200: { closed assignment objects }
+
+Behavior:
+  - Each assignment's effective_to must be >= its effective_from.
+  - Closing must not overlap another assignment for the same employee.
+  - Rejects if attendance records exist AFTER the new effective_to
+    for that employee + shift combination.
+  - Preserves history — nothing is deleted.
+
+
+================================================================================
+SECTION 4 — ATTENDANCE (ADMIN VIEW)
+================================================================================
+
+--------------------------------------------------------------------------------
+4.1  POST /attendance/list/
+--------------------------------------------------------------------------------
+Purpose : View all org attendance records (manager view)
+Request (all optional):
+{
+  "employee_id": 10,
+  "status": "PRESENT",        // PRESENT | HALF_DAY | INCOMPLETE |
+                              // PENDING_REVIEW | ABSENT | ON_LEAVE |
+                              // WEEKLY_OFF | HOLIDAY
+  "work_date": "2026-10-26",
+  "from_date": "2026-10-01",
+  "to_date": "2026-10-31"
+}
+Response 200:
+{
+  "status": true,
+  "message": "Attendance records fetched successfully.",
+  "data": [
+    {
+      "id": 3,
+      "organization": 1,
+      "employee": 10,
+      "employee_code": "EMP-000010",
+      "employee_name": "Akshay Kumar",
+      "shift": 1,
+      "shift_name": "General Shift",
+      "work_date": "2026-10-26",
+      "scheduled_start": "...",
+      "scheduled_end": "...",
+      "late_grace_minutes": 15,
+      "early_departure_grace_minutes": 15,
+      "check_in": "...",
+      "check_out": null,
+      "net_work_minutes": 0,
+      "overtime_minutes": 0,
+      "late_minutes": 0,
+      "early_departure_minutes": 0,
+      "status": "INCOMPLETE",
+      "punches": [ {punch}, ... ],
+      "created_by": 12,
+      "updated_by": 12,
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  ]
+}
+
+Note: from_date/to_date must both be sent for range queries.
+      from_date cannot be later than to_date.
+
+--------------------------------------------------------------------------------
+4.2  POST /attendance/detail/
+--------------------------------------------------------------------------------
+Purpose : Full detail of one attendance record
+Access  : Admin OR the record's own employee (scoped by backend)
+Request :
+{ "attendance_id": 1 }
+Response 200: { full attendance record }
+
+Behavior:
+  - If the caller has a linked Employee profile and the record belongs to
+    a DIFFERENT employee → 403.
+  - Admin (org owner) can view any record in the org.
+
+--------------------------------------------------------------------------------
+4.3  POST /attendance/bulk-mark-absent/
+--------------------------------------------------------------------------------
+Purpose : Create ABSENT records for days where no attendance exists
+Access  : Admin (org owner)
+Request :
+{
+  "from_date": "2026-10-01",
+  "to_date": "2026-10-31",
+  "employee_ids": [12, 15]       // optional: restrict to specific employees
+}
+Response 201 (or 200 if nothing created):
+{
+  "status": true,
+  "message": "Bulk absent mark completed: 45 created, 120 already existed, 60 non-working days.",
+  "data": {
+    "created_count": 45,
+    "skipped_existing": 120,
+    "skipped_non_working": 60,
+    "employees_processed": 10,
+    "from_date": "2026-10-01",
+    "to_date": "2026-10-31"
+  }
+}
+
+Behavior:
+  - Requires AttendanceSettings.auto_mark_absent = true, else 400.
+  - Date range capped at 62 days per call.
+  - Skips non-working days (HOLIDAY/WEEKLY_OFF/NO_SHIFT_ASSIGNED).
+  - Skips days where an AttendanceRecord already exists.
+  - Never overwrites an existing record.
+
+
+================================================================================
+SECTION 5 — CORRECTIONS (ADMIN)
+================================================================================
+
+--------------------------------------------------------------------------------
+5.1  POST /attendance/corrections/list/
+--------------------------------------------------------------------------------
+Purpose : List correction requests org-wide
+Request (all optional):
+{
+  "employee_id": 10,
+  "status": "PENDING",        // PENDING | APPROVED | REJECTED | APPLIED
+  "work_date": "2026-10-25",
+  "from_date": "2026-10-01",
+  "to_date": "2026-10-31"
+}
+Response 200:
+{
+  "status": true,
+  "message": "Attendance corrections fetched successfully.",
+  "data": [
+    {
+      "id": 1,
+      "attendance": 2,
+      "work_date": "2026-10-25",
+      "employee_code": "EMP-000002",
+      "employee_name": "Akshay Kumar",
+      "punch": 3,
+      "field_name": "CHECK_OUT",       // CHECK_IN | CHECK_OUT | STATUS
+      "old_value": "2026-10-25T14:29:46Z",
+      "new_value": "2026-12-25T18:30:00+05:30",
+      "reason": "Forgot to check out, left at 6:30 PM.",
+      "status": "PENDING",
+      "requested_by": 2,
+      "reviewed_by": null,
+      "reviewed_at": null,
+      "review_note": "",
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  ]
+}
+
+--------------------------------------------------------------------------------
+5.2  POST /attendance/corrections/review/
+--------------------------------------------------------------------------------
+Purpose : Approve or reject a correction
+Request (approve):
+{
+  "correction_id": 1,
+  "approve": true,
+  "review_note": "Verified with gate log."
+}
+Request (reject):
+{
+  "correction_id": 1,
+  "approve": false,
+  "review_note": "Wrong date; please resubmit."
+}
+Response 200: { full correction object, status now APPLIED or REJECTED }
+
+Behavior on approve:
+  - CHECK_IN / CHECK_OUT: parses new_value as ISO 8601 datetime.
+    Validates ordering against the OTHER timestamp.
+    Recalculates attendance (work minutes, late, early departure, overtime, status).
+  - STATUS: validates against STATUS_CHOICES, applies directly.
+  - Approve must be a boolean: true or false.
+
+
+================================================================================
+QUICK REFERENCE — ADMIN ENDPOINTS
+================================================================================
+
+SETTINGS (1)
+  POST /attendance/settings/
+
+SHIFTS (4)
+  POST /attendance/shifts/list/
+  POST /attendance/shifts/create/
+  POST /attendance/shifts/update/
+  POST /attendance/shifts/deactivate/
+
+SHIFT ASSIGNMENTS (6)
+  POST /attendance/shift-assignments/list/
+  POST /attendance/shift-assignments/create/
+  POST /attendance/shift-assignments/update/
+  POST /attendance/shift-assignments/bulk-assign/
+  POST /attendance/shift-assignments/bulk-assign-pattern/
+  POST /attendance/shift-assignments/bulk-close/
+
+ATTENDANCE (3)
+  POST /attendance/list/
+  POST /attendance/detail/               (scoped — admin sees all, employee sees own)
+  POST /attendance/bulk-mark-absent/
+
+CORRECTIONS (2)
+  POST /attendance/corrections/list/
+  POST /attendance/corrections/review/
+
+TOTAL ADMIN ENDPOINTS: 16
+
+
+================================================================================
+KEY NOTES FOR FRONTEND — ADMIN SIDE
+================================================================================
+
+1. SETTINGS DRIVE EMPLOYEE UX
+   If photo_required=true, the employee's app must enforce selfie capture.
+   If location_required=true, the app must enforce GPS. Failing to do this
+   means every employee punch returns 400. Read settings first and configure
+   the employee screens accordingly.
+
+2. SHIFT OVERLAP PREVENTION
+   Assignments for the same employee cannot overlap in effective date range.
+   If you're re-assigning an employee to a new shift mid-month, first
+   update the OLD assignment's effective_to (or use bulk-close), THEN create
+   the new one. Doing it in reverse will fail with "employee already has
+   overlapping assignment".
+
+3. BULK-ASSIGN IS ALL-OR-NOTHING
+   If you send 100 employees and one fails, zero assignments are created.
+   Surface the error message clearly to the admin.
+
+4. ROTATING PATTERNS ARE HEAVILY VALIDATED
+   Two shifts can only be rotated if their weekly-offs fall on the same
+   days for the entire rotation period. A "General Shift (Sun off)" and a
+   "Night Shift (Sat off)" cannot rotate — the API will reject the whole
+   batch with "schedules differ on YYYY-MM-DD".
+
+5. AUTO-ABSENT IS A TWO-STEP FEATURE
+   - Turn it ON in settings (auto_mark_absent=true)
+   - Then call bulk-mark-absent periodically (cron / scheduler / daily admin
+     action). The setting alone does not auto-create records.
+
+6. CORRECTIONS APPROVAL UPDATES ATTENDANCE IN PLACE
+   When you approve a CHECK_IN or CHECK_OUT correction, the system:
+   - Applies the new value
+   - Recomputes net_work_minutes, late_minutes, early_departure_minutes,
+     overtime_minutes, and status
+   So one approved correction can flip PRESENT → HALF_DAY, or INCOMPLETE
+   → PRESENT. Don't be surprised by the attendance row changing.
+
+7. ATTENDANCE DETAIL IS ROLE-AWARE
+   The same endpoint is used by admin (view any) and employee (view own).
+   The backend blocks employees from viewing other employees' records.

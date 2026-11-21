@@ -1,0 +1,380 @@
+================================================================================
+CALENDAR APP — ADMIN / ORG OWNER API REFERENCE
+================================================================================
+
+Base URL   : /
+Method     : All endpoints are POST
+Auth       : Bearer token (IsAuthenticated)
+Envelope   : { "status": true|false, "message": "...", "data": {...}?, "errors": {...}? }
+
+Organization context:
+  - Single-org users: omit organization_id
+  - Multi-org users: include organization_id in body
+
+Who uses this document:
+  - Org owner / Admin role
+  - Anyone managing shifts, weekly-offs, and holidays for the org
+
+NOTE: The Calendar app is org-scoped. No super-admin endpoints exist here.
+
+
+================================================================================
+BOOTSTRAP ORDER — READ FIRST
+================================================================================
+
+  1. Create shifts first           (separate /attendance/ app — prerequisite)
+  2. Create weekly-off rules       (/weekly-offs/...)
+  3. Create holidays               (/holidays/...)
+  4. (Optional) Bulk import        (/holidays/bulk-import/)
+  5. Assign employees to shifts    (separate /attendance/ app)
+
+Without step 1 (shifts), weekly-off rules cannot be created.
+Without shifts assigned to employees, the calendar falls back to
+"NO_SHIFT_ASSIGNED" and attendance/payroll calculations treat the day
+as non-working but also non-holiday.
+
+
+================================================================================
+SECTION 1 — WEEKLY-OFF RULES
+================================================================================
+A weekly-off rule defines a recurring day-of-week (optionally a specific
+occurrence within a month) that is a non-working day for a given shift.
+
+Examples:
+  - Every Sunday off            → day_of_week=6, week_of_month=null
+  - 2nd and 4th Saturday off    → two rules: day_of_week=5, week_of_month=2
+                                  and                    week_of_month=4
+  - First Monday off            → day_of_week=0, week_of_month=1
+
+--------------------------------------------------------------------------------
+1.1  POST /calendar/weekly-offs/list/
+--------------------------------------------------------------------------------
+Purpose : List active weekly-off rules for the org
+Request (optional):
+{
+  "shift_id": 3
+}
+Response 200:
+{
+  "status": true,
+  "message": "Weekly-off rules fetched successfully.",
+  "data": [
+    {
+      "id": 20,
+      "shift": 3,
+      "shift_name": "General Shift",
+      "day_of_week": 6,
+      "week_of_month": null,
+      "effective_from": "2026-01-01",
+      "effective_to": null,
+      "is_active": true,
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  ]
+}
+
+NOTE: day_of_week: Monday=0 … Sunday=6.
+      week_of_month: null = every occurrence; 1–5 = specific occurrence.
+
+--------------------------------------------------------------------------------
+1.2  POST /calendar/weekly-offs/create/
+--------------------------------------------------------------------------------
+Purpose : Create a weekly-off rule for one shift
+Request :
+{
+  "shift": 3,
+  "day_of_week": 6,
+  "week_of_month": null,           // optional
+  "effective_from": "2026-01-01",
+  "effective_to": null             // optional
+}
+Response 201:
+{
+  "status": true,
+  "message": "Weekly-off rule created successfully.",
+  "data": { full rule object }
+}
+
+Validations:
+  - shift must be active and belong to caller's org.
+  - effective_to >= effective_from.
+  - Rule must NOT overlap another active rule for the same shift,
+    same day_of_week, and overlapping date range (unless the week_of_month
+    values are exclusive — e.g. week_of_month=2 and week_of_month=4 do not
+    conflict).
+
+--------------------------------------------------------------------------------
+1.3  POST /calendar/weekly-offs/bulk-create/
+--------------------------------------------------------------------------------
+Purpose : Create the same rule for ALL active shifts in the org
+Request (same as create, minus shift):
+{
+  "day_of_week": 6,
+  "week_of_month": null,
+  "effective_from": "2026-01-01",
+  "effective_to": null
+}
+Response 201:
+{
+  "status": true,
+  "message": "Weekly-off rule created for all active shifts.",
+  "data": [ {rule1}, {rule2}, ... ]
+}
+
+Behavior:
+  - Validates the rule against every active shift first.
+  - If ANY shift fails validation → nothing is created (all-or-nothing).
+  - Error response includes shift_id + shift_name of the failing shift.
+
+--------------------------------------------------------------------------------
+1.4  POST /calendar/weekly-offs/update/
+--------------------------------------------------------------------------------
+Purpose : Update an existing rule
+Request :
+{
+  "rule_id": 20,
+  "day_of_week": 6,
+  "effective_to": "2026-12-31"
+}
+Response 200: { full rule object }
+
+Validations:
+  - Same overlap checks as create, excluding self.
+
+--------------------------------------------------------------------------------
+1.5  POST /calendar/weekly-offs/deactivate/
+--------------------------------------------------------------------------------
+Purpose : Close a rule (does NOT delete; preserves historical accuracy)
+Request :
+{
+  "rule_id": 20,
+  "effective_to": "2026-06-30"     // required
+}
+Response 200:
+{
+  "status": true,
+  "message": "Weekly-off rule closed successfully.",
+  "data": { "rule_id": 20, "effective_to": "2026-06-30" }
+}
+
+Behavior:
+  - Sets the rule's effective_to. Historical dates after effective_to
+    resolve as WORKING_DAY (or next applicable rule).
+  - effective_to is REQUIRED — you cannot "hard delete" a rule.
+  - effective_to cannot be before effective_from.
+  - Historical attendance records that used this rule are unaffected.
+
+
+================================================================================
+SECTION 2 — HOLIDAYS
+================================================================================
+Holidays are org-wide dates (unlike weekly-offs which are shift-scoped).
+One holiday per org per date (unique constraint at DB level).
+
+--------------------------------------------------------------------------------
+2.1  POST /calendar/holidays/list/
+--------------------------------------------------------------------------------
+Purpose : List active holidays for the org
+Request (all optional):
+{
+  "date_from": "2026-01-01",
+  "date_to":   "2026-12-31",
+  "search":    "diwali"            // matches name or description
+}
+Response 200:
+{
+  "status": true,
+  "message": "Holidays fetched successfully.",
+  "data": [
+    {
+      "id": 101,
+      "date": "2026-10-20",
+      "name": "Diwali",
+      "holiday_type": "FESTIVAL",
+      "pay_type": "PAID",
+      "is_optional": false,
+      "description": "...",
+      "is_active": true,
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  ]
+}
+
+holiday_type: PUBLIC | NATIONAL | FESTIVAL | COMPANY | OTHER
+pay_type:     PAID | UNPAID
+is_optional:  true = employee may choose to work; false = mandatory off
+
+--------------------------------------------------------------------------------
+2.2  POST /calendar/holidays/create/
+--------------------------------------------------------------------------------
+Purpose : Add a single holiday
+Request :
+{
+  "date": "2026-10-20",
+  "name": "Diwali",
+  "holiday_type": "FESTIVAL",
+  "pay_type": "PAID",
+  "is_optional": false,
+  "description": "..."
+}
+Response 201: { full holiday object }
+
+Validations:
+  - Date must be unique within the org.
+    → "A holiday already exists for this date in this organization."
+  - holiday_type and pay_type must be one of the allowed choices.
+
+--------------------------------------------------------------------------------
+2.3  POST /calendar/holidays/update/
+--------------------------------------------------------------------------------
+Purpose : Update a holiday
+Request :
+{
+  "holiday_id": 101,
+  "date": "2026-10-21",
+  "name": "Diwali (Bangalore)",
+  "pay_type": "UNPAID",
+  ...
+}
+Response 200: { full holiday object }
+
+Validations:
+  - Same uniqueness check (excludes self).
+
+--------------------------------------------------------------------------------
+2.4  POST /calendar/holidays/deactivate/
+--------------------------------------------------------------------------------
+Purpose : Deactivate a holiday (soft delete)
+Request :
+{
+  "holiday_id": 101
+}
+Response 200:
+{
+  "status": true,
+  "message": "Holiday deactivated successfully."
+}
+
+Behavior:
+  - Sets is_active = false.
+  - The holiday no longer appears in /holidays/list/ or resolves as
+    HOLIDAY in the employee calendar.
+  - The unique constraint still blocks re-creating a holiday on the same
+    date (because the row exists, just inactive). Reactivate via update
+    is the way to bring it back — or create it with a different date.
+
+--------------------------------------------------------------------------------
+2.5  POST /calendar/holidays/bulk-import/
+--------------------------------------------------------------------------------
+Purpose : Import many holidays from an Excel (.xlsx) file
+Request : multipart/form-data
+{
+  "file": <binary .xlsx>
+}
+Response 201:
+{
+  "status": true,
+  "message": "Holidays imported successfully.",
+  "data": {
+    "created_count": 15,
+    "holidays": [ {full holiday object}, ... ]
+  }
+}
+Response 400 (validation errors — nothing imported):
+{
+  "status": false,
+  "message": "Holiday import failed. No holidays were imported.",
+  "errors": [
+    { "row": 2, "errors": { "date": "..." } },
+    { "row": 5, "errors": { "is_optional": "..." } }
+  ]
+}
+
+Excel file requirements:
+  - Must be .xlsx (not .xls, not .csv)
+  - Max file size: 5 MB
+  - Max 1000 holiday rows per import
+  - File must contain a header row in the first row
+  - Required columns: date, name, holiday_type, pay_type
+  - Optional columns: is_optional, description
+  - Unknown columns → 400 with list of unexpected columns
+
+Behavior:
+  - ALL-OR-NOTHING: if any row fails validation, nothing is imported.
+  - Duplicate dates within the file are rejected (row-level error).
+  - Duplicate dates vs existing holidays → 400 "one or more holiday
+    dates already exist. No holidays were imported."
+  - Excel date cells are accepted as real dates or "YYYY-MM-DD" strings.
+  - is_optional accepts: TRUE/FALSE, YES/NO, 1/0, blank (= false).
+
+
+================================================================================
+QUICK REFERENCE — ADMIN ENDPOINTS
+================================================================================
+
+WEEKLY-OFF RULES (5)
+  POST /calendar/weekly-offs/list/
+  POST /calendar/weekly-offs/create/
+  POST /calendar/weekly-offs/bulk-create/
+  POST /calendar/weekly-offs/update/
+  POST /calendar/weekly-offs/deactivate/
+
+HOLIDAYS (5)
+  POST /calendar/holidays/list/
+  POST /calendar/holidays/create/
+  POST /calendar/holidays/update/
+  POST /calendar/holidays/deactivate/
+  POST /calendar/holidays/bulk-import/
+
+TOTAL ADMIN ENDPOINTS: 10
+
+(Employee calendar endpoint is documented separately.)
+
+
+================================================================================
+KEY NOTES FOR FRONTEND — ADMIN SIDE
+================================================================================
+
+1. WEEKLY-OFF vs HOLIDAY — DIFFERENT SCOPES
+   - Weekly-off rule → tied to a SHIFT (recurring day-of-week)
+   - Holiday         → tied to the ORG (specific date)
+   - Both feed into the employee calendar, with HOLIDAY taking precedence
+     over WEEKLY_OFF if they collide on the same date.
+
+2. DEACTIVATION ≠ DELETION
+   - Weekly-offs: you close the rule by setting effective_to (no delete)
+   - Holidays: you set is_active = false (soft delete)
+   - Historical attendance and payroll snapshots are unaffected by either
+
+3. OVERLAP PREVENTION ON WEEKLY-OFFS
+   Two rules for the same shift and same day-of-week cannot overlap in
+   date range UNLESS one is a specific week_of_month and the other is
+   every-week (week_of_month=null). In that case, the specific rule takes
+   precedence for the matching occurrences.
+   Example:
+     Rule A: every Sunday (week_of_month=null), all year
+     Rule B: 2nd Sunday (week_of_month=2), Oct–Dec
+   → On the 2nd Sunday of Oct/Nov/Dec, Rule B wins (the day is a weekly off).
+   → On all other Sundays, Rule A wins.
+
+4. BULK-CREATE FOR WEEKLY-OFFS
+   Use this when you want "Sunday is off for ALL shifts". Creates one
+   rule per active shift in a single transaction.
+   If ANY shift fails (e.g. it already has an overlapping rule), the
+   entire batch is rolled back.
+
+5. BULK-IMPORT FOR HOLIDAYS
+   The all-or-nothing model means: any bad row → nothing imported.
+   Frontend should show row-level error details so admins can fix the
+   spreadsheet and re-upload.
+   Best practice: provide a downloadable template with the required
+   columns so admins don't hit "unknown columns" errors.
+
+6. HOLIDAY UNIQUENESS TRAP
+   The DB enforces unique (organization, date). If you deactivate a
+   holiday on 2026-10-20 and then try to CREATE a new holiday on
+   2026-10-20, the create will fail with "A holiday already exists
+   for this date" — because the soft-deleted row is still there.
+   Workaround: use UPDATE to reactivate the existing holiday.

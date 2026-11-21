@@ -1,0 +1,775 @@
+================================================================================
+ACCOUNTS / ORGANIZATION APP — SUPER ADMIN API REFERENCE
+================================================================================
+
+Base URL       : /
+Method         : All endpoints are POST
+Auth           : Bearer token (IsAuthenticated) unless marked PUBLIC
+Envelope       : { "status": true|false, "message": "...", "data": {...}?, "errors": {...}? }
+
+Who uses this document:
+  - Super Admin only (user.is_superuser == true)
+  - Platform operators who manage tenants, users, and roles
+
+What Super Admin owns:
+  - Creating and managing organizations (tenants)
+  - Creating and managing all users (employees, admins)
+  - Managing the global role catalog
+  - Assigning organization owners
+  - Assigning users to organizations
+
+What Super Admin DOES NOT do here:
+  - Employee self-service (login, my-profile, OTP) — see EMPLOYEE doc
+  - Org-specific business operations (projects, expenses, payroll, etc.)
+    — those require org membership even for super admin to act on
+
+
+================================================================================
+BOOTSTRAP ORDER — PLATFORM SETUP
+================================================================================
+
+  STEP 1 — Roles (once, globally)
+    └─ POST /accounts/role/create/
+       Create "Admin", "Accountant", "Employee" (and any others)
+
+  STEP 2 — Organizations (one per tenant)
+    └─ POST /accounts/organization/create/
+
+  STEP 3 — Users (one per person on the platform)
+    └─ POST /accounts/register/
+
+  STEP 4 — Assign owners (one per organization)
+    └─ POST /accounts/organization/assign-owner/
+       → creates the Admin role + membership for that user
+
+  STEP 5 — Assign additional users to orgs (optional)
+    └─ POST /accounts/organization/assign-user/
+
+CRITICAL RULES:
+  - Roles are GLOBAL, shared by all organizations.
+  - A user can belong to AT MOST ONE active organization (enforced).
+  - "Admin" role is reserved for organization owners — you cannot
+    assign it via assign-user, only via assign-owner.
+  - "Accountant" role is used when the system downgrades a previous
+    owner who was replaced by a new owner.
+
+
+================================================================================
+SECTION 1 — AUTHENTICATION (SUPER ADMIN + SHARED)
+================================================================================
+
+Super admin logs in through the SAME endpoint as everyone else. The
+role is distinguished by is_superuser = true on their User row.
+
+--------------------------------------------------------------------------------
+1.1  POST /accounts/login/
+--------------------------------------------------------------------------------
+Auth : PUBLIC
+Purpose : Authenticate. Returns JWT + user object.
+
+Request :
+{
+  "username": "superadmin",
+  "password": "SecurePass@123"
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Login successful.",
+  "data": {
+    "access": "eyJ0eXAi...",
+    "refresh": "eyJ0eXAi...",
+    "user": {
+      "id": 1,
+      "username": "superadmin",
+      "first_name": "Platform",
+      "last_name": "Admin",
+      "email": "superadmin@platform.com",
+      "mobile": "9999999999",
+      "profile_photo": "users/profile/su.jpg",
+      "role": 1,
+      "role_details": {
+        "id": 1,
+        "name": "Admin",
+        "is_active": true,
+        "created_at": "...",
+        "updated_at": "..."
+      },
+      "is_active": true,
+      "date_joined": "...",
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  }
+}
+
+NOTE: The `is_superuser` flag is NOT in this serializer output by
+      default. The backend detects it from the token's user_id on
+      every request. The frontend may need a way to distinguish
+      super admin from regular admin — see note 10 in the summary
+      section below.
+
+Responses 400 / 401 / 403 : same as employee doc.
+
+--------------------------------------------------------------------------------
+1.2  POST /accounts/refresh-token/
+--------------------------------------------------------------------------------
+Auth : PUBLIC
+Purpose : Exchange a valid refresh token for a new access + refresh pair.
+
+Request :
+{ "refresh": "eyJ0eXAi..." }
+
+Response 200:
+{
+  "status": true,
+  "message": "Token refreshed successfully.",
+  "data": {
+    "access": "eyJ0eXAi...new...",
+    "refresh": "eyJ0eXAi...new..."
+  }
+}
+
+IMPORTANT — REFRESH ROTATION IS ON:
+  - The OLD refresh token is blacklisted on success.
+  - The OLD access token stays valid until natural expiry.
+  - You MUST overwrite BOTH stored tokens.
+  - Reusing the old refresh token → 401 "Invalid or expired refresh token."
+
+Response 401 (invalid/expired/blacklisted):
+{ "status": false, "message": "Invalid or expired refresh token. Please login again." }
+
+Response 401 (user deactivated):
+{ "status": false, "message": "User not found or inactive." }
+
+
+================================================================================
+SECTION 2 — USER MANAGEMENT (SUPER ADMIN ONLY)
+================================================================================
+
+All endpoints in this section operate on the platform's User table
+(which is the auth identity — not the Employee HR record).
+
+--------------------------------------------------------------------------------
+2.1  POST /accounts/register/
+--------------------------------------------------------------------------------
+Auth : #SU   ⚠ currently public — will be locked before production
+Purpose : Create a new user (optionally with profile photo).
+Type : multipart/form-data
+
+Request :
+{
+  "username": "priya",
+  "first_name": "Priya",
+  "last_name": "Sharma",
+  "email": "priya@example.com",
+  "mobile": "9876500000",
+  "role": 3,
+  "password": "SecurePass@123",
+  "confirm_password": "SecurePass@123",
+  "profile_photo": <file>
+}
+
+Response 201:
+{
+  "status": true,
+  "message": "User registered successfully. Login credentials sent to user's email.",
+  "data": {
+    "id": 30,
+    "username": "priya",
+    "first_name": "Priya",
+    "last_name": "Sharma",
+    "email": "priya@example.com",
+    "mobile": "9876500000",
+    "profile_photo": "users/profile/xyz.jpg",
+    "role": 3,
+    "role_details": {
+      "id": 3,
+      "name": "Employee",
+      "is_active": true,
+      "created_at": "...",
+      "updated_at": "..."
+    },
+    "is_active": true,
+    "date_joined": "...",
+    "created_at": "...",
+    "updated_at": "..."
+  }
+}
+
+Response 400 (validation):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": {
+    "username": ["Username already exists."],
+    "email": ["Email already exists."],
+    "mobile": ["Mobile number already exists."]
+  }
+}
+
+NOTE:
+  - Welcome email with the plain password is sent to the user.
+  - Profile photo is uploaded to S3 before the user is saved;
+    on failure the S3 object is deleted.
+  - username, email, mobile are all case-insensitively unique.
+  - role must reference an active Role.
+  - Audit log "CREATE USER" written.
+
+--------------------------------------------------------------------------------
+2.2  POST /accounts/user/list/
+--------------------------------------------------------------------------------
+Auth : #SU   ⚠ currently any authenticated user — will be locked
+Purpose : List all active users across the platform.
+
+Request : {}
+
+Response 200:
+{
+  "status": true,
+  "message": "Accounts fetched successfully.",
+  "data": [
+    {
+      "id": 25,
+      "username": "rahul",
+      "first_name": "Rahul",
+      "last_name": "Patil",
+      "email": "rahul@example.com",
+      "mobile": "9876543210",
+      "profile_photo": "users/profile/abc.jpg",
+      "role": 1,
+      "role_details": { ... },
+      "is_active": true,
+      "date_joined": "...",
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  ]
+}
+
+NOTE:
+  - Returns only is_active=true users.
+  - Ordered newest first.
+  - Deactivated users are excluded — there is currently no endpoint
+    to list deactivated users (gap).
+
+--------------------------------------------------------------------------------
+2.3  POST /accounts/user/detail/
+--------------------------------------------------------------------------------
+Auth : #SU   ⚠ currently any authenticated user — will be locked
+Purpose : Fetch one active user.
+
+Request : { "id": 30 }
+
+Response 200: { ...same shape as a list item... }
+
+Response 400: { "status": false, "message": "Account id is required." }
+Response 404: { "status": false, "message": "Account not found." }
+
+--------------------------------------------------------------------------------
+2.4  POST /accounts/user/update/
+--------------------------------------------------------------------------------
+Auth : #SU   ⚠ currently any authenticated user — will be locked
+Purpose : Admin-level update of another user.
+          Can change role and is_active (unlike /my-profile/update/).
+Type : multipart/form-data
+
+Request :
+{
+  "id": 30,
+  "first_name": "Priya",
+  "last_name": "Sharma",
+  "email": "priya.new@example.com",
+  "mobile": "9876500001",
+  "role": 4,
+  "is_active": true,
+  "profile_photo": <file>
+}
+
+Response 200: { ...full user object... }
+
+Response 400 (uniqueness violation):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": {
+    "email": ["Email already exists."],
+    "mobile": ["Mobile number already exists."]
+  }
+}
+
+Response 404: { "status": false, "message": "User not found." }
+
+NOTE:
+  - Partial update: only sent fields change.
+  - Email/mobile uniqueness checked globally excluding self.
+  - Old profile photo deleted from S3 after successful save.
+  - Audit log "UPDATE USER" with old/new data.
+  - ⚠ CURRENT CODE: any authenticated user can change ANY user's role
+    to "Admin" here. This is a privilege-escalation vulnerability until
+    locked to #SU.
+
+--------------------------------------------------------------------------------
+2.5  POST /accounts/user/deactivate/
+--------------------------------------------------------------------------------
+Auth : #SU   ⚠ currently any authenticated user — will be locked
+Purpose : Soft-delete a user (sets is_active=false).
+
+Request : { "id": 30 }
+
+Response 200:
+{
+  "status": true,
+  "message": "Account deactivated successfully.",
+  "data": null
+}
+
+Response 404: { "status": false, "message": "Account not found or already inactive." }
+
+NOTE:
+  - Row is preserved; only is_active flips.
+  - The user can no longer log in (login endpoint returns 403).
+  - Audit log "DELETE USER" with old/new.
+  - ⚠ Deactivating a user does NOT deactivate their OrganizationMembership
+    or their Employee record — those remain active. The deactivation only
+    blocks login. Business records still reference them.
+
+
+================================================================================
+SECTION 3 — ROLE MANAGEMENT (SUPER ADMIN ONLY)
+================================================================================
+
+Roles are GLOBAL across all organizations. All five endpoints are
+currently protected only by IsAuthenticated, but should be locked to
+#SU before production.
+
+--------------------------------------------------------------------------------
+3.1  POST /accounts/role/create/
+--------------------------------------------------------------------------------
+Auth : #SU   ⚠ currently any authenticated user
+Purpose : Create a new global role.
+
+Request : { "name": "Senior Accountant" }
+
+Response 201:
+{
+  "status": true,
+  "message": "Role created successfully.",
+  "data": {
+    "id": 6,
+    "name": "Senior Accountant",
+    "is_active": true,
+    "created_at": "...",
+    "updated_at": "..."
+  }
+}
+
+Response 400 (duplicate name):
+{ "status": false, "message": "Role with this name already exists." }
+
+Response 400 (validation):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": { "name": ["This field is required."] }
+}
+
+NOTE: Name is trimmed and unique case-insensitively.
+
+--------------------------------------------------------------------------------
+3.2  POST /accounts/role/list/
+--------------------------------------------------------------------------------
+Auth : #SU   ⚠ currently any authenticated user
+Purpose : List all active roles.
+
+Request : {}
+
+Response 200:
+{
+  "status": true,
+  "message": "Roles fetched successfully.",
+  "data": [
+    {
+      "id": 1,
+      "name": "Admin",
+      "is_active": true,
+      "created_at": "...",
+      "updated_at": "..."
+    },
+    {
+      "id": 3,
+      "name": "Employee",
+      "is_active": true,
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  ]
+}
+
+--------------------------------------------------------------------------------
+3.3  POST /accounts/role/detail/
+--------------------------------------------------------------------------------
+Auth : #SU   ⚠ currently any authenticated user
+Purpose : Fetch one active role.
+
+Request : { "id": 3 }
+
+Response 200: { ...role object... }
+Response 400: { "status": false, "message": "Role id is required." }
+Response 404: { "status": false, "message": "Role not found." }
+
+--------------------------------------------------------------------------------
+3.4  POST /accounts/role/update/
+--------------------------------------------------------------------------------
+Auth : #SU   ⚠ currently any authenticated user
+Purpose : Update a role (partial).
+
+Request :
+{
+  "id": 3,
+  "name": "Senior Accountant",
+  "is_active": true
+}
+
+Response 200: { ...role object... }
+
+Response 400 (duplicate name):
+{ "status": false, "message": "Role with this name already exists." }
+
+NOTE:
+  - Audit log "UPDATE ROLE" with old/new.
+  - Changing a role's name does NOT rename it on existing Users — they
+    keep the FK reference, so their role_details.name updates
+    automatically. This is a display change only.
+
+--------------------------------------------------------------------------------
+3.5  POST /accounts/role/delete/
+--------------------------------------------------------------------------------
+Auth : #SU   ⚠ currently any authenticated user
+Purpose : Soft-delete a role (sets is_active=false).
+
+Request : { "id": 3 }
+
+Response 200:
+{
+  "status": true,
+  "message": "Role deleted successfully.",
+  "data": null
+}
+
+Response 404: { "status": false, "message": "Role not found or already deleted." }
+
+NOTE:
+  - Users still assigned to this role keep the FK — but the role
+    no longer appears in /role/list/. Their role_details will still
+    resolve for display.
+  - Audit log "DELETE ROLE".
+
+
+================================================================================
+SECTION 4 — ORGANIZATION MANAGEMENT (SUPER ADMIN ACTIONS)
+================================================================================
+
+Super admin has full visibility on organizations but ONLY specific
+write actions — org profile updates and deactivation belong to the
+org owner (see ADMIN doc).
+
+--------------------------------------------------------------------------------
+4.1  POST /accounts/organization/create/
+--------------------------------------------------------------------------------
+Auth : #SU (enforced)
+Purpose : Create a new tenant organization. Owner is set later.
+Type : multipart/form-data
+
+Request :
+{
+  "organization_name": "Acme Pvt Ltd",
+  "legal_name": "Acme Private Limited",
+  "business_type": "Private Limited",
+  "industry": "Software",
+  "description": "ERP product company",
+  "registration_number": "U12345MH2020PTC123456",
+  "gst_number": "27ABCDE1234F1Z5",
+  "pan_number": "ABCDE1234F",
+  "cin_number": "U12345MH2020PTC123456",
+  "email": "info@acme.com",
+  "phone_number": "02212345678",
+  "alternate_phone_number": "9876543210",
+  "website": "https://acme.com",
+  "address_line_1": "Plot 12, Tech Park",
+  "address_line_2": "Andheri East",
+  "city": "Mumbai",
+  "district": "Mumbai",
+  "state": "Maharashtra",
+  "pincode": "400069",
+  "country": "India",
+  "latitude": "19.119",
+  "longitude": "72.846",
+  "logo": <file>
+}
+
+Response 201: { ...full OrganizationSerializer object... }
+
+Response 403:
+{ "status": false, "message": "Only the super admin can create organizations." }
+
+NOTE:
+  - organization_code is auto-generated (format: ORG-YYMMDD-XXXXX).
+  - owner starts as null; set via /assign-owner/.
+  - created_by/updated_by = requesting user.
+  - Logo uploaded to S3; deleted on failure.
+  - Audit log "CREATE ORGANIZATION".
+
+--------------------------------------------------------------------------------
+4.2  POST /accounts/organization/list/
+--------------------------------------------------------------------------------
+Auth : #E #A #SU
+Purpose : Super admin sees ALL active orgs; others see only orgs they
+          own or belong to.
+
+Request : {}
+
+Response 200: { ...array of org objects... }
+
+NOTE: This is one of the few endpoints where super admin's view is
+      scoped wider than everyone else's. Everyone else sees only
+      their own org(s); super admin sees every active org.
+
+--------------------------------------------------------------------------------
+4.3  POST /accounts/organization/detail/
+--------------------------------------------------------------------------------
+Auth : #E #A #SU
+Purpose : Fetch one org (super admin can fetch any; others only theirs).
+
+Request : { "id": 5 }
+
+Response 200: { ...org object... }
+Response 404: { "status": false, "message": "Organization not found or access denied." }
+
+--------------------------------------------------------------------------------
+4.4  POST /accounts/organization/my-organizations/
+--------------------------------------------------------------------------------
+Auth : #E #A #SU
+Purpose : Super admin's own memberships (usually empty or minimal).
+
+Request : {}
+
+Response 200: { ...array of orgs super admin is a member of... }
+
+NOTE: For super admin this usually returns an empty or 1-element list,
+      since super admin status does not imply org membership.
+
+--------------------------------------------------------------------------------
+4.5  POST /accounts/organization/assign-owner/
+--------------------------------------------------------------------------------
+Auth : #SU (enforced)
+Purpose : Assign an Admin (owner) to an organization.
+
+Request :
+{
+  "organization_id": 5,
+  "user_id": 25
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Organization owner assigned successfully.",
+  "data": {
+    "organization_id": 5,
+    "organization_name": "Acme Pvt Ltd",
+    "owner_id": 25,
+    "owner_username": "rahul",
+    "owner_email": "rahul@example.com",
+    "role_id": 1,
+    "role": "Admin",
+    "membership_id": 12,
+    "membership_created": true
+  }
+}
+
+Response 400 variants:
+{ "status": false, "message": "organization_id and user_id are required." }
+{ "status": false, "message": "Active Admin and Accountant roles must exist." }
+{ "status": false, "message": "This user already belongs to another active organization." }
+
+Response 403:
+{ "status": false, "message": "Only the super admin can assign an organization owner." }
+
+Response 404:
+{ "status": false, "message": "Organization not found or inactive." }
+{ "status": false, "message": "User not found or inactive." }
+
+NOTE:
+  - Wrapped in transaction.atomic with select_for_update on org and user.
+  - If the org already had a different owner:
+      * Previous owner's role downgrades to "Accountant"
+      * Previous owner's membership stays active
+  - New owner gets Admin role + active membership.
+  - Idempotent: calling again for the SAME user creates nothing new
+    (membership_created=false).
+  - Audit log "UPDATE ORGANIZATION".
+
+--------------------------------------------------------------------------------
+4.6  POST /accounts/organization/assign-user/
+--------------------------------------------------------------------------------
+Auth : #A #SU
+Purpose : Assign a non-owner member to an organization.
+
+Request :
+{
+  "organization_id": 5,
+  "user_id": 30,
+  "role_id": 3
+}
+
+Response 201 (created):
+{
+  "status": true,
+  "message": "Organization member assigned successfully.",
+  "data": {
+    "membership_id": 15,
+    "organization_id": 5,
+    "organization_name": "Acme Pvt Ltd",
+    "user_id": 30,
+    "username": "priya",
+    "email": "priya@example.com",
+    "role_id": 3,
+    "role": "Employee",
+    "is_active": true
+  }
+}
+
+Response 200 (reactivated existing membership):
+Same shape, message changes.
+
+Response 400 variants:
+{ "status": false, "message": "organization_id, user_id and role_id are required." }
+{ "status": false, "message": "The Admin role is reserved for organization owners. Use the owner assignment API instead." }
+{ "status": false, "message": "This user is the organization owner. Use the owner assignment API to manage ownership." }
+{ "status": false, "message": "This user already belongs to another active organization." }
+
+Response 403:
+{ "status": false, "message": "Only the super admin or the organization owner can assign organization members." }
+
+Response 404:
+{ "status": false, "message": "Organization not found or inactive." }
+{ "status": false, "message": "User not found or inactive." }
+{ "status": false, "message": "Role not found or inactive." }
+
+NOTE:
+  - Wrapped in transaction.atomic.
+  - Role is stored ONLY on User.role (OrganizationMembership has no
+    role field).
+  - Cannot assign "Admin" — must use /assign-owner/.
+  - Cannot assign the current owner — must use /assign-owner/.
+  - One-active-org rule enforced.
+  - Audit log "CREATE" or "UPDATE" with old/new.
+
+
+================================================================================
+QUICK REFERENCE — SUPER ADMIN ENDPOINTS
+================================================================================
+
+AUTHENTICATION (2)
+  POST /accounts/login/                       #SU #A #E (shared)
+  POST /accounts/refresh-token/               #SU #A #E (shared)
+
+USER MANAGEMENT (5)
+  POST /accounts/register/                    #SU   ⚠ currently public
+  POST /accounts/user/list/                   #SU   ⚠ currently any auth
+  POST /accounts/user/detail/                 #SU   ⚠ currently any auth
+  POST /accounts/user/update/                 #SU   ⚠ currently any auth
+  POST /accounts/user/deactivate/             #SU   ⚠ currently any auth
+
+ROLE MANAGEMENT (5)
+  POST /accounts/role/create/                 #SU   ⚠ currently any auth
+  POST /accounts/role/list/                   #SU   ⚠ currently any auth
+  POST /accounts/role/detail/                 #SU   ⚠ currently any auth
+  POST /accounts/role/update/                 #SU   ⚠ currently any auth
+  POST /accounts/role/delete/                 #SU   ⚠ currently any auth
+
+ORGANIZATION MANAGEMENT (6)
+  POST /accounts/organization/create/         #SU  ✅ enforced
+  POST /accounts/organization/list/           #E #A #SU (scoped)
+  POST /accounts/organization/detail/         #E #A #SU (scoped)
+  POST /accounts/organization/my-organizations/  #E #A #SU (scoped)
+  POST /accounts/organization/assign-owner/   #SU  ✅ enforced
+  POST /accounts/organization/assign-user/    #A #SU  ✅ enforced
+
+TOTAL: 18 endpoints super admin uses (12 exclusive + 6 shared).
+
+
+================================================================================
+KEY NOTES FOR FRONTEND — SUPER ADMIN SIDE
+================================================================================
+
+1. IS_SUPERUSER IS NOT IN THE USER SERIALIZER
+   The login/my-profile response does NOT include an is_superuser field.
+   The frontend must either:
+     a) Treat the super admin's username as a known constant from config
+        (fragile), OR
+     b) Ask the backend team to add "is_superuser" to UserSerializer
+        (recommended — one-line addition).
+   Without this, the frontend cannot distinguish a super admin from a
+   regular admin by their user object alone.
+
+2. THE "ADMIN" ROLE IS NOT THE SAME AS SUPER ADMIN
+   - Super admin = user.is_superuser == true (Django flag)
+   - Admin = the organization.owner of a specific org
+   A user can be an Admin (org owner) WITHOUT being a super admin.
+   Super admin usually has NO organization membership at all.
+
+3. ROLES ARE GLOBAL
+   The roles you create (Admin, Accountant, Employee) are shared across
+   every organization on the platform. Renaming "Accountant" affects
+   every org's UI labels.
+
+4. ONE-ACTIVE-ORG-PER-USER
+   Assigning a user who already belongs to another active org returns
+   400. There is NO endpoint to deactivate a membership yet — this is a
+   gap. Workarounds: promote them as owner of another org (downgrades
+   previous), or use direct DB admin for now.
+
+5. SOFT DELETE EVERYWHERE
+   Users, Roles, Organizations are never hard-deleted.
+   is_active=false hides them from list endpoints.
+
+6. "ACCOUNTANT" ROLE IS LOAD-BEARING
+   When assigning a new owner to an org that already has one, the
+   system downgrades the previous owner to "Accountant". This role
+   MUST exist or /assign-owner/ returns 400 "Active Admin and
+   Accountant roles must exist."
+   Ensure both "Admin" and "Accountant" roles exist before you assign
+   any owner.
+
+7. AUDIT EVERYTHING
+   Every mutating endpoint writes a log_activity row. No PII (passwords,
+   tokens) is included in audit data.
+
+8. ⚠ PERMISSION GAPS TO FIX BEFORE PRODUCTION
+   The following endpoints are currently protected only by IsAuthenticated
+   and should be locked to IsSuperAdmin:
+     /register/
+     /user/list/, /user/detail/, /user/update/, /user/deactivate/
+     /role/create/, /role/list/, /role/detail/, /role/update/, /role/delete/
+   Without this lock, any logged-in user can list users, escalate their
+   own role to Admin, deactivate other users, and manage roles.
+
+9. ⚠ SUPER ADMIN CANNOT UPDATE ORGS THEY DON'T OWN
+   /organization/update/ and /organization/deactivate/ filter by
+   owner=request.user. Super admin who is not the owner gets 404.
+   If super admin should bypass this, the views need:
+     Q(owner=request.user) | is_super_admin
+   Currently super admin CANNOT update any org's profile.
+
+10. ORG CODE FORMAT
+    Auto-generated as ORG-YYMMDD-XXXXX (e.g. ORG-261116-00412).
+    Read-only on the serializer.
+
+11. PASSWORD RESET FOR ANY USER
+    Super admin cannot reset another user's password from the API.
+    /forgot-password/ works only by email match (used by the user
+    themselves). If super admin needs to force-reset a user's password,
+    that capability doesn't exist — flag for backend.

@@ -1,0 +1,443 @@
+================================================================================
+CLIENTS APP — ADMIN API REFERENCE
+================================================================================
+
+Base URL   : /
+Method     : All endpoints are POST
+Auth       : Bearer token (IsAuthenticated)
+Envelope   : { "status": true|false, "message": "...", "data": {...}?, "errors": {...}? }
+
+Organization context:
+  - Client records are ALWAYS scoped to the caller's organization.
+  - The view resolves organization from the authenticated user.
+  - Do NOT send organization_id in the body — it is ignored.
+  - A client created by Org A is never visible to Org B.
+
+Who uses this document:
+  - Organization owner (Admin role)
+  - Any org member with Admin-level access
+  - Super admin (can operate on any org via org context resolution)
+
+
+================================================================================
+BOOTSTRAP ORDER — READ FIRST
+================================================================================
+
+  1. Create a client         (this app)
+  2. Use that client when creating a project   (separate /projects/ app)
+
+  A project requires a valid client_id from the SAME organization.
+  Create clients first. There is no direct dependency the other way —
+  a client can exist with zero projects.
+
+
+================================================================================
+SECTION 1 — CLIENT CRUD
+================================================================================
+
+--------------------------------------------------------------------------------
+1.1  POST /clients/create/
+--------------------------------------------------------------------------------
+Purpose : Create a new client
+Type    : multipart/form-data (accepts document file uploads)
+
+Request :
+{
+  "client_name": "Acme Corp",                    // required
+  "company_name": "Acme Corporation Pvt Ltd",    // optional
+  "mobile": "9876543210",                        // optional
+  "email": "contact@acme.com",                   // optional
+  "gst_number": "27AAACT2727Q1ZS",               // optional
+  "address": "123 Main St, Andheri",             // optional
+  "state": "Maharashtra",                        // optional
+  "district": "Mumbai",                          // optional
+  "taluka": "Andheri",                           // optional
+  "pincode": "400001",                           // optional
+  "notes": "Key account, quarterly billing",     // optional
+  "documents": [<file1>, <file2>]                // optional, multiple
+}
+
+Response 201:
+{
+  "status": true,
+  "message": "Client created successfully.",
+  "data": {
+    "id": 5,
+    "client_code": "CLI-000005",
+    "client_name": "Acme Corp",
+    "company_name": "Acme Corporation Pvt Ltd",
+    "mobile": "9876543210",
+    "email": "contact@acme.com",
+    "gst_number": "27AAACT2727Q1ZS",
+    "address": "123 Main St, Andheri",
+    "state": "Maharashtra",
+    "district": "Mumbai",
+    "taluka": "Andheri",
+    "pincode": "400001",
+    "notes": "Key account, quarterly billing",
+    "is_active": true,
+    "documents": [
+      {
+        "id": 101,
+        "title": "agreement.pdf",
+        "file": "clients/documents/agreement.pdf",
+        "description": null,
+        "created_at": "2026-04-20T10:00:00Z"
+      }
+    ],
+    "created_at": "2026-04-20T10:00:00Z",
+    "updated_at": "2026-04-20T10:00:00Z"
+  }
+}
+
+Response 400 (validation):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": {
+    "client_name": ["This field is required."]
+  }
+}
+
+Response 400 (no organization context — user not attached to an org):
+{
+  "status": false,
+  "message": "<get_user_organization error message>"
+}
+
+Notes:
+  - client_code is auto-generated ("CLI-000005" style) — do NOT send it.
+  - organization is derived from request.user — do NOT send it.
+  - documents is uploaded as multipart files; each file is stored in S3
+    under "clients/documents/" and a ClientDocument row is created.
+  - Document title is set to the original filename (file.name).
+  - The response uses ClientDetailSerializer, so it includes updated_at
+    and the full documents array.
+
+
+--------------------------------------------------------------------------------
+1.2  POST /clients/list/
+--------------------------------------------------------------------------------
+Purpose : List all active clients in the caller's organization
+Request (all optional):
+{
+  "search": "acme"     // matches client_code, client_name, company_name,
+                       //         mobile, email, gst_number (icontains)
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Clients fetched successfully.",
+  "data": [
+    {
+      "id": 5,
+      "client_code": "CLI-000005",
+      "client_name": "Acme Corp",
+      "company_name": "Acme Corporation Pvt Ltd",
+      "mobile": "9876543210",
+      "email": "contact@acme.com",
+      "gst_number": "27AAACT2727Q1ZS",
+      "address": "123 Main St, Andheri",
+      "state": "Maharashtra",
+      "district": "Mumbai",
+      "taluka": "Andheri",
+      "pincode": "400001",
+      "notes": "Key account, quarterly billing",
+      "documents": [
+        {
+          "id": 101,
+          "title": "agreement.pdf",
+          "file": "clients/documents/agreement.pdf",
+          "description": null,
+          "created_at": "2026-04-20T10:00:00Z"
+        }
+      ],
+      "is_active": true,
+      "created_at": "2026-04-20T10:00:00Z"
+    }
+  ]
+}
+
+Ordering: created_at DESC (newest first)
+Notes:
+  - Only is_active=True clients of the caller's organization are returned.
+  - The response uses ClientListSerializer — note it does NOT include
+    updated_at (the detail serializer does).
+  - "search" is optional. Omitting it returns the full list.
+  - No pagination — returns the full filtered list.
+
+
+--------------------------------------------------------------------------------
+1.3  POST /clients/detail/
+--------------------------------------------------------------------------------
+Purpose : Full detail of one client, including documents
+Request :
+{
+  "client_id": 5     // required
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Client details fetched successfully.",
+  "data": {
+    "id": 5,
+    "client_code": "CLI-000005",
+    "client_name": "Acme Corp",
+    "company_name": "Acme Corporation Pvt Ltd",
+    "mobile": "9876543210",
+    "email": "contact@acme.com",
+    "gst_number": "27AAACT2727Q1ZS",
+    "address": "123 Main St, Andheri",
+    "state": "Maharashtra",
+    "district": "Mumbai",
+    "taluka": "Andheri",
+    "pincode": "400001",
+    "notes": "Key account, quarterly billing",
+    "is_active": true,
+    "documents": [
+      {
+        "id": 101,
+        "title": "agreement.pdf",
+        "file": "clients/documents/agreement.pdf",
+        "description": null,
+        "created_at": "2026-04-20T10:00:00Z"
+      }
+    ],
+    "created_at": "2026-04-20T10:00:00Z",
+    "updated_at": "2026-04-22T14:30:00Z"
+  }
+}
+
+Response 400 (missing param):
+{ "status": false, "message": "client_id is required." }
+
+Response 404 (not found / not in caller's org / inactive):
+{ "status": false, "message": "Client not found." }
+
+Notes:
+  - A client from another organization returns the same 404 as a missing
+    client — no information leak about cross-org existence.
+  - Inactive clients also return 404 (not "inactive" — just "not found").
+
+
+--------------------------------------------------------------------------------
+1.4  POST /clients/update/
+--------------------------------------------------------------------------------
+Purpose : Update client (partial)
+Type    : multipart/form-data (accepts document file uploads)
+
+Request (all fields optional; send only what you want to change):
+{
+  "client_id": 5,
+  "client_name": "Acme Corp (Renamed)",
+  "company_name": "Acme Corporation Pvt Ltd",
+  "mobile": "9876543211",
+  "email": "hello@acme.com",
+  "gst_number": "27AAACT2727Q1ZS",
+  "address": "456 New St",
+  "state": "Maharashtra",
+  "district": "Mumbai",
+  "taluka": "Bandra",
+  "pincode": "400050",
+  "notes": "Updated notes",
+  "remove_document_ids": [101],          // optional, list of doc ids to delete
+  "documents": [<newfile>]               // optional, new docs to add
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Client updated successfully.",
+  "data": {
+    ...full ClientDetailSerializer output...
+  }
+}
+
+Response 400 (missing client_id):
+{ "status": false, "message": "client_id is required." }
+
+Response 400 (validation — e.g. blank client_name):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": { "client_name": ["This field may not be blank."] }
+}
+
+Response 404 (not found / not in caller's org):
+{ "status": false, "message": "Client not found." }
+
+Notes:
+  - Partial update — any field omitted keeps its current value.
+  - remove_document_ids must be sent as a list (multipart repeated field or
+    JSON array). Each id is matched against this client's documents;
+    non-matching ids are silently skipped (no error).
+  - Removed documents are deleted from S3 and the ClientDocument row.
+  - New "documents" files are uploaded and appended — they do NOT replace
+    existing documents.
+  - client_code is immutable (auto-generated, not in the update serializer).
+  - organization is NOT changeable via update.
+
+
+--------------------------------------------------------------------------------
+1.5  POST /clients/deactivate/
+--------------------------------------------------------------------------------
+Purpose : Soft-delete (deactivate) a client
+Request :
+{
+  "client_id": 5     // required
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Client deactivated successfully."
+}
+
+Response 400 (missing param):
+{ "status": false, "message": "client_id is required." }
+
+Response 404 (not found / not in caller's org / already inactive):
+{ "status": false, "message": "Client not found." }
+
+Notes:
+  - Soft delete: is_active=False. The row stays in DB.
+  - Deactivated clients disappear from /clients/list/.
+  - Deactivated clients return 404 from /clients/detail/ and /clients/update/.
+  - Existing projects that reference this client are NOT affected by the
+    deactivation — the FK still points to the (now inactive) client row.
+    Project list/detail endpoints do NOT filter by client is_active.
+
+
+================================================================================
+QUICK REFERENCE — ADMIN ENDPOINTS
+================================================================================
+
+CLIENT (5)
+  POST /clients/create/
+  POST /clients/list/
+  POST /clients/detail/
+  POST /clients/update/
+  POST /clients/deactivate/
+
+TOTAL ADMIN ENDPOINTS: 5
+
+
+================================================================================
+DATA SHAPES — FOR UI TYPES
+================================================================================
+
+ClientListSerializer (used by /list/):
+{
+  "id": 5,
+  "client_code": "CLI-000005",
+  "client_name": "Acme Corp",
+  "company_name": "Acme Corporation Pvt Ltd",
+  "mobile": "9876543210",
+  "email": "contact@acme.com",
+  "gst_number": "27AAACT2727Q1ZS",
+  "address": "123 Main St",
+  "state": "Maharashtra",
+  "district": "Mumbai",
+  "taluka": "Andheri",
+  "pincode": "400001",
+  "notes": "Key account",
+  "documents": [ClientDocument, ...],
+  "is_active": true,
+  "created_at": "..."
+}
+  // NOTE: no updated_at here.
+
+ClientDetailSerializer (used by /create/, /detail/, /update/):
+  // Same as ClientListSerializer PLUS updated_at.
+  // Everything else identical.
+
+ClientDocument:
+{
+  "id": 101,
+  "title": "agreement.pdf",
+  "file": "clients/documents/agreement.pdf",   // S3 path, not full URL
+  "description": null,
+  "created_at": "..."
+}
+
+
+================================================================================
+COMMON ERROR SHAPES
+================================================================================
+
+Validation failure (400):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": {
+    "field_name": ["Error message."],
+    "non_field_errors": ["Cross-field error."]
+  }
+}
+
+Not found (404):
+{ "status": false, "message": "Client not found." }
+
+Missing required param (400):
+{ "status": false, "message": "client_id is required." }
+
+
+================================================================================
+KEY NOTES FOR FRONTEND / UI DESIGNER
+================================================================================
+
+1. DOCUMENTS ARE S3 PATHS, NOT URLS.
+   The "file" field returns a relative path like
+   "clients/documents/agreement.pdf". The UI must build the full URL
+   via your S3/CDN helper. Do not render "file" directly as a link.
+
+2. CREATE + UPDATE ARE multipart/form-data.
+   Because of the optional "documents" file upload. If you send the
+   request as application/json, the files will be silently dropped
+   (no error) — the metadata will still save, but no documents upload.
+   Always use multipart/form-data for create/update.
+
+3. LIST vs DETAIL SERIALIZER DIFFERENCE.
+   - List item:    has created_at, but NOT updated_at.
+   - Detail item:  has created_at AND updated_at.
+   If your list screen needs "last updated" display, you cannot get it
+   from /list/ — you must call /detail/ for each row. Alternatively
+   show only "Created on" in the list.
+
+4. "documents" IN CREATE vs UPDATE.
+   - Create: "documents" = list of new files to attach. There are no
+     existing docs, so no removal concept.
+   - Update: "documents" = NEW files to ADD. To remove existing docs,
+     send "remove_document_ids" as a separate field. Both can be sent
+     in the same request.
+
+5. CLIENT CODE IS IMMUTABLE AND AUTO-GENERATED.
+   Format: "CLI-NNNNNN". The UI should display it read-only. Never
+   send client_code in create/update — it's ignored.
+
+6. SEARCH IS SUBSTRING ACROSS 6 FIELDS.
+   search=acme matches client_code, client_name, company_name, mobile,
+   email, or gst_number. Case-insensitive. Empty search returns all.
+
+7. NO PAGINATION.
+   /list/ returns the full filtered list. Safe for typical orgs
+   (tens to low hundreds of clients). Do not add client-side pagination
+   that hides rows — a scrollable table is fine.
+
+8. DEACTIVATED CLIENTS DISAPPEAR FROM LIST.
+   No query param to include inactive clients. If you need an "archived
+   clients" view, that requires a backend change (flag or query param) —
+   not currently supported.
+
+9. CROSS-ORG ISOLATION.
+   All 5 endpoints scope to the caller's organization via
+   get_user_organization. A client from another org returns 404, never
+   403 — no information leak about cross-org existence.
+
+10. BOOTSTRAP DEPENDENCY.
+    Projects require a valid client. Create clients first. If you try
+    to create a project with a client from another org, the project
+    endpoint returns "Selected client does not belong to this organization."
+    (See /projects/ admin doc.)

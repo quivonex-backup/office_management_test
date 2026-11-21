@@ -1,0 +1,144 @@
+ADMIN
+
+
+================================================================================
+NOTIFICATIONS — ADMIN
+================================================================================
+
+Bell UI endpoints: see Communications app admin doc, Section 3.
+
+"Admin" = the organization owner. Notifications go to organization.owner.
+
+This file lists every notification that can land in the admin's bell.
+Append a new block per app as wiring is completed.
+
+================================================================================
+ATTENDANCE APP
+================================================================================
+
+Event code                        Priority
+--------------------------------  ---------
+ATTENDANCE_CORRECTION_SUBMITTED   HIGH
+
+--------------------------------------------------------------------------------
+ATTENDANCE_CORRECTION_SUBMITTED
+--------------------------------------------------------------------------------
+Title       : "Attendance correction request"
+Body        : "EMP-000025 requested a correction for 2026-11-15 (field: CHECK_OUT)."
+Deep-link   : reference_type = "attendance_correction"
+              reference_id   = <correction_id>
+On tap      : Open "Attendance Corrections" focused on that correction
+
+================================================================================
+LEAVE APP
+================================================================================
+
+Event code                       Priority
+-------------------------------  ---------
+LEAVE_APPLICATION_SUBMITTED      HIGH
+
+--------------------------------------------------------------------------------
+LEAVE_APPLICATION_SUBMITTED
+--------------------------------------------------------------------------------
+Title       : "Leave application received"
+Body        : "<employee_code> applied for <N> day(s) of <leave type> from <start date> to <end date>."
+Deep-link   : reference_type = "leave_application"
+              reference_id   = <application_id>
+On tap      : Open "Leave Applications" focused on that application
+              Admin reviews and approves/rejects
+
+================================================================================
+EXPENSES APP
+================================================================================
+
+Event code                       Priority
+-------------------------------  ---------
+REIMBURSEMENT_SUBMITTED          HIGH
+
+--------------------------------------------------------------------------------
+REIMBURSEMENT_SUBMITTED
+--------------------------------------------------------------------------------
+Title       : "Reimbursement claim submitted"
+Body        : "<employee_code> submitted a claim of ₹<amount> for '<title>'."
+Deep-link   : reference_type = "reimbursement"
+              reference_id   = <reimbursement_id>
+On tap      : Open "Reimbursements" focused on that claim
+              Admin reviews and approves/rejects
+
+================================================================================
+PROJECTS APP
+================================================================================
+
+Event code                       Priority
+-------------------------------  ---------
+TASK_IN_REVIEW                   NORMAL
+
+--------------------------------------------------------------------------------
+TASK_IN_REVIEW
+--------------------------------------------------------------------------------
+Title       : "Task ready for review"
+Body        : "'<task title>' in '<project name>' is ready for review."
+Deep-link   : reference_type = "task"
+              reference_id   = <task_id>
+On tap      : Open "Tasks" focused on that task
+              Admin/Head reviews and either marks DONE or sends back
+              Yellow / needs-attention icon
+
+================================================================================
+PAYROLL APP
+================================================================================
+
+Admin receives NO notifications from the Payroll app.
+
+Rationale:
+  Every payroll action (create run, generate, finalize, edit deductions,
+  record payment) is triggered BY the admin. Notifying the admin about
+  their own actions is noise.
+
+  The employee-facing events (PAYSLIP_FINALIZED, PAYMENT_RECORDED) are
+  one-way — from admin's action to employee's bell. The admin knows
+  what they just did and doesn't need a bell entry for it.
+
+  If a future requirement appears to alert the admin about payroll
+  exceptions (e.g. generation errors, failed bulk payment rows), that
+  would be a new event on the admin side. Not in v1.
+
+================================================================================
+ACCOUNTS APP
+================================================================================
+
+Admin (org owner) receives NO notifications from the Accounts app.
+
+Rationale:
+  - Password change / reset are self-directed security events. The affected
+    user is the only recipient. The admin is not in the loop (and should
+    not be — passwords are private).
+  - User management (super-admin tooling), role management, and organization
+    management are admin/super-admin actions the admin performed themselves.
+    No self-notification (same rationale as Payroll, Employees, Communications).
+  - Login / refresh-token / OTP / profile reads are silent.
+
+  Future: if "admin resets an employee's password" is added, that COULD
+  notify the employee (PASSWORD_RESET_BY_ADMIN -> employee). Not in v1 —
+  no such endpoint exists yet. Flag if added.
+
+================================================================================
+COMMUNICATIONS APP
+================================================================================
+
+Admin receives NO notifications from the Communications app.
+
+Rationale:
+  Announcements are created BY the admin (org owner). Notifying the admin
+  about their own announcement is noise — same rationale as Payroll.
+
+  Chat messages (ProjectChatSendAPIView) are explicitly silent — real-time
+  chat relies on polling, not the bell. No notification for chat.
+
+  Notification-bell CRUD (list / mark read / delete) is the bell itself.
+
+  If a future requirement appears (e.g. "another admin published an
+  announcement"), that would be a new event. Not in v1 — this is a
+  single-owner-per-org system.
+
+================================================================================

@@ -203,3 +203,82 @@ class RecurringExpenseEntryDocument(models.Model):
     def __str__(self):
         re = self.recurring_expense_entry
         return f"{re.recurring_expense.title} - {re.month}/{re.year} - {self.title or 'Document'}"
+
+
+# =========================================================
+# EMPLOYEE REIMBURSEMENT MODEL
+# =========================================================
+class EmployeeReimbursement(models.Model):
+
+    STATUS_CHOICES = [
+        ("PENDING", "Pending"),
+        ("APPROVED", "Approved"),
+        ("REJECTED", "Rejected"),
+        ("PAID", "Paid"),
+        ("CANCELLED", "Cancelled"),
+    ]
+
+    organization = models.ForeignKey("accounts.Organization", on_delete=models.PROTECT, related_name="employee_reimbursements", db_index=True)
+    employee = models.ForeignKey("employees.Employee", on_delete=models.PROTECT, related_name="employee_reimbursements")
+    project = models.ForeignKey(Project, on_delete=models.PROTECT, related_name="employee_reimbursements", blank=True, null=True)
+
+    reimbursement_number = models.CharField(max_length=30, unique=True, db_index=True)
+
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True, null=True)
+    expense_type = models.CharField(max_length=50, choices=Expense.EXPENSE_TYPE_CHOICES, db_index=True)
+    amount = models.DecimalField(max_digits=15, decimal_places=2)
+    expense_date = models.DateField()
+
+    payee_upi_id = models.CharField(max_length=100, blank=True, null=True)
+
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="PENDING", db_index=True)
+
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="employee_reimbursements_reviewed")
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    review_notes = models.TextField(blank=True, null=True)
+    rejection_reason = models.TextField(blank=True, null=True)
+
+    payment_date = models.DateField(null=True, blank=True)
+    payment_method = models.CharField(max_length=30, choices=Expense.PAYMENT_METHOD_CHOICES, null=True, blank=True)
+    payment_reference = models.CharField(max_length=100, null=True, blank=True)
+    paid_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="employee_reimbursements_paid")
+
+    is_active = models.BooleanField(default=True, db_index=True)
+
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="employee_reimbursements_created")
+    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="employee_reimbursements_updated")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "employee_reimbursements"
+        ordering = ["-expense_date", "-created_at"]
+        indexes = [
+            models.Index(fields=["organization", "status", "created_at"]),
+            models.Index(fields=["employee", "status"]),
+        ]
+
+    def __str__(self):
+        return f"{self.reimbursement_number} - {self.title}"
+
+
+# =========================================================
+# EMPLOYEE REIMBURSEMENT DOCUMENT MODEL
+# =========================================================
+class EmployeeReimbursementDocument(models.Model):
+    reimbursement = models.ForeignKey(EmployeeReimbursement, on_delete=models.CASCADE, related_name="documents")
+    title = models.CharField(max_length=200, blank=True, null=True)
+    file = models.FileField(upload_to="expenses/reimbursements/documents/", null=True, blank=True)
+    description = models.TextField(blank=True, null=True)
+    uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="reimbursement_documents_uploaded")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "employee_reimbursement_documents"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.reimbursement.reimbursement_number} - {self.title or 'Document'}"
+

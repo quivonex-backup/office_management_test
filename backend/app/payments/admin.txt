@@ -1,0 +1,824 @@
+================================================================================
+PAYMENTS APP — ADMIN API REFERENCE
+================================================================================
+
+Base URL   : /
+Method     : All endpoints are POST
+Auth       : Bearer token (IsAuthenticated)
+Envelope   : { "status": true|false, "message": "...", "data": {...}?, "errors": {...}? }
+
+Organization context:
+  - All endpoints are scoped to the caller's organization.
+  - Do NOT send organization_id — it is ignored.
+  - A payment tied to another org's project returns 404, never 403.
+
+Who uses this document:
+  - Organization owner (Admin role)
+  - Any org member with Admin-level access
+
+This app has NO employee-side surface. All 10 endpoints are admin-only.
+
+
+================================================================================
+BOOTSTRAP ORDER — READ FIRST
+================================================================================
+
+  1. Create a client           (/clients/ — separate app)
+  2. Create a project          (/projects/ — separate app)
+  3. Create payment plan       (/project/payment-create/)
+  4. Record money received     (/project/transaction/create/)
+  5. (Optional) Update / cancel
+  6. (Optional) Send reminders (/payment-reminder/)
+  7. (Optional) Download PDF   (/project-invoice/pdf-download/)
+
+  Payments REQUIRE a valid project, which requires a valid client.
+  A project's payment plan cannot exceed the project's total_cost.
+
+
+================================================================================
+SECTION 1 — PROJECT PAYMENTS
+================================================================================
+
+--------------------------------------------------------------------------------
+1.1  POST /payments/project/payment-create/
+--------------------------------------------------------------------------------
+Purpose : Create a payment plan (advance or installment) on a project
+Type    : multipart/form-data (accepts document file uploads)
+
+Request :
+{
+  "project": 12,                    // required, project id (must be in caller's org)
+  "payment_type": "ADVANCE",        // required: ADVANCE | INSTALLMENT
+  "installment_number": null,       // optional; auto-assigned if omitted for INSTALLMENT
+  "title": "Advance payment",       // optional, max 200 chars
+  "amount": "100000.00",            // required, > 0
+  "due_date": "2026-06-01",         // optional, YYYY-MM-DD
+  "notes": "50% advance",           // optional
+  "documents": [<file1>, <file2>]   // optional, multiple
+}
+
+Response 201:
+{
+  "status": true,
+  "message": "Project payment created successfully.",
+  "data": {
+    "id": 50,
+    "project": 12,
+    "project_name": "Website Revamp",
+    "project_total_cost": "250000.00",
+    "payment_type": "ADVANCE",
+    "installment_number": null,
+    "title": "Advance payment",
+    "amount": "100000.00",
+    "paid_amount": "0.00",
+    "outstanding_amount": "100000.00",
+    "due_date": "2026-06-01",
+    "paid_date": null,
+    "status": "PENDING",
+    "notes": "50% advance",
+    "transactions": [],
+    "documents": [
+      { "id": 201, "title": "invoice.pdf", "file": "projects/payments/documents/invoice.pdf", "description": null, "created_at": "..." }
+    ],
+    "is_active": true,
+    "created_at": "...",
+    "updated_at": "..."
+  }
+}
+
+Response 400 (missing project):
+{ "status": false, "message": "project is required." }
+
+Response 400 (validation):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": {
+    "amount": ["Amount must be greater than zero."]
+  }
+}
+
+Response 400 (advance already exists):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": {
+    "payment_type": ["Advance payment already exists for this project."]
+  }
+}
+
+Response 400 (installment number duplicate):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": {
+    "installment_number": ["This installment number already exists for this project."]
+  }
+}
+
+Response 400 (exceeds project total cost):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": {
+    "amount": ["Payment amount exceeds the remaining project amount. Maximum allowed amount is 150000.00."]
+  }
+}
+
+Response 404 (project not found or another org):
+{ "status": false, "message": "Project not found in the selected organization." }
+
+Notes:
+  - A project can have exactly ONE advance payment (enforced).
+  - For INSTALLMENT type: if installment_number is omitted, the backend
+    auto-assigns next number (last_installment + 1, starting at 1).
+  - The sum of all non-cancelled payment amounts for the project cannot
+    exceed project.total_cost. The remaining-allowed value is shown in
+    the error message when exceeded.
+  - documents uploads each file to S3 and creates a ProjectPaymentDocument.
+  - Status starts as PENDING. It moves to PARTIALLY_PAID/PAID/OVERDUE
+    automatically based on transactions (via recalculate_project_payment).
+
+
+--------------------------------------------------------------------------------
+1.2  POST /payments/project/payment-list/
+--------------------------------------------------------------------------------
+Purpose : List all payments (org-wide) with filters
+Request (all optional):
+{
+  "project_id": 12,
+  "payment_type": "INSTALLMENT",    // ADVANCE | INSTALLMENT
+  "status": "PENDING",              // PENDING | PARTIALLY_PAID | PAID | OVERDUE | CANCELLED
+  "installment_number": 1,
+  "search": "acme"                  // matches project_name, title, or any transaction reference
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Project payments fetched successfully.",
+  "data": [
+    {
+      "id": 50,
+      "project": 12,
+      "project_name": "Website Revamp",
+      "payment_type": "INSTALLMENT",
+      "installment_number": 1,
+      "title": "First installment",
+      "amount": "50000.00",
+      "paid_amount": "50000.00",
+      "outstanding_amount": "0.00",
+      "due_date": "2026-06-01",
+      "paid_date": "2026-05-28",
+      "status": "PAID",
+      "notes": null,
+      "transactions": [
+        {
+          "id": 100, "amount": "50000.00", "payment_method": "UPI",
+          "transaction_date": "2026-05-28", "reference_number": null,
+          "utr_number": "ABC123456", "bank_name": null, "cheque_number": null,
+          "cheque_date": null, "gateway_transaction_id": null,
+          "gateway_order_id": null, "status": "SUCCESS",
+          "notes": null, "received_by": 2, "created_at": "..."
+        }
+      ],
+      "documents": [],
+      "is_active": true,
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  ]
+}
+
+Notes:
+  - Only active payments on active projects within the caller's org.
+  - Search covers project_name, title, and transaction reference fields
+    (reference_number, utr_number, cheque_number, gateway_transaction_id).
+  - "transactions" and "documents" are embedded in each list row —
+    NOTE: this can be heavy on large lists. Filter by project_id or status
+    to keep response small.
+  - Ordering: project_id, payment_type, installment_number, -created_at.
+  - No pagination.
+
+
+--------------------------------------------------------------------------------
+1.3  POST /payments/project/payment-detail/
+--------------------------------------------------------------------------------
+Purpose : Full detail of one payment
+Request :
+{
+  "payment_id": 50
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Project payment details fetched successfully.",
+  "data": {
+    "id": 50,
+    "project": 12,
+    "project_name": "Website Revamp",
+    "project_total_cost": "250000.00",
+    "payment_type": "INSTALLMENT",
+    "installment_number": 1,
+    "title": "First installment",
+    "amount": "50000.00",
+    "paid_amount": "50000.00",
+    "outstanding_amount": "0.00",
+    "due_date": "2026-06-01",
+    "paid_date": "2026-05-28",
+    "status": "PAID",
+    "notes": null,
+    "transactions": [ { ...full transaction... } ],
+    "documents": [ { ...full document... } ],
+    "is_active": true,
+    "created_at": "...",
+    "updated_at": "..."
+  }
+}
+
+Response 400 (missing param):
+{ "status": false, "message": "payment_id is required." }
+
+Response 404 (not found / inactive / another org):
+{ "status": false, "message": "Project payment not found." }
+
+
+--------------------------------------------------------------------------------
+1.4  POST /payments/project/payment-update/
+--------------------------------------------------------------------------------
+Purpose : Update payment details (partial)
+Type    : multipart/form-data (accepts document file uploads)
+
+Request (all optional):
+{
+  "payment_id": 50,                       // required
+  "installment_number": 2,
+  "title": "Updated title",
+  "amount": "60000.00",
+  "due_date": "2026-07-01",
+  "notes": "Extended",
+  "delete_document_ids": [201],           // optional list of document ids
+  "documents": [<newfile>]                // optional new files to ADD
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Project payment updated successfully.",
+  "data": { ...full detail serializer with recalculated paid/outstanding/status... }
+}
+
+Response 400 (missing payment_id):
+{ "status": false, "message": "payment_id is required." }
+
+Response 400 (validation):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": { "installment_number": ["This installment number already exists for this project."] }
+}
+
+Response 400 (amount below already received):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": { "amount": ["Amount cannot be less than the already received amount of 50000.00."] }
+}
+
+Response 400 (exceeds project total):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": { "amount": ["Payment amount exceeds the remaining project amount. Maximum allowed amount is ..."] }
+}
+
+Response 404 (not found):
+{ "status": false, "message": "Project payment not found." }
+
+Notes:
+  - Cannot update a CANCELLED payment (view 404s before reaching the
+    serializer; if reached, the serializer rejects it).
+  - installment_number for INSTALLMENT: validated for uniqueness against
+    other active non-cancelled installments on the same project.
+  - installment_number for ADVANCE: must remain null (the serializer
+    rejects a non-null value for ADVANCE).
+  - Cannot reduce "amount" below paid_amount (already received). The
+    recalculate_project_payment runs after save, so paid/outstanding/status
+    are always consistent with transactions after any amount change.
+  - delete_document_ids: ids must belong to this payment; otherwise 400.
+    Documents are removed from S3 AND the DB.
+  - new "documents" files are appended — they do not replace old ones.
+
+
+--------------------------------------------------------------------------------
+1.5  POST /payments/project/payment-cancel/
+--------------------------------------------------------------------------------
+Purpose : Cancel a payment plan (only if no money has been received)
+Request :
+{
+  "payment_id": 50
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Project payment cancelled successfully."
+}
+
+Response 400 (missing param):
+{ "status": false, "message": "payment_id is required." }
+
+Response 400 (already cancelled):
+{ "status": false, "message": "Payment is already cancelled." }
+
+Response 400 (paid_amount > 0):
+{
+  "status": false,
+  "message": "A payment with received amount cannot be cancelled."
+}
+
+Response 404 (not found):
+{ "status": false, "message": "Project payment not found." }
+
+Notes:
+  - Sets is_active=False AND status="CANCELLED" together.
+  - Blocked if ANY transaction with status=SUCCESS has been recorded.
+    Refund or cancel the SUCCESS transactions first (via 2.2 below)
+    — then the paid_amount drops to 0 and this endpoint becomes callable.
+  - Cancelled payments disappear from lists (filter is_active=True).
+  - Deactivated payments are excluded from project-total validation on
+    create/update of OTHER payments.
+
+
+================================================================================
+SECTION 2 — PAYMENT TRANSACTIONS (ACTUAL MONEY RECEIVED)
+================================================================================
+
+--------------------------------------------------------------------------------
+2.1  POST /payments/project/transaction/create/
+--------------------------------------------------------------------------------
+Purpose : Record money received against a payment plan
+Request (payment_method specific fields are conditional):
+{
+  "payment_id": 50,                 // required
+  "amount": "25000.00",             // required, > 0, <= outstanding
+  "payment_method": "UPI",          // required: CASH | BANK_TRANSFER | UPI | CHEQUE | CARD | ONLINE | OTHER
+  "transaction_date": "2026-05-20", // required, YYYY-MM-DD, cannot be in the future
+  "utr_number": "ABC123456",        // required for UPI, BANK_TRANSFER
+  "bank_name": "HDFC Bank",         // required for BANK_TRANSFER, CHEQUE
+  "cheque_number": "123456",        // required for CHEQUE
+  "cheque_date": "2026-05-19",      // required for CHEQUE, cannot be in future
+  "gateway_transaction_id": "txn_abc",  // required for CARD, ONLINE
+  "gateway_order_id": "order_xyz",      // optional (CARD / ONLINE)
+  "reference_number": "RCV-001",    // required for CASH, OTHER
+  "notes": "Partial payment"        // optional
+}
+
+Response 201:
+{
+  "status": true,
+  "message": "Payment transaction added successfully.",
+  "data": { ...full payment detail with the new transaction in transactions[]... }
+}
+
+Payment method validation matrix (backend enforces):
+  CASH          -> reference_number required
+  BANK_TRANSFER -> utr_number AND bank_name required
+  UPI           -> utr_number required
+  CHEQUE        -> cheque_number, cheque_date, bank_name required;
+                   cheque_date cannot be in the future
+  CARD          -> gateway_transaction_id required
+  ONLINE        -> gateway_transaction_id required
+  OTHER         -> reference_number required
+
+Response 400 (validation):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": {
+    "amount": ["Transaction amount cannot exceed the outstanding amount of 25000.00."]
+  }
+}
+
+Response 400 (transaction date in future):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": { "transaction_date": ["Transaction date cannot be in the future."] }
+}
+
+Response 400 (payment cancelled):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": { "payment": ["Cancelled payment cannot receive a transaction."] }
+}
+
+Response 400 (payment inactive):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": { "payment": ["This payment is inactive."] }
+}
+
+Response 404 (payment not found):
+{ "status": false, "message": "Project payment not found." }
+
+Notes:
+  - transaction_date is the date the money ACTUALLY moved, not today's
+    date. Backdated transactions are allowed (up to the current day).
+  - amount cannot exceed (payment.amount - sum of existing SUCCESS
+    transactions). The backend computes remaining as the hard cap.
+  - New transaction is created with status="SUCCESS" automatically
+    (there is no option to create a PENDING or FAILED transaction via
+    this endpoint).
+  - After create, recalculate_project_payment runs:
+      * paid_amount updated
+      * outstanding_amount updated
+      * status auto-set to PAID / PARTIALLY_PAID / OVERDUE / PENDING
+      * paid_date set if fully paid
+    The response already contains the recalculated payment record.
+
+
+--------------------------------------------------------------------------------
+2.2  POST /payments/project/transaction/update/
+--------------------------------------------------------------------------------
+Purpose : Mark a SUCCESS transaction as REFUNDED or CANCELLED
+Request :
+{
+  "transaction_id": 100,            // required
+  "status": "REFUNDED",             // required: REFUNDED | CANCELLED
+  "notes": "Customer requested refund"    // optional
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Payment transaction updated successfully.",
+  "data": { ...payment detail with recalculated paid/outstanding/status... }
+}
+
+Response 400 (missing param):
+{ "status": false, "message": "transaction_id is required." }
+
+Response 400 (invalid transition):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": {
+    "status": ["A successful transaction can only be changed to REFUNDED or CANCELLED."]
+  }
+}
+
+Response 400 (already closed):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": {
+    "status": ["This transaction is already closed and cannot be updated."]
+  }
+}
+
+Response 404 (not found / another org / payment inactive):
+{ "status": false, "message": "Payment transaction not found." }
+
+Notes:
+  - Only SUCCESS → REFUNDED or SUCCESS → CANCELLED transitions are allowed.
+  - REFUNDED, CANCELLED, and FAILED are terminal — cannot be changed.
+  - After update, recalculate_project_payment re-derives paid_amount,
+    outstanding_amount, status, and paid_date from SUCCESS transactions
+    only. So refunding drops paid_amount, restores outstanding_amount,
+    and possibly flips status back to PENDING/PARTIALLY_PAID/OVERDUE.
+  - Use this to undo a SUCCESS transaction before cancelling a payment
+    plan (endpoint 1.5 blocks cancel if paid_amount > 0).
+
+
+================================================================================
+SECTION 3 — AGGREGATED VIEW (PAYMENTS BY PROJECT)
+================================================================================
+
+--------------------------------------------------------------------------------
+3.1  POST /payments/project/payments-details-by-project/
+--------------------------------------------------------------------------------
+Purpose : Get all payments + transactions for one project in a single call
+Request :
+{
+  "project_id": 12
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Project payments and transactions fetched successfully.",
+  "data": {
+    "project": {
+      "id": 12,
+      "project_name": "Website Revamp",
+      "total_cost": "250000.00"
+    },
+    "payments": [ { ...full detail per payment... } ]
+  }
+}
+
+Response 400 (missing param):
+{ "status": false, "message": "project_id is required." }
+
+Response 404 (project not found / not in org / inactive):
+{ "status": false, "message": "Project not found." }
+
+Notes:
+  - Used by the project detail screen to show the full payment ledger
+    for a single project.
+  - "payments" array uses ProjectPaymentDetailSerializer — each item
+    includes embedded transactions and documents.
+  - Ordering: payment_type (ADVANCE before INSTALLMENT), then
+    installment_number, then -created_at.
+
+
+================================================================================
+SECTION 4 — REMINDERS & INVOICES
+================================================================================
+
+--------------------------------------------------------------------------------
+4.1  POST /payments/payment-reminder/
+--------------------------------------------------------------------------------
+Purpose : Send payment reminder emails to clients for selected projects
+Type    : application/json (no file uploads)
+
+Request :
+{
+  "project_ids": [12, 13],              // required, non-empty list of ints, no duplicates
+  "include_transaction_history": false  // optional, default false
+}
+
+Response 200 (all emails sent):
+{
+  "status": true,
+  "message": "Payment reminder emails sent successfully.",
+  "data": {
+    "total_clients": 2,
+    "total_emails_sent": 2,
+    "total_projects": 2,
+    "include_transaction_history": false,
+    "summary": {
+      "total_amount": "500000.00",
+      "total_paid": "200000.00",
+      "total_outstanding": "300000.00",
+      "total_overdue": "100000.00"
+    },
+    "successful_clients": [
+      {
+        "organization_id": 1,
+        "organization_name": "Acme Corp",
+        "client_id": 5,
+        "client_name": "Acme Ltd",
+        "email": "billing@acme.com",
+        "project_ids": [12],
+        "total_projects": 1,
+        "total_amount": "250000.00",
+        "total_paid": "100000.00",
+        "total_outstanding": "150000.00",
+        "total_overdue": "0.00"
+      }
+    ],
+    "failed_clients": []
+  }
+}
+
+Response 200 (partial failures):
+{
+  "status": true,
+  "message": "Payment reminder emails processed with some failures.",
+  "data": { ...same shape, with failed_clients populated... }
+}
+
+Response 400 (validation):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": {
+    "project_ids": ["Duplicate project IDs are not allowed."]
+  }
+}
+
+Response 403 (project not in caller's org):
+{
+  "status": false,
+  "message": "You do not have access to one or more selected projects.",
+  "errors": {
+    "project_ids": ["Project ID 13 is not accessible."]
+  }
+}
+
+Response 404 (no projects found):
+{ "status": false, "message": "No accessible active projects were found." }
+
+Response 500 (all sends failed):
+{
+  "status": false,
+  "message": "No payment reminder emails were sent successfully.",
+  "data": {
+    "total_clients": 2,
+    "total_emails_sent": 0,
+    "successful_clients": [],
+    "failed_clients": [ { ...reasons... } ]
+  }
+}
+
+Notes:
+  - Emails are grouped by (organization, client). One email per client
+    even if multiple selected projects belong to them.
+  - The email is HTML, branded with the org's logo and contact details.
+  - "include_transaction_history": true embeds a per-transaction table
+    in the email (date, payment_for, method, amount, reference).
+  - A client without an email address is reported in failed_clients
+    with reason "Client does not have an email address."
+  - A client with no active payments on the selected projects is
+    reported in failed_clients with a "No active payment plans" reason.
+  - This is the ONLY endpoint that sends external emails in this app.
+
+
+--------------------------------------------------------------------------------
+4.2  POST /payments/project-invoice/pdf-download/
+--------------------------------------------------------------------------------
+Purpose : Generate and download a PDF invoice for a project
+Type    : application/json (response is application/pdf)
+
+Request :
+{
+  "project_id": 12
+}
+
+Response 200 (success): raw PDF bytes
+Headers:
+  Content-Type        : application/pdf
+  Content-Disposition : attachment; filename="<invoice_number>.pdf"
+Body: PDF binary — NOT the standard JSON envelope.
+
+Response 400 (missing or invalid project_id):
+{ "status": false, "message": "The 'project_id' field is required." }
+{ "status": false, "message": "project_id must be a valid integer." }
+
+Response 404 (project not found / not in org / inactive):
+{ "status": false, "message": "Project not found or you do not have permission to access it." }
+
+Response 500 (PDF generation error):
+{
+  "status": false,
+  "message": "An error occurred while generating the invoice PDF.",
+  "error": "<server error detail>"
+}
+
+Notes:
+  - Successful response is a BINARY download, not JSON. The UI must
+    handle the content-type and stream/save the file.
+  - invoice_number is derived from the project's project_code.
+  - The PDF includes organization branding (logo, address, GST, etc.),
+    the payment schedule, and any SUCCESS transactions.
+  - The invoice reflects ONLY non-cancelled active payments.
+
+
+================================================================================
+QUICK REFERENCE — ADMIN ENDPOINTS
+================================================================================
+
+PROJECT PAYMENTS (5)
+  POST /payments/project/payment-create/
+  POST /payments/project/payment-list/
+  POST /payments/project/payment-detail/
+  POST /payments/project/payment-update/
+  POST /payments/project/payment-cancel/
+
+PAYMENT TRANSACTIONS (2)
+  POST /payments/project/transaction/create/
+  POST /payments/project/transaction/update/
+
+AGGREGATED VIEW (1)
+  POST /payments/project/payments-details-by-project/
+
+REMINDERS & INVOICES (2)
+  POST /payments/payment-reminder/
+  POST /payments/project-invoice/pdf-download/
+
+TOTAL ADMIN ENDPOINTS: 10
+
+
+================================================================================
+ENUMS — FOR UI MAPPING
+================================================================================
+
+PAYMENT_TYPE:
+  ADVANCE | INSTALLMENT
+
+PAYMENT_STATUS:
+  PENDING | PARTIALLY_PAID | PAID | OVERDUE | CANCELLED
+
+TRANSACTION_STATUS:
+  SUCCESS | PENDING | FAILED | CANCELLED | REFUNDED
+  (only SUCCESS counts toward paid_amount)
+
+PAYMENT_METHOD:
+  CASH | BANK_TRANSFER | UPI | CHEQUE | CARD | ONLINE | OTHER
+
+
+================================================================================
+COMMON ERROR SHAPES
+================================================================================
+
+Validation (400):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": { "field": ["..."] }
+}
+
+Business rule (400):
+{ "status": false, "message": "Human-readable message." }
+
+Not found (404):
+{ "status": false, "message": "Project payment not found." }
+
+Forbidden / access (403, reminder only):
+{
+  "status": false,
+  "message": "You do not have access to one or more selected projects.",
+  "errors": { "project_ids": ["..."] }
+}
+
+Server error (500):
+{ "status": false, "message": "..." }
+
+
+================================================================================
+KEY NOTES FOR FRONTEND / UI DESIGNER
+================================================================================
+
+1. THIS APP IS ADMIN-ONLY.
+   Every endpoint is an admin operation on the org's project billing.
+   No employee or client-portal surface.
+
+2. PAYMENT vs TRANSACTION.
+   - ProjectPayment = the PLAN (what is expected).
+     e.g. "Installment 1: ₹50,000 due 2026-06-01"
+   - ProjectPaymentTransaction = ACTUAL money received.
+     e.g. "UPI ₹25,000 on 2026-05-20, UTR ABC123"
+   One payment has zero or more transactions. paid_amount = sum of
+   SUCCESS transactions. status and paid_date are DERIVED from
+   transactions (see recalculate logic).
+
+3. AMOUNT CAPS ARE ENFORCED.
+   - Payment plan total (sum of non-cancelled payments) <= project.total_cost.
+   - Transaction amount <= (payment.amount - existing SUCCESS amounts).
+   The error messages show the exact remaining value.
+
+4. PAYMENT METHOD DRIVES REQUIRED FIELDS.
+   Frontend MUST conditionally show/hide fields based on payment_method.
+   See the matrix in Section 2.1. Backend rejects missing fields with
+   per-field 400 errors.
+
+5. TRANSACTION STATUS AUTO-SUCCESS.
+   Every transaction created via /transaction/create/ is SUCCESS.
+   To record a "failed" or "pending" transaction, there is no UI path —
+   this backend assumes successful money-in. Refunds are done via
+   /transaction/update/ (SUCCESS → REFUNDED).
+
+6. CANCEL REQUIRES ZERO RECEIVED.
+   You cannot cancel a payment plan if any SUCCESS transaction exists.
+   Refund or cancel those transactions first via /transaction/update/,
+   then cancel the plan.
+
+7. UPLOAD FIELDS.
+   - /payment-create/ and /payment-update/ accept multipart files under
+     "documents". If you send application/json, the metadata still saves
+     but files are silently dropped. Use multipart/form-data.
+   - /transaction/create/, /transaction/update/, /payment-reminder/ and
+     /project-invoice/pdf-download/ are JSON only.
+
+8. REMINDER RESPONSE CAN BE LARGE.
+   "successful_clients" and "failed_clients" arrays can carry per-client
+   detail including project_ids. For orgs with many clients, this can be
+   heavy. The admin UI should show a summary first (total_emails_sent,
+   failed count) and offer a "View details" for the full payload.
+
+9. PDF DOWNLOAD IS BINARY.
+   /project-invoice/pdf-download/ returns a PDF stream, not JSON. Handle
+   by inspecting response headers or using a blob download helper. Do
+   NOT parse the response as JSON on success.
+
+10. DOCUMENTS ARE S3 PATHS, NOT URLS.
+    "file" fields return relative paths (e.g. "projects/payments/documents/x.pdf").
+    Build the full URL via your S3/CDN helper before rendering a link.
+
+11. NO PAGINATION.
+    All list endpoints return the full filtered list. Always filter by
+    project_id, status, or a search term for large orgs.
+
+12. AMOUNT / STATUS CONSISTENCY.
+    After any create/update of a payment OR a transaction, the backend
+    re-runs recalculate_project_payment which sets:
+        paid_amount      (sum of SUCCESS transactions, capped at amount)
+        outstanding_amount (amount - paid_amount, floored at 0)
+        status            (PAID / PARTIALLY_PAID / OVERDUE / PENDING)
+        paid_date         (latest SUCCESS transaction date, or null)
+    The UI should NOT recompute these — always trust the response.

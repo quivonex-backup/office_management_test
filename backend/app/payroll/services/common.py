@@ -9,6 +9,7 @@ from datetime import date as date_type, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
 from django.db.models import Q
+from django.utils import timezone
 
 from app.audit.services import log_activity
 
@@ -159,7 +160,8 @@ def compute_cycle_period(cycle_start_day, reference=None):
         raise ValueError("cycle_start_day must be between 1 and 28.")
 
     if reference is None or reference == "current":
-        ref_date = date_type.today()
+        # ref_date = date_type.today()
+        ref_date = timezone.localdate()
         if ref_date.day >= cycle_start_day:
             period_start = ref_date.replace(day=cycle_start_day)
         else:

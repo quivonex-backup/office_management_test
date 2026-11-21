@@ -1,12 +1,13 @@
 from django.db import transaction
 from django.db.models import Q
+from django.utils import timezone
 
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Project, ProjectDocument, ProjectTeamAllocation
+from .models import Project, ProjectDocument, ProjectTeamAllocation, Task
 from .serializers import (
     ProjectCreateSerializer,
     ProjectListSerializer,
@@ -18,12 +19,49 @@ from .serializers import (
     ProjectTeamAllocationDetailSerializer,
     ProjectTeamProjectSerializer,
     ProjectTeamEmployeeSerializer,
+
+    TaskCreateSerializer,
+    TaskUpdateSerializer,
+    TaskStatusUpdateSerializer,
+    TaskListSerializer,
+    TaskDetailSerializer,
+    TaskEmployeeSerializer,
+    MyProjectDetailSerializer,
 )
-from common.services import get_user_organization
+from common.services import (
+    get_user_organization,
+    get_current_employee,
+    get_project_permission,
+    get_accessible_projects,
+)
 from common.s3_utils import upload_to_s3, delete_from_s3
 from common.code_generators import generate_project_code
+from app.communications.notification_service import notify
 from app.audit.services import log_activity
 
+
+
+def _get_project_notification_recipients(project, organization):
+    recipients = []
+    seen_user_ids = set()
+
+    if organization.owner_id and organization.owner and organization.owner.is_active:
+        recipients.append(organization.owner)
+        seen_user_ids.add(organization.owner_id)
+
+    head_allocations = project.team_allocations.filter(
+        is_project_head=True,
+        is_active=True,
+    ).select_related("employee__user")
+
+    for alloc in head_allocations:
+        emp = alloc.employee
+        if emp.user_id and emp.user_id not in seen_user_ids:
+            if emp.user and emp.user.is_active:
+                recipients.append(emp.user)
+                seen_user_ids.add(emp.user_id)
+
+    return recipients
 
 
 # =========================================================
@@ -230,7 +268,7 @@ class ProjectDetailAPIView(APIView):
                 is_active=True,
             )
             .select_related("client")
-            .prefetch_related("documents")
+            .prefetch_related("documents", "team_allocations__employee")
             .first()
         )
 
@@ -326,6 +364,16 @@ class ProjectUpdateAPIView(APIView):
                     "status": False,
                     "message": "Validation failed.",
                     "errors": serializer.errors,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        new_client = serializer.validated_data.get("client")
+        if new_client and new_client.organization_id != organization.id:
+            return Response(
+                {
+                    "status": False,
+                    "message": "Selected client does not belong to this organization.",
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
@@ -504,6 +552,49 @@ class ProjectTeamAllocationCreateAPIView(APIView):
 
     @transaction.atomic
     def post(self, request):
+        organization, error_response = get_user_organization(request)
+        if error_response:
+            return error_response
+
+        from app.employees.models import Employee
+
+        project_id = request.data.get("project")
+        employee_id = request.data.get("employee")
+
+        project = (
+            Project.objects.filter(
+                id=project_id,
+                organization=organization,
+                is_active=True,
+            ).first()
+            if project_id else None
+        )
+        if project_id and not project:
+            return Response(
+                {
+                    "status": False,
+                    "message": "Project not found in your organization.",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        employee = (
+            Employee.objects.filter(
+                id=employee_id,
+                organization=organization,
+                is_active=True,
+            ).first()
+            if employee_id else None
+        )
+        if employee_id and not employee:
+            return Response(
+                {
+                    "status": False,
+                    "message": "Employee not found in your organization.",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
         serializer = ProjectTeamAllocationSerializer(
             data=request.data
         )
@@ -542,9 +633,30 @@ class ProjectTeamAllocationCreateAPIView(APIView):
                 "start_date": allocation.start_date,
                 "end_date": allocation.end_date,
                 "notes": allocation.notes,
+                "is_project_head": allocation.is_project_head,
                 "is_active": allocation.is_active,
             },
         )
+
+        # ---- Notify employee of project allocation ----
+        if allocation.employee.user_id:
+            transaction.on_commit(lambda: notify(
+                users=allocation.employee.user,
+                event_code="PROJECT_TEAM_ALLOCATED",
+                title="Added to a project",
+                body=(
+                    f"You have been added to project "
+                    f"'{allocation.project.project_name}'"
+                    + (
+                        f" as {allocation.project_role}."
+                        if allocation.project_role
+                        else "."
+                    )
+                ),
+                reference_type="project",
+                reference_id=allocation.project_id,
+                priority="NORMAL",
+            ))
 
         return Response(
             {
@@ -790,6 +902,7 @@ class ProjectTeamAllocationUpdateAPIView(APIView):
             "start_date": allocation.start_date,
             "end_date": allocation.end_date,
             "notes": allocation.notes,
+            "is_project_head": allocation.is_project_head,
             "is_active": allocation.is_active,
         }
 
@@ -821,6 +934,7 @@ class ProjectTeamAllocationUpdateAPIView(APIView):
             "start_date": allocation.start_date,
             "end_date": allocation.end_date,
             "notes": allocation.notes,
+            "is_project_head": allocation.is_project_head,
             "is_active": allocation.is_active,
         }
 
@@ -911,6 +1025,7 @@ class ProjectTeamAllocationDeactivateAPIView(APIView):
             "start_date": allocation.start_date,
             "end_date": allocation.end_date,
             "notes": allocation.notes,
+            "is_project_head": allocation.is_project_head,
             "is_active": allocation.is_active,
         }
 
@@ -943,6 +1058,7 @@ class ProjectTeamAllocationDeactivateAPIView(APIView):
                 "start_date": allocation.start_date,
                 "end_date": allocation.end_date,
                 "notes": allocation.notes,
+                "is_project_head": allocation.is_project_head,
                 "is_active": allocation.is_active,
             },
         )
@@ -1032,6 +1148,25 @@ class ProjectTeamAPIView(APIView):
             ),
         )
 
+        head_alloc = next(
+            (a for a in allocations if a.is_project_head),
+            None,
+        )
+        project_head = None
+        if head_alloc:
+            emp = head_alloc.employee
+            project_head = {
+                "allocation_id": head_alloc.id,
+                "employee_id": emp.id,
+                "employee_code": emp.employee_code,
+                "name": (
+                    f"{emp.first_name} "
+                    f"{emp.middle_name or ''} "
+                    f"{emp.last_name}"
+                ).replace("  ", " ").strip(),
+                "project_role": head_alloc.project_role,
+            }
+
         return Response(
             {
                 "status": True,
@@ -1051,6 +1186,7 @@ class ProjectTeamAPIView(APIView):
                         "status": project.status,
                         "priority": project.priority,
                     },
+                    "project_head": project_head,
                     "team_count": allocations.count(),
                     "team": serializer.data,
                 },
@@ -1155,6 +1291,1100 @@ class EmployeeProjectsAPIView(APIView):
                     },
                     "project_count": allocations.count(),
                     "projects": serializer.data,
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+# =========================================================
+# ASSIGN PROJECT HEAD
+# =========================================================
+class ProjectHeadAssignAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request):
+        organization, error_response = get_user_organization(request)
+        if error_response:
+            return error_response
+
+        allocation_id = request.data.get("allocation_id")
+        if not allocation_id:
+            return Response(
+                {
+                    "status": False,
+                    "message": "allocation_id is required.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        allocation = (
+            ProjectTeamAllocation.objects
+            .select_for_update()
+            .filter(
+                id=allocation_id,
+                project__organization=organization,
+                project__is_active=True,
+                is_active=True,
+            )
+            .select_related("project", "employee")
+            .first()
+        )
+
+        if not allocation:
+            return Response(
+                {
+                    "status": False,
+                    "message": "Active team allocation not found for this project.",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if allocation.is_project_head:
+            return Response(
+                {
+                    "status": True,
+                    "message": "This employee is already the project head.",
+                    "data": ProjectTeamAllocationDetailSerializer(
+                        allocation,
+                        context={"request": request},
+                    ).data,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        previous_head = (
+            ProjectTeamAllocation.objects
+            .select_for_update()
+            .filter(
+                project=allocation.project,
+                is_project_head=True,
+                is_active=True,
+            )
+            .exclude(pk=allocation.pk)
+            .first()
+        )
+
+        if previous_head:
+            previous_head.is_project_head = False
+            previous_head.save(update_fields=["is_project_head", "updated_at"])
+
+        allocation.is_project_head = True
+        allocation.save(update_fields=["is_project_head", "updated_at"])
+
+        log_activity(
+            request=request,
+            action="UPDATE",
+            module="PROJECT_TEAM",
+            object_type="ProjectTeamAllocation",
+            object_id=allocation.id,
+            description=(
+                f"Project head set to '{allocation.employee.employee_code}' "
+                f"for project '{allocation.project.project_name}'."
+            ),
+            old_data={
+                "previous_head_allocation_id": (
+                    previous_head.id if previous_head else None
+                ),
+                "previous_head_employee_id": (
+                    previous_head.employee_id if previous_head else None
+                ),
+            },
+            new_data={
+                "project": allocation.project_id,
+                "allocation_id": allocation.id,
+                "employee_id": allocation.employee_id,
+                "is_project_head": True,
+            },
+        )
+
+        # ---- Notify new head ----
+        if allocation.employee.user_id:
+            transaction.on_commit(lambda: notify(
+                users=allocation.employee.user,
+                event_code="PROJECT_HEAD_ASSIGNED",
+                title="You are now a project head",
+                body=(
+                    f"You have been assigned as the head of "
+                    f"'{allocation.project.project_name}'."
+                ),
+                reference_type="project",
+                reference_id=allocation.project_id,
+                priority="HIGH",
+            ))
+
+        # ---- Notify demoted previous head ----
+        if previous_head and previous_head.employee.user_id:
+            transaction.on_commit(lambda: notify(
+                users=previous_head.employee.user,
+                event_code="PROJECT_HEAD_REVOKED",
+                title="Project head role reassigned",
+                body=(
+                    f"You are no longer the head of "
+                    f"'{previous_head.project.project_name}'. "
+                    f"You remain on the team."
+                ),
+                reference_type="project",
+                reference_id=previous_head.project_id,
+                priority="NORMAL",
+            ))
+
+        return Response(
+            {
+                "status": True,
+                "message": "Project head assigned successfully.",
+                "data": ProjectTeamAllocationDetailSerializer(
+                    allocation,
+                    context={"request": request},
+                ).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+# =========================================================
+# EMPLOYEE — MY PROJECTS
+# =========================================================
+class MyProjectsAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        employee, error_response = get_current_employee(request)
+        if error_response:
+            return error_response
+
+        allocations = (
+            ProjectTeamAllocation.objects
+            .filter(
+                employee=employee,
+                is_active=True,
+                project__is_active=True,
+            )
+            .select_related("project", "project__client")
+            .order_by("-created_at")
+        )
+
+        serializer = ProjectTeamEmployeeSerializer(
+            allocations,
+            many=True,
+            context={"request": request},
+        )
+
+        return Response(
+            {
+                "status": True,
+                "message": "My projects fetched successfully.",
+                "data": {
+                    "project_count": allocations.count(),
+                    "projects": serializer.data,
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+# =========================================================
+# EMPLOYEE — MY PROJECTS AS HEAD
+# =========================================================
+class MyProjectsAsHeadAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        employee, error_response = get_current_employee(request)
+        if error_response:
+            return error_response
+
+        allocations = (
+            ProjectTeamAllocation.objects
+            .filter(
+                employee=employee,
+                is_active=True,
+                is_project_head=True,
+                project__is_active=True,
+            )
+            .select_related("project", "project__client")
+            .order_by("-created_at")
+        )
+
+        serializer = ProjectTeamEmployeeSerializer(
+            allocations,
+            many=True,
+            context={"request": request},
+        )
+
+        return Response(
+            {
+                "status": True,
+                "message": "Projects headed by you fetched successfully.",
+                "data": {
+                    "project_count": allocations.count(),
+                    "projects": serializer.data,
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+# =========================================================
+# EMPLOYEE — MY PROJECT DETAIL
+# =========================================================
+class MyProjectDetailAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        employee, error_response = get_current_employee(request)
+        if error_response:
+            return error_response
+
+        project_id = request.data.get("project_id")
+        if not project_id:
+            return Response(
+                {"status": False, "message": "project_id is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Must be allocated to this project.
+        allocated = ProjectTeamAllocation.objects.filter(
+            project_id=project_id,
+            employee=employee,
+            is_active=True,
+            project__is_active=True,
+        ).exists()
+
+        if not allocated:
+            return Response(
+                {
+                    "status": False,
+                    "message": "Project not found or you are not allocated to it.",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        project = (
+            Project.objects
+            .filter(id=project_id, is_active=True)
+            .select_related("client")
+            .prefetch_related("documents", "team_allocations__employee")
+            .first()
+        )
+
+        serializer = MyProjectDetailSerializer(
+            project,
+            context={"request": request},
+        )
+
+        return Response(
+            {
+                "status": True,
+                "message": "Project detail fetched successfully.",
+                "data": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+# =========================================================
+# TASK — CREATE
+# =========================================================
+class TaskCreateAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request):
+        organization, error_response = get_user_organization(request)
+        if error_response:
+            return error_response
+
+        project_id = request.data.get("project")
+        permission, project, _allocation, err = get_project_permission(
+            request, project_id
+        )
+        if err:
+            return err
+
+        if permission not in ("ADMIN", "HEAD"):
+            return Response(
+                {
+                    "status": False,
+                    "message": "Only the project head or organization admin can create tasks.",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if project.organization_id != organization.id:
+            return Response(
+                {
+                    "status": False,
+                    "message": "Project not found in your organization.",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = TaskCreateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                {
+                    "status": False,
+                    "message": "Validation failed.",
+                    "errors": serializer.errors,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        task = serializer.save(
+            organization=project.organization,
+            status="TODO",
+            created_by=request.user,
+            updated_by=request.user,
+        )
+
+        log_activity(
+            request=request,
+            action="CREATE",
+            module="TASK",
+            object_type="Task",
+            object_id=task.id,
+            description=f"Task '{task.title}' created in project '{project.project_name}'.",
+            new_data={
+                "project": task.project_id,
+                "organization_id": task.organization_id,
+                "title": task.title,
+                "description": task.description,
+                "priority": task.priority,
+                "assigned_to": task.assigned_to_id,
+                "due_date": task.due_date,
+                "estimated_hours": (
+                    str(task.estimated_hours)
+                    if task.estimated_hours is not None
+                    else None
+                ),
+                "status": task.status,
+            },
+        )
+
+        # ---- Notify assignee of new task ----
+        if task.assigned_to_id and task.assigned_to.user_id:
+            transaction.on_commit(lambda: notify(
+                users=task.assigned_to.user,
+                event_code="TASK_ASSIGNED",
+                title="New task assigned",
+                body=(
+                    f"You have been assigned '{task.title}' "
+                    f"in '{task.project.project_name}'"
+                    + (
+                        f" (due {task.due_date})."
+                        if task.due_date
+                        else "."
+                    )
+                ),
+                reference_type="task",
+                reference_id=task.id,
+                priority="HIGH",
+            ))
+
+        return Response(
+            {
+                "status": True,
+                "message": "Task created successfully.",
+                "data": TaskDetailSerializer(
+                    task, context={"request": request}
+                ).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+# =========================================================
+# TASK — LIST (supports {} for all accessible projects)
+# =========================================================
+class TaskListAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        project_id = request.data.get("project_id")
+
+        # ---- Single-project mode (existing behaviour) ----
+        if project_id:
+            permission, project, _allocation, err = get_project_permission(
+                request, project_id
+            )
+            if err:
+                return err
+
+            if permission not in ("ADMIN", "HEAD"):
+                return Response(
+                    {
+                        "status": False,
+                        "message": (
+                            "Only the project head or organization admin "
+                            "can view the task list."
+                        ),
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            tasks = Task.objects.filter(
+                project=project,
+                is_active=True,
+            )
+
+        # ---- Cross-project mode ({}) ----
+        else:
+            projects, permission_map, err = get_accessible_projects(request)
+            if err:
+                return err
+
+            # Only ADMIN/HEAD projects contribute to the cross-project list.
+            # (MEMBERS should use /task/my-tasks/ for their own tasks.)
+            allowed_project_ids = [
+                pid for pid, perm in permission_map.items()
+                if perm in ("ADMIN", "HEAD")
+            ]
+            if not allowed_project_ids:
+                return Response(
+                    {
+                        "status": False,
+                        "message": (
+                            "You do not have access to any project "
+                            "task list."
+                        ),
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            tasks = Task.objects.filter(
+                project_id__in=allowed_project_ids,
+                is_active=True,
+            )
+
+        # ---- Common filtering / select_related ----
+        tasks = tasks.select_related(
+            "project", "project__client", "assigned_to"
+        )
+
+        task_status = request.data.get("status")
+        priority = request.data.get("priority")
+        assigned_to_id = request.data.get("assigned_to_id")
+        search = request.data.get("search")
+
+        if task_status:
+            tasks = tasks.filter(status=task_status)
+
+        if priority:
+            tasks = tasks.filter(priority=priority)
+
+        if assigned_to_id:
+            tasks = tasks.filter(assigned_to_id=assigned_to_id)
+
+        if search:
+            search = search.strip()
+            tasks = tasks.filter(
+                Q(title__icontains=search)
+                | Q(description__icontains=search)
+            )
+
+        tasks = tasks.order_by("-created_at")
+
+        serializer = TaskListSerializer(
+            tasks, many=True, context={"request": request}
+        )
+
+        return Response(
+            {
+                "status": True,
+                "message": "Tasks fetched successfully.",
+                "data": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+# =========================================================
+# TASK — DETAIL
+# =========================================================
+class TaskDetailAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        task_id = request.data.get("task_id")
+        if not task_id:
+            return Response(
+                {"status": False, "message": "task_id is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        task = (
+            Task.objects
+            .filter(id=task_id, is_active=True)
+            .select_related(
+                "project",
+                "project__client",
+                "assigned_to",
+                "created_by",
+                "updated_by",
+            )
+            .first()
+        )
+
+        if not task:
+            return Response(
+                {"status": False, "message": "Task not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        permission, _project, _allocation, err = get_project_permission(
+            request, task.project_id
+        )
+        if err:
+            return err
+
+        # Members can view task only if it's assigned to them.
+        if permission == "MEMBER":
+            employee = getattr(request.user, "employee_profile", None)
+            if not employee or task.assigned_to_id != employee.id:
+                return Response(
+                    {
+                        "status": False,
+                        "message": "You do not have access to this task.",
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+        if permission is None:
+            return Response(
+                {
+                    "status": False,
+                    "message": "You do not have access to this task.",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        serializer = TaskDetailSerializer(
+            task, context={"request": request}
+        )
+
+        return Response(
+            {
+                "status": True,
+                "message": "Task detail fetched successfully.",
+                "data": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+# =========================================================
+# TASK — UPDATE (fields, head/admin only)
+# =========================================================
+class TaskUpdateAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request):
+        task_id = request.data.get("task_id")
+        if not task_id:
+            return Response(
+                {"status": False, "message": "task_id is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        task = (
+            Task.objects
+            .filter(id=task_id, is_active=True)
+            .select_related("project", "assigned_to")
+            .first()
+        )
+
+        if not task:
+            return Response(
+                {"status": False, "message": "Task not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        permission, _project, _allocation, err = get_project_permission(
+            request, task.project_id
+        )
+        if err:
+            return err
+
+        if permission not in ("ADMIN", "HEAD"):
+            return Response(
+                {
+                    "status": False,
+                    "message": "Only the project head or organization admin can update tasks.",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        old_data = {
+            "title": task.title,
+            "description": task.description,
+            "priority": task.priority,
+            "assigned_to": task.assigned_to_id,
+            "due_date": task.due_date,
+            "estimated_hours": (
+                str(task.estimated_hours)
+                if task.estimated_hours is not None
+                else None
+            ),
+            "actual_hours": (
+                str(task.actual_hours)
+                if task.actual_hours is not None
+                else None
+            ),
+        }
+
+        data = request.data.copy()
+        data.pop("task_id", None)
+
+        serializer = TaskUpdateSerializer(
+            task, data=data, partial=True
+        )
+        if not serializer.is_valid():
+            return Response(
+                {
+                    "status": False,
+                    "message": "Validation failed.",
+                    "errors": serializer.errors,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        task = serializer.save(updated_by=request.user)
+
+        new_data = {
+            "title": task.title,
+            "description": task.description,
+            "priority": task.priority,
+            "assigned_to": task.assigned_to_id,
+            "due_date": task.due_date,
+            "estimated_hours": (
+                str(task.estimated_hours)
+                if task.estimated_hours is not None
+                else None
+            ),
+            "actual_hours": (
+                str(task.actual_hours)
+                if task.actual_hours is not None
+                else None
+            ),
+        }
+
+        log_activity(
+            request=request,
+            action="UPDATE",
+            module="TASK",
+            object_type="Task",
+            object_id=task.id,
+            description=f"Task '{task.title}' updated.",
+            old_data=old_data,
+            new_data=new_data,
+        )
+
+        # ---- Notify new assignee if reassigned ----
+        old_assignee_id = old_data.get("assigned_to")
+        new_assignee_id = task.assigned_to_id
+
+        if (
+            new_assignee_id
+            and new_assignee_id != old_assignee_id
+            and task.assigned_to
+            and task.assigned_to.user_id
+        ):
+            transaction.on_commit(lambda: notify(
+                users=task.assigned_to.user,
+                event_code="TASK_REASSIGNED",
+                title="Task assigned to you",
+                body=(
+                    f"'{task.title}' in '{task.project.project_name}' "
+                    f"has been assigned to you."
+                ),
+                reference_type="task",
+                reference_id=task.id,
+                priority="HIGH",
+            ))
+
+        return Response(
+            {
+                "status": True,
+                "message": "Task updated successfully.",
+                "data": TaskDetailSerializer(
+                    task, context={"request": request}
+                ).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+# =========================================================
+# TASK — STATUS UPDATE (permission matrix)
+# =========================================================
+class TaskStatusUpdateAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    # Assignee-allowed transitions
+    ASSIGNEE_TRANSITIONS = {
+        ("TODO", "IN_PROGRESS"),
+        ("IN_PROGRESS", "TODO"),
+        ("IN_PROGRESS", "IN_REVIEW"),
+    }
+
+    # Head/admin transitions (any of these)
+    HEAD_TRANSITIONS = {
+        ("TODO", "IN_PROGRESS"),
+        ("TODO", "IN_REVIEW"),
+        ("IN_PROGRESS", "TODO"),
+        ("IN_PROGRESS", "IN_REVIEW"),
+        ("IN_REVIEW", "DONE"),
+        ("IN_REVIEW", "IN_PROGRESS"),
+        ("DONE", "IN_PROGRESS"),
+        ("DONE", "TODO"),
+    }
+
+    @transaction.atomic
+    def post(self, request):
+        task_id = request.data.get("task_id")
+        if not task_id:
+            return Response(
+                {"status": False, "message": "task_id is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        task = (
+            Task.objects
+            .filter(id=task_id, is_active=True)
+            .select_related("project", "assigned_to")
+            .first()
+        )
+
+        if not task:
+            return Response(
+                {"status": False, "message": "Task not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        organization, error_response = get_user_organization(request)
+        if error_response:
+            return error_response
+
+        permission, _project, _allocation, err = get_project_permission(
+            request, task.project_id
+        )
+        if err:
+            return err
+
+        serializer = TaskStatusUpdateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                {
+                    "status": False,
+                    "message": "Validation failed.",
+                    "errors": serializer.errors,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        new_status = serializer.validated_data["status"]
+        actual_hours = serializer.validated_data.get("actual_hours", None)
+
+        old_status = task.status
+        transition = (old_status, new_status)
+
+        # Determine caller role for this task
+        employee = getattr(request.user, "employee_profile", None)
+        is_assignee = bool(
+            employee and task.assigned_to_id == employee.id
+        )
+
+        if permission in ("ADMIN", "HEAD"):
+            allowed = self.HEAD_TRANSITIONS
+        elif permission == "MEMBER" and is_assignee:
+            allowed = self.ASSIGNEE_TRANSITIONS
+        else:
+            return Response(
+                {
+                    "status": False,
+                    "message": "You are not allowed to change the status of this task.",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if old_status == new_status:
+            # No-op; treat as success
+            return Response(
+                {
+                    "status": True,
+                    "message": "Task status unchanged.",
+                    "data": TaskDetailSerializer(
+                        task, context={"request": request}
+                    ).data,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        if transition not in allowed:
+            return Response(
+                {
+                    "status": False,
+                    "message": (
+                        f"Transition from '{old_status}' to '{new_status}' "
+                        f"is not allowed for your role."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        task.status = new_status
+        if actual_hours is not None:
+            task.actual_hours = actual_hours
+
+        if new_status == "DONE":
+            task.completed_at = timezone.now()
+        elif old_status == "DONE" and new_status != "DONE":
+            task.completed_at = None
+
+        task.updated_by = request.user
+        task.save(
+            update_fields=[
+                "status",
+                "actual_hours",
+                "completed_at",
+                "updated_by",
+                "updated_at",
+            ]
+        )
+
+        log_activity(
+            request=request,
+            action="UPDATE",
+            module="TASK",
+            object_type="Task",
+            object_id=task.id,
+            description=(
+                f"Task '{task.title}' status changed "
+                f"from '{old_status}' to '{new_status}'."
+            ),
+            old_data={
+                "status": old_status,
+                "actual_hours": (
+                    str(task.actual_hours)
+                    if task.actual_hours is not None
+                    else None
+                ),
+            },
+            new_data={
+                "status": new_status,
+                "actual_hours": (
+                    str(task.actual_hours)
+                    if task.actual_hours is not None
+                    else None
+                ),
+                "completed_at": (
+                    task.completed_at.isoformat()
+                    if task.completed_at
+                    else None
+                ),
+            },
+        )
+
+        # ---- Notify on specific status transitions ----
+        if new_status == "IN_REVIEW":
+            # Assignee submitted for review → notify head + admin
+            if task.assigned_to and task.assigned_to.user_id:
+                recipients = _get_project_notification_recipients(
+                    task.project, organization
+                )
+                # Remove the assignee themselves (don't notify the person who did the action)
+                recipients = [
+                    u for u in recipients if u.id != task.assigned_to.user_id
+                ]
+                if recipients:
+                    transaction.on_commit(lambda: notify(
+                        users=recipients,
+                        event_code="TASK_IN_REVIEW",
+                        title="Task ready for review",
+                        body=(
+                            f"'{task.title}' in "
+                            f"'{task.project.project_name}' is ready for review."
+                        ),
+                        reference_type="task",
+                        reference_id=task.id,
+                        priority="NORMAL",
+                    ))
+
+        elif new_status == "DONE" and old_status != "DONE":
+            # Head/admin marked task DONE → notify assignee
+            if task.assigned_to and task.assigned_to.user_id:
+                transaction.on_commit(lambda: notify(
+                    users=task.assigned_to.user,
+                    event_code="TASK_COMPLETED",
+                    title="Task completed",
+                    body=(
+                        f"'{task.title}' in "
+                        f"'{task.project.project_name}' has been marked as done."
+                    ),
+                    reference_type="task",
+                    reference_id=task.id,
+                    priority="NORMAL",
+                ))
+
+        elif (
+            old_status == "DONE" and new_status != "DONE"
+        ) or (
+            old_status == "IN_REVIEW" and new_status == "IN_PROGRESS"
+        ):
+            # Head/admin reopened a task → notify assignee
+            if task.assigned_to and task.assigned_to.user_id:
+                transaction.on_commit(lambda: notify(
+                    users=task.assigned_to.user,
+                    event_code="TASK_REOPENED",
+                    title="Task reopened",
+                    body=(
+                        f"'{task.title}' in "
+                        f"'{task.project.project_name}' has been reopened. "
+                        f"Please address the feedback."
+                    ),
+                    reference_type="task",
+                    reference_id=task.id,
+                    priority="HIGH",
+                ))
+
+        return Response(
+            {
+                "status": True,
+                "message": "Task status updated successfully.",
+                "data": TaskDetailSerializer(
+                    task, context={"request": request}
+                ).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+# =========================================================
+# TASK — DEACTIVATE
+# =========================================================
+class TaskDeactivateAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request):
+        task_id = request.data.get("task_id")
+        if not task_id:
+            return Response(
+                {"status": False, "message": "task_id is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        task = (
+            Task.objects
+            .filter(id=task_id, is_active=True)
+            .select_related("project")
+            .first()
+        )
+
+        if not task:
+            return Response(
+                {"status": False, "message": "Task not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        permission, _project, _allocation, err = get_project_permission(
+            request, task.project_id
+        )
+        if err:
+            return err
+
+        if permission not in ("ADMIN", "HEAD"):
+            return Response(
+                {
+                    "status": False,
+                    "message": "Only the project head or organization admin can deactivate tasks.",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        old_data = {"is_active": task.is_active}
+
+        task.is_active = False
+        task.updated_by = request.user
+        task.save(update_fields=["is_active", "updated_by", "updated_at"])
+
+        log_activity(
+            request=request,
+            action="DELETE",
+            module="TASK",
+            object_type="Task",
+            object_id=task.id,
+            description=f"Task '{task.title}' deactivated.",
+            old_data=old_data,
+            new_data={"is_active": False},
+        )
+
+        return Response(
+            {
+                "status": True,
+                "message": "Task deactivated successfully.",
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+# =========================================================
+# EMPLOYEE — MY TASKS
+# =========================================================
+class MyTasksAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        employee, error_response = get_current_employee(request)
+        if error_response:
+            return error_response
+
+        tasks = (
+            Task.objects
+            .filter(
+                assigned_to=employee,
+                is_active=True,
+                project__is_active=True,
+            )
+            .select_related("project", "project__client")
+            .order_by("-created_at")
+        )
+
+        task_status = request.data.get("status")
+        priority = request.data.get("priority")
+        project_id = request.data.get("project_id")
+        search = request.data.get("search")
+
+        if task_status:
+            tasks = tasks.filter(status=task_status)
+
+        if priority:
+            tasks = tasks.filter(priority=priority)
+
+        if project_id:
+            tasks = tasks.filter(project_id=project_id)
+
+        if search:
+            search = search.strip()
+            tasks = tasks.filter(
+                Q(title__icontains=search)
+                | Q(description__icontains=search)
+            )
+
+        serializer = TaskEmployeeSerializer(
+            tasks, many=True, context={"request": request}
+        )
+
+        return Response(
+            {
+                "status": True,
+                "message": "My tasks fetched successfully.",
+                "data": {
+                    "task_count": tasks.count(),
+                    "tasks": serializer.data,
                 },
             },
             status=status.HTTP_200_OK,

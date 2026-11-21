@@ -1,0 +1,379 @@
+================================================================================
+LEAVE APP — EMPLOYEE SELF-SERVICE API REFERENCE
+================================================================================
+
+Base URL   : /
+Method     : All endpoints are POST
+Auth       : Bearer token (IsAuthenticated)
+Envelope   : { "status": true|false, "message": "...", "data": {...}?, "errors": {...}? }
+
+Who uses this document:
+  - Any user with an active Employee profile.
+  - Frontend employee-facing screens ONLY:
+      * Leave types list (read-only)
+      * My leave balances
+      * Apply for leave
+      * My leave applications
+      * Cancel my application
+
+CRITICAL IDENTITY RULE:
+  The client NEVER sends employee_id for "who am I".
+  The backend derives the employee from request.user.employee_profile.
+  Any employee_id sent in a request body is IGNORED for identity scoping.
+
+
+================================================================================
+EMPLOYEE-SIDE ENDPOINTS AT A GLANCE
+================================================================================
+
+  POST /leave/types/list/                       (read-only; shared with admin)
+  POST /leave/balances/my/
+  POST /leave/applications/create/
+  POST /leave/applications/my/
+  POST /leave/applications/cancel/my/
+
+  Total: 5 endpoints.
+
+
+================================================================================
+BOOTSTRAP ORDER — EMPLOYEE SIDE
+================================================================================
+
+  1. Admin creates leave types first.
+     → Without leave types, the employee cannot apply.
+
+  2. Admin initializes yearly balances for the employee.
+     → Without balances, the employee has 0 available days.
+
+  3. Employee can then:
+       (a) view balances      (/balances/my/)
+       (b) apply for leave    (/applications/create/)
+       (c) view applications  (/applications/my/)
+       (d) cancel application (/applications/cancel/my/)
+
+  4. Admin reviews → approves or rejects.
+     → Employee sees updated status on next /applications/my/ call.
+
+
+================================================================================
+SECTION 1 — LEAVE TYPES (read-only for employee)
+================================================================================
+
+--------------------------------------------------------------------------------
+1.1  POST /leave/types/list/
+--------------------------------------------------------------------------------
+Purpose : List all active leave types in the caller's org
+Access  : Admin AND Employee
+Request : {}
+Response 200:
+{
+  "status": true,
+  "message": "Leave types fetched successfully.",
+  "data": [
+    {
+      "id": 1,
+      "name": "Casual Leave",
+      "code": "CL",
+      "description": "Personal leave",
+      "annual_allocation": "12.00",
+      "is_paid": true,
+      "is_active": true,
+      "created_at": "2026-01-01T10:00:00Z",
+      "updated_at": "2026-01-01T10:00:00Z"
+    },
+    {
+      "id": 2,
+      "name": "Sick Leave",
+      "code": "SL",
+      "description": "Medical leave",
+      "annual_allocation": "10.00",
+      "is_paid": true,
+      "is_active": true,
+      "created_at": "2026-01-01T10:00:00Z",
+      "updated_at": "2026-01-01T10:00:00Z"
+    }
+  ]
+}
+
+NOTE:
+  - Only active leave types are returned.
+  - Employee uses this to populate the "Leave type" dropdown
+    when applying for leave.
+  - The "annual_allocation" is per leave type and is set by admin.
+    The employee's actual balance is per-balance-row (see Section 2).
+
+
+================================================================================
+SECTION 2 — MY LEAVE BALANCES
+================================================================================
+
+--------------------------------------------------------------------------------
+2.1  POST /leave/balances/my/
+--------------------------------------------------------------------------------
+Purpose : View my leave balances
+Access  : Employee (self only)
+Request (all optional):
+{
+  "leave_year": 2026,        // filter to a specific year
+  "leave_type_id": 1         // filter to a specific leave type
+}
+Send {} to get ALL my balances across all years and types.
+
+Response 200:
+{
+  "status": true,
+  "message": "Your leave balances fetched successfully.",
+  "data": [
+    {
+      "id": 10,
+      "employee": 15,
+      "employee_code": "EMP001",
+      "employee_name": "Rahul Patil",
+      "leave_type": 1,
+      "leave_type_name": "Casual Leave",
+      "leave_year": 2026,
+      "opening_balance": "0.00",
+      "allocated_days": "12.00",
+      "used_days": "2.00",
+      "pending_days": "1.00",
+      "available_days": "9.00",
+      "created_at": "2026-01-01T10:00:00Z",
+      "updated_at": "2026-01-02T10:00:00Z"
+    }
+  ]
+}
+
+Balance math:
+  available_days = opening_balance + allocated_days - used_days - pending_days
+
+Meaning of each field:
+  opening_balance  — carry-forward from previous year (usually 0)
+  allocated_days   — total days granted for this year (from leave_type
+                     annual_allocation + any admin adjustments)
+  used_days        — days consumed by APPROVED applications
+  pending_days     — days reserved by PENDING applications
+                     (held back so you can't over-book)
+  available_days   — what you can still apply for right now
+
+
+================================================================================
+SECTION 3 — APPLY FOR LEAVE
+================================================================================
+
+--------------------------------------------------------------------------------
+3.1  POST /leave/applications/create/
+--------------------------------------------------------------------------------
+Purpose : Submit a leave application
+Access  : Employee (self only)
+Request :
+{
+  "leave_type_id": 1,
+  "start_date": "2026-11-05",
+  "end_date": "2026-11-06",
+  "reason": "Personal work"
+}
+Response 201 (or 200):
+{
+  "status": true,
+  "message": "Leave application submitted successfully.",
+  "data": {
+    "id": 101,
+    "employee": 15,
+    "employee_code": "EMP001",
+    "employee_name": "Rahul Patil",
+    "leave_type": 1,
+    "leave_type_name": "Casual Leave",
+    "start_date": "2026-11-05",
+    "end_date": "2026-11-06",
+    "total_days": "2.00",
+    "reason": "Personal work",
+    "status": "PENDING",
+    "reviewed_by": null,
+    "reviewed_by_name": null,
+    "reviewed_at": null,
+    "review_remarks": "",
+    "created_at": "2026-10-30T10:00:00Z",
+    "updated_at": "2026-10-30T10:00:00Z"
+  }
+}
+
+NOTES:
+  - total_days is computed by the backend using calendar and shift rules.
+    The client does NOT send total_days.
+  - New application is always created with status = "PENDING".
+  - Pending days are reserved from the balance immediately
+    (pending_days increases on the corresponding balance row).
+  - If end_date < start_date → 400 validation error.
+  - If start_date is in the past → 400 (unless org policy allows retro).
+  - If insufficient available balance → 400 with clear message.
+  - If overlapping with another pending/approved leave → 400.
+
+
+================================================================================
+SECTION 4 — MY LEAVE APPLICATIONS
+================================================================================
+
+--------------------------------------------------------------------------------
+4.1  POST /leave/applications/my/
+--------------------------------------------------------------------------------
+Purpose : List my leave applications
+Access  : Employee (self only)
+Request (optional filter):
+{
+  "status": "PENDING"        // PENDING | APPROVED | REJECTED | CANCELLED
+}
+Send {} to get all applications regardless of status.
+
+Response 200:
+{
+  "status": true,
+  "message": "Your leave applications fetched successfully.",
+  "data": [
+    {
+      "id": 101,
+      "employee": 15,
+      "employee_code": "EMP001",
+      "employee_name": "Rahul Patil",
+      "leave_type": 1,
+      "leave_type_name": "Casual Leave",
+      "start_date": "2026-11-05",
+      "end_date": "2026-11-06",
+      "total_days": "2.00",
+      "reason": "Personal work",
+      "status": "PENDING",
+      "reviewed_by": null,
+      "reviewed_by_name": null,
+      "reviewed_at": null,
+      "review_remarks": "",
+      "created_at": "2026-10-30T10:00:00Z",
+      "updated_at": "2026-10-30T10:00:00Z"
+    }
+  ]
+}
+
+Status lifecycle:
+  PENDING   → submitted, waiting for admin review
+  APPROVED  → admin approved; pending_days moved to used_days
+  REJECTED  → admin rejected; pending_days released back to available
+  CANCELLED → employee or admin cancelled; pending/used days released
+
+
+================================================================================
+SECTION 5 — CANCEL MY APPLICATION
+================================================================================
+
+--------------------------------------------------------------------------------
+5.1  POST /leave/applications/cancel/my/
+--------------------------------------------------------------------------------
+Purpose : Cancel my own leave application
+Access  : Employee (self only; can only cancel own applications)
+Request :
+{
+  "application_id": 101
+}
+Response 200:
+{
+  "status": true,
+  "message": "Leave application cancelled successfully.",
+  "data": {
+    "id": 101,
+    "employee": 15,
+    "employee_code": "EMP001",
+    "employee_name": "Rahul Patil",
+    "leave_type": 1,
+    "leave_type_name": "Casual Leave",
+    "start_date": "2026-11-05",
+    "end_date": "2026-11-06",
+    "total_days": "2.00",
+    "reason": "Personal work",
+    "status": "CANCELLED",
+    "reviewed_by": null,
+    "reviewed_by_name": null,
+    "reviewed_at": null,
+    "review_remarks": "",
+    "created_at": "2026-10-30T10:00:00Z",
+    "updated_at": "2026-10-30T12:00:00Z"
+  }
+}
+
+NOTES:
+  - Only own applications can be cancelled (backend enforces this).
+  - If application is PENDING → pending_days released back.
+  - If application is APPROVED → used_days released back, AND
+    any ON_LEAVE attendance records for those dates are reset to INCOMPLETE.
+  - If application is already CANCELLED or REJECTED → 400 "already cancelled".
+  - Cancelling an application that overlaps with future approval windows may
+    require re-approval if the dates are within a lock period — see admin doc.
+
+NOTE: The admin also has a separate endpoint /leave/applications/cancel/organization/
+      which can cancel ANY employee's application. Employees CANNOT call that endpoint.
+
+
+================================================================================
+QUICK REFERENCE — EMPLOYEE LEAVE ENDPOINTS
+================================================================================
+
+  POST /leave/types/list/                 (read-only; shared with admin)
+  POST /leave/balances/my/
+  POST /leave/applications/create/
+  POST /leave/applications/my/
+  POST /leave/applications/cancel/my/
+
+  Total: 5 endpoints.
+
+
+================================================================================
+KEY NOTES FOR FRONTEND — EMPLOYEE SIDE
+================================================================================
+
+1. IDENTITY IS DERIVED SERVER-SIDE.
+   No employee_id is sent in any request.
+   If the user has no employee_profile → 404.
+   If the employee_profile.is_active = false → 403.
+
+2. LEAVE TYPE DROPDOWN ON APPLY SCREEN
+   Call /leave/types/list/ once and cache. The list rarely changes.
+   Show name + code + annual_allocation as helper text.
+
+3. BALANCE DISPLAY ON APPLY SCREEN
+   Show the balance for the selected leave_type before submitting:
+     available_days  → "You have 9.00 days available"
+   If the user picks dates, compute total_days client-side for a
+   rough preview (total calendar days OR working days per org policy).
+   The backend's total_days is authoritative — display it after submit.
+
+4. STATUS CHIP COLORS
+   PENDING   → yellow / warning
+   APPROVED  → green / success
+   REJECTED  → red / danger
+   CANCELLED → grey / neutral
+
+5. WHICH APPLICATIONS CAN BE CANCELLED BY EMPLOYEE
+   PENDING   → yes, always
+   APPROVED  → yes, but balance is restored and attendance is reset
+   REJECTED  → no (already terminal)
+   CANCELLED → no (already terminal)
+   Frontend should hide the "Cancel" button for REJECTED and CANCELLED.
+
+6. NO ADMIN LEAKAGE.
+   Employee endpoints NEVER accept employee_id, leave_type adjustments,
+   approvals, or org-wide queries. Anything admin-flavored returns 403 or
+   404 depending on the route. If your UI needs to show org-wide data,
+   you're in the wrong document.
+
+7. PENDING DAYS ARE RESERVED.
+   When a leave application is submitted, those days are moved into
+   pending_days on the balance. This prevents over-booking.
+   When approved → pending moves to used.
+   When rejected/cancelled → pending moves back to available.
+   The frontend should NOT trust a client-side "available" calculation;
+   always re-fetch /balances/my/ before showing the apply form.
+
+8. NO PAGINATION.
+   /applications/my/ returns all of the employee's applications.
+   Client-side pagination (typically by year) is recommended.
+
+
+================================================================================
+END OF EMPLOYEE LEAVE REFERENCE
+================================================================================

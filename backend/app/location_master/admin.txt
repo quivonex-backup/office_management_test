@@ -1,0 +1,265 @@
+================================================================================
+LOCATION MASTER APP — ADMIN API REFERENCE
+================================================================================
+
+Base URL   : /
+Method     : All endpoints are POST
+Auth       : Bearer token (IsAuthenticated)
+Envelope   : { "status": true|false, "message": "...", "data": [...], "errors": {...}? }
+
+Who uses this document:
+  - Organization owner (Admin role)
+  - Any org member with Admin-level access who fills address forms
+    (employee create/edit, client create/edit, vendor create/edit,
+     project create/edit, payroll work-state, etc.)
+
+What's in this document:
+  ONLY the list (lookup) endpoints. These populate State / District /
+  Taluka dropdowns in admin forms.
+
+What's NOT in this document:
+  - /states/create/, /states/deactivate/
+  - /districts/create/, /districts/deactivate/
+  - /talukas/create/, /talukas/deactivate/
+  Those are super-admin backend seeding endpoints. The admin UI never
+  calls them and never shows buttons for them. If you need the
+  super-admin reference, it's a separate doc.
+
+Location master data is GLOBAL — not scoped to your organization.
+Every org sees the same state/district/taluka master.
+
+
+================================================================================
+CASCADE ORDER — READ FIRST
+================================================================================
+
+  Address forms must call in this order:
+
+    1. POST /location_master/states/list/                    -> State dropdown
+    2. POST /location_master/districts/list/  {state_id}     -> District dropdown
+    3. POST /location_master/talukas/list/    {district_id}  -> Taluka dropdown
+
+  State is cached once per session (small, ~36 rows for India).
+  District is fetched when the user picks a state.
+  Taluka is fetched when the user picks a district.
+  Do NOT pre-fetch districts/talukas at form load — they depend on the
+  user's selection and are large.
+
+  Partial forms:
+    - Only state needed          -> call states/list only
+    - State + district needed    -> call states/list + districts/list
+    - Full address               -> all three in order
+
+
+================================================================================
+SECTION 1 — STATE LIST
+================================================================================
+
+--------------------------------------------------------------------------------
+1.1  POST /location_master/states/list/
+--------------------------------------------------------------------------------
+Purpose : List all active states (populates the State dropdown)
+Access  : Any authenticated user
+Request (all optional):
+{
+  "search": "maha"           // matches state_name OR state_code (icontains)
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "States fetched successfully.",
+  "data": [
+    { "id": 1, "state_code": "MH", "state_name": "Maharashtra" },
+    { "id": 2, "state_code": "KA", "state_name": "Karnataka" }
+  ]
+}
+
+Response 200 (empty state table):
+{
+  "status": true,
+  "message": "States fetched successfully.",
+  "data": []
+}
+
+Ordering: state_name ASC
+Notes:
+  - Only is_active=True rows are returned. Deactivated states never appear.
+  - Empty body {} returns the full active list.
+  - No pagination — state count is small. Cache once per session.
+  - state_code may be null (it's optional at the model level). UI should
+    render empty gracefully, not "undefined".
+
+
+================================================================================
+SECTION 2 — DISTRICT LIST
+================================================================================
+
+--------------------------------------------------------------------------------
+2.1  POST /location_master/districts/list/
+--------------------------------------------------------------------------------
+Purpose : List active districts, filtered by state (populates the District dropdown)
+Access  : Any authenticated user
+Request :
+{
+  "state_id": 1,             // recommended — pass the state the user picked
+  "search": "pune"           // optional, matches district_name (icontains)
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Districts fetched successfully.",
+  "data": [
+    { "id": 10, "state_id": 1, "district_name": "Pune" },
+    { "id": 11, "state_id": 1, "district_name": "Mumbai" }
+  ]
+}
+
+Response 200 (state has no districts):
+{
+  "status": true,
+  "message": "Districts fetched successfully.",
+  "data": []
+}
+
+Ordering: district_name ASC
+Notes:
+  - state_id is the typical filter — always pass it after the user picks
+    a state. Omitting state_id returns ALL active districts across all
+    states (large — avoid on mobile unless search is also provided).
+  - Only is_active=True rows are returned.
+  - No pagination.
+  - The response includes state_id per row so the UI can confirm the
+    filter matches what was requested.
+
+
+================================================================================
+SECTION 3 — TALUKA LIST
+================================================================================
+
+--------------------------------------------------------------------------------
+3.1  POST /location_master/talukas/list/
+--------------------------------------------------------------------------------
+Purpose : List active talukas, filtered by district (populates the Taluka dropdown)
+Access  : Any authenticated user
+Request :
+{
+  "district_id": 10,         // recommended — pass the district the user picked
+  "search": "haveli"         // optional, matches taluka_name (icontains)
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Talukas fetched successfully.",
+  "data": [
+    { "id": 100, "state_id": 1, "district_id": 10, "taluka_name": "Haveli" },
+    { "id": 101, "state_id": 1, "district_id": 10, "taluka_name": "Mulshi" }
+  ]
+}
+
+Response 200 (district has no talukas):
+{
+  "status": true,
+  "message": "Talukas fetched successfully.",
+  "data": []
+}
+
+Ordering: taluka_name ASC
+Notes:
+  - district_id is the typical filter — pass it after the user picks
+    a district.
+  - Each row carries state_id too (denormalized on the taluka row), so
+    the UI can render the full chain without a second call if needed.
+  - Only is_active=True rows are returned.
+  - No pagination.
+
+
+================================================================================
+QUICK REFERENCE — LIST ENDPOINTS (THE ONLY ONES IN THIS DOC)
+================================================================================
+
+  POST /location_master/states/list/
+  POST /location_master/districts/list/
+  POST /location_master/talukas/list/
+
+TOTAL: 3 endpoints
+
+
+================================================================================
+DATA SHAPES — FOR UI TYPES
+================================================================================
+
+State (list item):
+{
+  "id": 1,
+  "state_code": "MH",        // may be null
+  "state_name": "Maharashtra"
+}
+
+District (list item):
+{
+  "id": 10,
+  "state_id": 1,
+  "district_name": "Pune"
+}
+
+Taluka (list item):
+{
+  "id": 100,
+  "state_id": 1,
+  "district_id": 10,
+  "taluka_name": "Haveli"
+}
+
+Error envelope (validation — 400):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": { "field_name": ["Error message."] }
+}
+
+
+================================================================================
+KEY NOTES FOR FRONTEND
+================================================================================
+
+1. THIS IS A UTILITY APP.
+   The same 3 list endpoints are used by every form with an address field:
+   employee, client, vendor, project, payroll work-state. Import once,
+   reuse across screens.
+
+2. CASCADE IS FIXED.
+   State -> District (filter by state_id) -> Taluka (filter by district_id).
+   Fetch on change, not on load. Never fetch districts before a state
+   is picked.
+
+3. CACHING POLICY
+   - states/list    : fetch once per session. Cache in memory/state.
+   - districts/list : fetch on state change. Do not pre-fetch.
+   - talukas/list   : fetch on district change. Do not pre-fetch.
+
+4. SEARCH IS SUBSTRING, CASE-INSENSITIVE.
+   search=maha matches Maharashtra. search=pu matches Pune, Pudukkottai.
+   Empty search returns the full filtered list.
+
+5. DEACTIVATED ROWS DISAPPEAR.
+   The list endpoints filter is_active=True. There is no query param to
+   include inactive rows. When EDITING a record whose state was later
+   deactivated, the saved label may not appear in the dropdown — handle
+   by showing the saved label read-only as a fallback until the user
+   picks a new active state.
+
+6. IDS ARE INTEGERS.
+   state_id, district_id, taluka_id are integer PKs. Send integers in
+   JSON body, not strings.
+
+7. NO PAGINATION.
+   All list endpoints return the full filtered list. Safe for dropdowns.
+   Do not add client-side pagination.
+
+8. NO CREATE / DEACTIVATE IN THIS DOC.
+   Those are super-admin backend seeding operations. The admin UI never
+   calls them and never needs buttons for them. If a super-admin
+   reference doc is needed separately, ask for it.

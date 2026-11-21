@@ -19,6 +19,15 @@ from .views import (
     RecurringExpenseEntryCreateAPIView,
     RecurringExpenseEntryUpdateAPIView,
     RecurringExpenseEntryDeactivateAPIView,
+
+    # Employee Reimbursements
+    EmployeeReimbursementCreateAPIView,
+    EmployeeReimbursementMyListAPIView,
+    EmployeeReimbursementDetailAPIView,
+    EmployeeReimbursementCancelAPIView,
+    EmployeeReimbursementListAPIView,
+    EmployeeReimbursementReviewAPIView,
+    EmployeeReimbursementMarkPaidAPIView,
 )
 
 
@@ -50,4 +59,16 @@ urlpatterns = [
     path("recurring/entries/create/", RecurringExpenseEntryCreateAPIView.as_view(), name="recurring-expense-entry-create"),
     path("recurring/entries/update/", RecurringExpenseEntryUpdateAPIView.as_view(), name="recurring-expense-entry-update"),
     path("recurring/entries/deactivate/", RecurringExpenseEntryDeactivateAPIView.as_view(), name="recurring-expense-entry-deactivate"),
+
+
+    # =====================================================
+    # EMPLOYEE REIMBURSEMENTS
+    # =====================================================
+    path("reimbursements/create/", EmployeeReimbursementCreateAPIView.as_view(), name="reimbursement-create"),              #E
+    path("reimbursements/my/", EmployeeReimbursementMyListAPIView.as_view(), name="reimbursement-my-list"),                 #E
+    path("reimbursements/detail/", EmployeeReimbursementDetailAPIView.as_view(), name="reimbursement-detail"),              #E #A
+    path("reimbursements/cancel/", EmployeeReimbursementCancelAPIView.as_view(), name="reimbursement-cancel"),              #E
+    path("reimbursements/list/", EmployeeReimbursementListAPIView.as_view(), name="reimbursement-list"),                    #A
+    path("reimbursements/review/", EmployeeReimbursementReviewAPIView.as_view(), name="reimbursement-review"),              #A
+    path("reimbursements/mark-paid/", EmployeeReimbursementMarkPaidAPIView.as_view(), name="reimbursement-mark-paid"),      #A
 ]

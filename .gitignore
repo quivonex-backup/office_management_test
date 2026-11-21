@@ -35,6 +35,12 @@ backend/staticfiles/
 !.env.example
 
 # ==============================
+# FIREBASE CREDENTIALS
+# ==============================
+secrets/
+firebase-service-account.json
+
+# ==============================
 # TESTING / COVERAGE
 # ==============================
 .pytest_cache/
@@ -80,3 +86,9 @@ dist/
 .eggs/
 wheels/
 pip-wheel-metadata/
+
+# ==============================
+# OTHER
+# ==============================
+frontend
+.json

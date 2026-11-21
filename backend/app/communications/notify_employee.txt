@@ -1,0 +1,320 @@
+EMPLOYEE
+
+
+================================================================================
+NOTIFICATIONS — EMPLOYEE
+================================================================================
+
+Bell UI endpoints: see Communications app employee doc, Section 3.
+
+This file lists every notification that can land in an employee's bell.
+Append a new block per app as wiring is completed.
+
+================================================================================
+ATTENDANCE APP
+================================================================================
+
+Event code                       Priority
+-------------------------------  ---------
+ATTENDANCE_SHIFT_ASSIGNED        NORMAL
+ATTENDANCE_CORRECTION_REVIEWED   HIGH
+
+--------------------------------------------------------------------------------
+ATTENDANCE_SHIFT_ASSIGNED
+--------------------------------------------------------------------------------
+Title       : "New shift assigned" (single / bulk)
+              "New shift pattern assigned" (pattern)
+Body        : Single → "You have been assigned to 'General Shift' starting 2026-12-01."
+              Bulk   → "You have been assigned to a new shift starting 2026-12-01."
+              Pattern→ "You have been assigned a rotating shift pattern starting 2026-12-01."
+Deep-link   : reference_type = "employee_shift_assignment" | "employee_shift_assignment_bulk" | "employee_shift_assignment_pattern"
+              reference_id   = <assignment_id> (single) | null (bulk / pattern)
+On tap      : Open "My Shifts" screen
+              Single → focus on that assignment
+              Bulk / pattern → general list
+
+--------------------------------------------------------------------------------
+ATTENDANCE_CORRECTION_REVIEWED
+--------------------------------------------------------------------------------
+Title       : "Attendance correction approved"
+              "Attendance correction rejected"
+Body        : Approved → "Your correction for 2026-11-15 was approved."
+              Rejected → "Your correction for 2026-11-15 was rejected."
+                         (with reason appended if admin provided one)
+Deep-link   : reference_type = "attendance_correction"
+              reference_id   = <correction_id>
+On tap      : Open "My Corrections" focused on that correction
+              Green icon for approved, red for rejected (title differs)
+
+================================================================================
+LEAVE APP
+================================================================================
+
+Event code                       Priority
+-------------------------------  ---------
+LEAVE_APPROVED                   NORMAL
+LEAVE_REJECTED                   HIGH
+
+--------------------------------------------------------------------------------
+LEAVE_APPROVED
+--------------------------------------------------------------------------------
+Title       : "Leave approved"
+Body        : "Your <leave type> from <start date> to <end date> has been approved."
+Deep-link   : reference_type = "leave_application"
+              reference_id   = <application_id>
+On tap      : Open "My Leave Applications" focused on that application
+              Green icon
+
+--------------------------------------------------------------------------------
+LEAVE_REJECTED
+--------------------------------------------------------------------------------
+Title       : "Leave rejected"
+Body        : "Your <leave type> from <start date> to <end date> was rejected."
+              (with reason appended if admin provided one)
+Deep-link   : reference_type = "leave_application"
+              reference_id   = <application_id>
+On tap      : Open "My Leave Applications" focused on that application
+              Red icon
+
+================================================================================
+EXPENSES APP
+================================================================================
+
+Event code                       Priority
+-------------------------------  ---------
+REIMBURSEMENT_APPROVED           NORMAL
+REIMBURSEMENT_REJECTED           HIGH
+REIMBURSEMENT_PAID               HIGH
+
+--------------------------------------------------------------------------------
+REIMBURSEMENT_APPROVED
+--------------------------------------------------------------------------------
+Title       : "Reimbursement approved"
+Body        : "Your claim of ₹<amount> for '<title>' has been approved. Payment will be processed shortly."
+Deep-link   : reference_type = "reimbursement"
+              reference_id   = <reimbursement_id>
+On tap      : Open "My Reimbursements" focused on that claim
+              Green icon
+
+--------------------------------------------------------------------------------
+REIMBURSEMENT_REJECTED
+--------------------------------------------------------------------------------
+Title       : "Reimbursement rejected"
+Body        : "Your claim of ₹<amount> for '<title>' was rejected." (with reason appended if provided)
+Deep-link   : reference_type = "reimbursement"
+              reference_id   = <reimbursement_id>
+On tap      : Open "My Reimbursements" focused on that claim
+              Red icon
+
+--------------------------------------------------------------------------------
+REIMBURSEMENT_PAID
+--------------------------------------------------------------------------------
+Title       : "Reimbursement paid"
+Body        : "₹<amount> has been paid for '<title>' via <payment method>."
+Deep-link   : reference_type = "reimbursement"
+              reference_id   = <reimbursement_id>
+On tap      : Open "My Reimbursements" focused on that claim
+              Green icon (money received)
+
+================================================================================
+PROJECTS APP
+================================================================================
+
+Event code                       Priority
+-------------------------------  ---------
+PROJECT_TEAM_ALLOCATED           NORMAL
+PROJECT_HEAD_ASSIGNED            HIGH
+PROJECT_HEAD_REVOKED             NORMAL
+TASK_ASSIGNED                    HIGH
+TASK_REASSIGNED                  HIGH
+TASK_COMPLETED                   NORMAL
+TASK_REOPENED                    HIGH
+
+--------------------------------------------------------------------------------
+PROJECT_TEAM_ALLOCATED
+--------------------------------------------------------------------------------
+Title       : "Added to a project"
+Body        : "You have been added to project '<project name>' as <role>."
+              (role omitted if not set)
+Deep-link   : reference_type = "project"
+              reference_id   = <project_id>
+On tap      : Open "My Projects" focused on that project
+              Neutral icon
+
+--------------------------------------------------------------------------------
+PROJECT_HEAD_ASSIGNED
+--------------------------------------------------------------------------------
+Title       : "You are now a project head"
+Body        : "You have been assigned as the head of '<project name>'."
+Deep-link   : reference_type = "project"
+              reference_id   = <project_id>
+On tap      : Open "My Projects" focused on that project
+              Green / crown icon
+
+--------------------------------------------------------------------------------
+PROJECT_HEAD_REVOKED
+--------------------------------------------------------------------------------
+Title       : "Project head role reassigned"
+Body        : "You are no longer the head of '<project name>'. You remain on the team."
+Deep-link   : reference_type = "project"
+              reference_id   = <project_id>
+On tap      : Open "My Projects" focused on that project
+              Neutral / grey icon (informational)
+
+--------------------------------------------------------------------------------
+TASK_ASSIGNED
+--------------------------------------------------------------------------------
+Title       : "New task assigned"
+Body        : "You have been assigned '<task title>' in '<project name>'" (+ " (due <date>)." if due_date set)
+Deep-link   : reference_type = "task"
+              reference_id   = <task_id>
+On tap      : Open "My Tasks" focused on that task
+              Red / high-priority icon
+
+--------------------------------------------------------------------------------
+TASK_REASSIGNED
+--------------------------------------------------------------------------------
+Title       : "Task assigned to you"
+Body        : "'<task title>' in '<project name>' has been assigned to you."
+Deep-link   : reference_type = "task"
+              reference_id   = <task_id>
+On tap      : Open "My Tasks" focused on that task
+              Red / high-priority icon
+
+--------------------------------------------------------------------------------
+TASK_COMPLETED
+--------------------------------------------------------------------------------
+Title       : "Task completed"
+Body        : "'<task title>' in '<project name>' has been marked as done."
+Deep-link   : reference_type = "task"
+              reference_id   = <task_id>
+On tap      : Open "My Tasks" focused on that task
+              Green icon
+
+--------------------------------------------------------------------------------
+TASK_REOPENED
+--------------------------------------------------------------------------------
+Title       : "Task reopened"
+Body        : "'<task title>' in '<project name>' has been reopened. Please address the feedback."
+Deep-link   : reference_type = "task"
+              reference_id   = <task_id>
+On tap      : Open "My Tasks" focused on that task
+              Red / orange icon (action needed)
+
+================================================================================
+PAYROLL APP
+================================================================================
+
+Event code                       Priority
+-------------------------------  ---------
+PAYSLIP_FINALIZED                HIGH
+PAYMENT_RECORDED                 HIGH
+
+--------------------------------------------------------------------------------
+PAYSLIP_FINALIZED
+--------------------------------------------------------------------------------
+Title       : "Your payslip is ready"
+Body        : "Your payslip for <Month YYYY> is available. Net pay: ₹<amount>."
+Deep-link   : reference_type = "payroll_record"
+              reference_id   = <payroll_record_id>
+On tap      : Open "My Payslips" focused on that record
+              Green / checkmark icon
+
+Notes:
+  - Fires once per employee per finalized payroll run.
+  - Only GENERATED records (actual payslips) notify.
+  - SKIPPED / ERROR records do not notify.
+
+--------------------------------------------------------------------------------
+PAYMENT_RECORDED
+--------------------------------------------------------------------------------
+Title       : "Payment received"
+Body        : "₹<amount> has been paid to you for <Month YYYY> via <payment mode>. Remaining balance: ₹<remaining>."
+              (Remaining becomes ₹0 when fully paid)
+Deep-link   : reference_type = "payroll_record"
+              reference_id   = <payroll_record_id>
+On tap      : Open "My Payslips" focused on that record
+              Green / money icon
+
+Notes:
+  - Fires per payment. Partial payments will generate multiple
+    PAYMENT_RECORDED notifications for the same record.
+  - Payment mode values: BANK_TRANSFER | CASH | UPI | CHEQUE
+  - This is the highest-signal notification in the system —
+    real money moving.
+
+================================================================================
+ACCOUNTS APP
+================================================================================
+
+Event code                       Priority
+-------------------------------  ---------
+PASSWORD_CHANGED                 HIGH
+PASSWORD_RESET_SUCCESSFUL        HIGH
+
+--------------------------------------------------------------------------------
+PASSWORD_CHANGED
+--------------------------------------------------------------------------------
+Title       : "Password changed"
+Body        : "Your password was changed just now. If this wasn't you, contact
+              your admin immediately."
+Deep-link   : None (reference_type = null, reference_id = null)
+On tap      : Display-only — no navigation. Mark as read.
+              Red / security icon
+
+Notes:
+  - Fires when the user changes their own password from inside the app
+    (old password verified, new password set).
+  - Push is sent to all active device tokens. This is the security signal:
+    if someone got into the session and changed the password, the real
+    user's phone gets a push immediately.
+
+--------------------------------------------------------------------------------
+PASSWORD_RESET_SUCCESSFUL
+--------------------------------------------------------------------------------
+Title       : "Password reset"
+Body        : "Your password was reset just now. If this wasn't you, contact
+              your admin immediately."
+Deep-link   : None (reference_type = null, reference_id = null)
+On tap      : Display-only — no navigation. Mark as read.
+              Red / security icon
+
+Notes:
+  - Fires when the user completes the forgot-password flow.
+  - The user is NOT authenticated at this moment, but a device token from
+    a previous login is on file, so push DOES fire to their devices. This
+    is the security alert: if an attacker reset the password, the real
+    user's phone gets a push within seconds.
+  - The bell row is waiting when they log back in with the new password.
+
+================================================================================
+COMMUNICATIONS APP
+================================================================================
+
+Event code                       Priority
+-------------------------------  ---------
+ANNOUNCEMENT_PUBLISHED           NORMAL / HIGH
+
+--------------------------------------------------------------------------------
+ANNOUNCEMENT_PUBLISHED
+--------------------------------------------------------------------------------
+Title       : "New announcement"
+              "New pinned announcement" (if is_pinned)
+Body        : "<announcement title>: <first 140 chars of description>…"
+Deep-link   : reference_type = "announcement"
+              reference_id   = <announcement_id>
+On tap      : Open "Announcements" focused on that announcement
+              Pin icon if pinned, otherwise neutral bell icon
+
+Notes:
+  - Fires once per active org member when an admin publishes.
+  - The publishing admin does NOT receive their own announcement.
+  - Priority mapping from announcement:
+        NORMAL  -> NORMAL
+        HIGH    -> HIGH
+        URGENT  -> HIGH  (Notification model has no URGENT)
+  - Push is sent (this is the highest-reach event in the system).
+  - Project chat messages do NOT notify — real-time chat has its own
+    polling; see Projects app doc for chat endpoints.
+
+================================================================================

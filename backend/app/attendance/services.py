@@ -177,6 +177,42 @@ def models_q_effective_to(work_date):
     )
 
 
+# def get_shift_datetimes(shift, work_date, attendance_settings):
+#     if shift:
+#         start_time = shift.start_time
+#         end_time = shift.end_time
+#     else:
+#         start_time = attendance_settings.default_start_time
+#         end_time = attendance_settings.default_end_time
+
+#     scheduled_start = timezone.make_aware(
+#         datetime.combine(work_date, start_time),
+#         timezone.get_current_timezone(),
+#     )
+
+#     crosses_midnight = (
+#         shift.crosses_midnight
+#         if shift
+#         else end_time < start_time
+#     )
+
+#     end_date = (
+#         work_date + timedelta(days=1)
+#         if crosses_midnight or end_time < start_time
+#         else work_date
+#     )
+
+#     scheduled_end = timezone.make_aware(
+#         datetime.combine(end_date, end_time),
+#         timezone.get_current_timezone(),
+#     )
+
+#     return scheduled_start, scheduled_end
+
+
+from zoneinfo import ZoneInfo
+from django.conf import settings
+
 def get_shift_datetimes(shift, work_date, attendance_settings):
     if shift:
         start_time = shift.start_time
@@ -185,10 +221,15 @@ def get_shift_datetimes(shift, work_date, attendance_settings):
         start_time = attendance_settings.default_start_time
         end_time = attendance_settings.default_end_time
 
-    scheduled_start = timezone.make_aware(
-        datetime.combine(work_date, start_time),
-        timezone.get_current_timezone(),
-    )
+    # 1. Get the local timezone (Asia/Kolkata)
+    tz = ZoneInfo(settings.TIME_ZONE)
+
+    # 2. Combine Date and Time
+    naive_start = datetime.combine(work_date, start_time)
+    naive_end = datetime.combine(work_date, end_time)
+
+    # 3. Explicitly make them aware in Asia/Kolkata
+    scheduled_start = naive_start.replace(tzinfo=tz)
 
     crosses_midnight = (
         shift.crosses_midnight
@@ -202,10 +243,8 @@ def get_shift_datetimes(shift, work_date, attendance_settings):
         else work_date
     )
 
-    scheduled_end = timezone.make_aware(
-        datetime.combine(end_date, end_time),
-        timezone.get_current_timezone(),
-    )
+    naive_scheduled_end = datetime.combine(end_date, end_time)
+    scheduled_end = naive_scheduled_end.replace(tzinfo=tz)
 
     return scheduled_start, scheduled_end
 
@@ -328,13 +367,21 @@ def calculate_attendance(attendance):
             0, early_by - attendance.early_departure_grace_minutes
         )
 
-    # Do not calculate overtime until the real checkout is known.
+    # Calculate overtime only after the actual checkout is available.
     attendance.overtime_minutes = 0
     if attendance.check_out and attendance.scheduled_end:
-        attendance.overtime_minutes = max(
+        extra_minutes = max(
             0,
             int((attendance.check_out - attendance.scheduled_end).total_seconds() // 60),
         )
+        minimum_overtime = attendance_settings.overtime_minimum_minutes
+        if extra_minutes >= minimum_overtime:
+            if attendance_settings.overtime_include_threshold:
+                attendance.overtime_minutes = extra_minutes
+            else:
+                attendance.overtime_minutes = (
+                    extra_minutes - minimum_overtime
+                )
 
     if not attendance.check_out:
         if attendance.status != "PENDING_REVIEW":

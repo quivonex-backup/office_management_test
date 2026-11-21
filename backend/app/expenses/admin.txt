@@ -1,0 +1,741 @@
+================================================================================
+EXPENSES APP — ADMIN API REFERENCE
+================================================================================
+
+Base URL   : /
+Method     : All endpoints are POST
+Auth       : Bearer token (IsAuthenticated)
+Envelope   : { "status": true|false, "message": "...", "data": {...}?, "errors": {...}? }
+
+Organization context:
+  - Single-org users: omit organization_id
+  - Multi-org users: include organization_id in body
+
+Who uses this document:
+  - Super admin
+  - Organization owner (Admin role)
+
+"Admin" in this document means:
+  - Super admin (is_superuser = true), OR
+  - The organization's owner (organization.owner == current user)
+
+
+================================================================================
+CONTENT TYPE PER ENDPOINT
+================================================================================
+
+Endpoint                                                    Content-Type
+---------------------------------------------------------   ------------------
+POST /expenses/create/                                      multipart/form-data
+POST /expenses/list/                                        application/json
+POST /expenses/detail/                                      application/json
+POST /expenses/update/                                      multipart/form-data
+POST /expenses/deactivate/                                  application/json
+POST /expenses/recurring/create/                            application/json
+POST /expenses/recurring/list/                              application/json
+POST /expenses/recurring/detail/                            application/json
+POST /expenses/recurring/update/                            application/json
+POST /expenses/recurring/deactivate/                        application/json
+POST /expenses/recurring/entries/create/                    multipart/form-data
+POST /expenses/recurring/entries/update/                    multipart/form-data
+POST /expenses/recurring/entries/deactivate/                application/json
+POST /expenses/reimbursements/list/                         application/json
+POST /expenses/reimbursements/detail/                       application/json
+POST /expenses/reimbursements/review/                       application/json
+POST /expenses/reimbursements/mark-paid/                    application/json
+
+
+================================================================================
+CHOICE ENUMS — FOR UI DROPDOWNS, FILTERS, BADGES
+================================================================================
+
+EXPENSE TYPE (Expense — for normal company expenses):
+  food | travel | utilities | rent | software | cloud | equipment | office
+  maintenance | telephone | marketing | professional_services | other
+
+EXPENSE TYPE (RecurringExpense — different enum, smaller list):
+  electricity | rent | cloud | internet | software | telephone | other
+
+PAYMENT STATUS:
+  paid | unpaid
+
+PAYMENT METHOD (shared by Expense, RecurringExpenseEntry, Reimbursement):
+  cash | bank_transfer | upi | card | cheque | other
+
+RECURRING FREQUENCY:
+  monthly | quarterly | yearly
+
+REIMBURSEMENT STATUS:
+  PENDING | APPROVED | REJECTED | PAID | CANCELLED
+
+
+================================================================================
+SECTION 1 — EXPENSES (COMPANY PAYS VENDOR)
+================================================================================
+
+--------------------------------------------------------------------------------
+1.1  POST /expenses/create/
+--------------------------------------------------------------------------------
+Purpose : Record a company expense (paid to vendor / for project)
+Access  : Admin only
+Content-Type : multipart/form-data
+
+Request fields:
+  title                string, required
+  description          string, optional
+  expense_type         enum (see EXPENSE TYPE), required
+  amount               decimal, required, > 0
+  expense_date         date (YYYY-MM-DD), required
+  due_date             date, optional (must be >= expense_date)
+  vendor               integer, optional (must belong to caller's org)
+  project              integer, optional (must belong to caller's org)
+  payment_status       enum: paid | unpaid (default unpaid)
+  payment_date         date — required if paid, must be null if unpaid
+  payment_method       enum — required if paid, must be null if unpaid
+  reference_number     string — only for paid (must be null if unpaid)
+  notes                string, optional
+  documents            file(s), optional
+
+Request example (FormData):
+  title             = "Google Cloud invoice Oct"
+  description       = "GCP invoice for October"
+  expense_type      = "cloud"
+  amount            = "12450.00"
+  expense_date      = "2026-11-01"
+  payment_status    = "paid"
+  payment_date      = "2026-11-05"
+  payment_method    = "bank_transfer"
+  reference_number  = "NEFT-20261105-001"
+  vendor            = 8
+  project           = 12
+  documents         = <gcp-invoice.pdf>
+
+Response 201:
+{
+  "status": true,
+  "message": "Expense created successfully.",
+  "data": {
+    "id": 210,
+    "expense_number": "EXP-261105-00234",
+    "title": "Google Cloud invoice Oct",
+    "description": "GCP invoice for October",
+    "expense_type": "cloud",
+    "expense_type_display": "Cloud",
+    "amount": "12450.00",
+    "expense_date": "2026-11-01",
+    "due_date": null,
+    "vendor": 8,
+    "vendor_name": "Google India Pvt Ltd",
+    "project": 12,
+    "project_name": "Website Revamp",
+    "payment_status": "paid",
+    "payment_status_display": "Paid",
+    "payment_date": "2026-11-05",
+    "payment_method": "bank_transfer",
+    "payment_method_display": "Bank Transfer",
+    "reference_number": "NEFT-20261105-001",
+    "notes": null,
+    "documents": [
+      {
+        "id": 401,
+        "title": "gcp-invoice.pdf",
+        "file": "https://employee-attendance-media.s3.amazonaws.com/expenses/documents/gcp-invoice.pdf",
+        "description": null,
+        "created_at": "2026-11-05T10:00:00Z"
+      }
+    ],
+    "is_active": true,
+    "created_at": "2026-11-05T10:00:00Z",
+    "updated_at": "2026-11-05T10:00:00Z"
+  }
+}
+
+Response 400 (paid but missing payment_date):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": { "payment_date": ["Payment date is required when status is paid."] }
+}
+
+Response 400 (unpaid but payment fields present):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": { "payment_method": ["Payment method must not be provided when status is unpaid."] }
+}
+
+Response 400 (vendor from another org):
+{
+  "status": false,
+  "message": "Selected vendor does not belong to this organization."
+}
+
+Response 400 (invalid enum values in expense_type, payment_status, or payment_method):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": {
+    "expense_type": ["\"bogus\" is not a valid choice."],
+    "payment_status": ["\"xxx\" is not a valid choice."]
+  }
+}
+
+Response 400 (invalid vendor or project ID):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": {
+    "vendor": ["Invalid pk \"999\" - object does not exist."],
+    "project": ["Invalid pk \"999\" - object does not exist."]
+  }
+}
+
+
+--------------------------------------------------------------------------------
+1.2  POST /expenses/list/
+--------------------------------------------------------------------------------
+Purpose : List company expenses with filters
+Access  : Admin only
+Content-Type : application/json
+
+Request (all optional):
+{
+  "search": "cloud",
+  "expense_type": "cloud",
+  "payment_status": "unpaid",
+  "vendor_id": 8,
+  "project_id": 12,
+  "expense_date_from": "2026-11-01",
+  "expense_date_to": "2026-11-30"
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Expenses fetched successfully.",
+  "data": [
+    {
+      "id": 210,
+      "expense_number": "EXP-261105-00234",
+      "title": "Google Cloud invoice Oct",
+      "description": "GCP invoice for October",
+      "expense_type": "cloud",
+      "expense_type_display": "Cloud",
+      "amount": "12450.00",
+      "expense_date": "2026-11-01",
+      "due_date": null,
+      "vendor": 8,
+      "vendor_name": "Google India Pvt Ltd",
+      "project": 12,
+      "project_name": "Website Revamp",
+      "payment_status": "paid",
+      "payment_status_display": "Paid",
+      "payment_date": "2026-11-05",
+      "payment_method": "bank_transfer",
+      "reference_number": "NEFT-20261105-001",
+      "notes": null,
+      "documents": [ ... ],
+      "is_active": true,
+      "created_at": "2026-11-05T10:00:00Z"
+    }
+  ]
+}
+
+
+--------------------------------------------------------------------------------
+1.3  POST /expenses/detail/
+--------------------------------------------------------------------------------
+Access  : Admin only
+Content-Type : application/json
+
+Request : { "expense_id": 210 }
+
+Response 200: Same shape as 1.1's `data` — full expense.
+
+Response 404: { "status": false, "message": "Expense not found." }
+
+
+--------------------------------------------------------------------------------
+1.4  POST /expenses/update/
+--------------------------------------------------------------------------------
+Content-Type : multipart/form-data
+
+Request fields (any subset):
+  expense_id            integer, required
+  title, description, expense_type, amount, expense_date, due_date,
+  vendor, project, payment_status, payment_date, payment_method,
+  reference_number, notes
+  remove_document_ids   integer(s), optional (repeated)
+  documents             file(s), optional (repeated)
+
+Same validations as create (paid/unpaid consistency, date ordering,
+vendor/project org scoping).
+
+Response 200: { full ExpenseDetailSerializer }
+Response 404: { "status": false, "message": "Expense not found." }
+
+
+--------------------------------------------------------------------------------
+1.5  POST /expenses/deactivate/
+--------------------------------------------------------------------------------
+Content-Type : application/json
+Request : { "expense_id": 210 }
+Response 200:
+{ "status": true, "message": "Expense deactivated successfully." }
+
+
+================================================================================
+SECTION 2 — RECURRING EXPENSES
+================================================================================
+
+--------------------------------------------------------------------------------
+2.1  POST /expenses/recurring/create/
+--------------------------------------------------------------------------------
+Content-Type : application/json
+
+Request :
+{
+  "title": "Office rent - Pune",
+  "description": "Monthly rent for Pune office",
+  "expense_type": "rent",                 // enum (RecurringExpense enum)
+  "vendor": 12,
+  "project": null,
+  "frequency": "monthly",                 // monthly | quarterly | yearly
+  "start_date": "2026-04-01",
+  "end_date": null,
+  "notes": null
+}
+
+Response 201: { full RecurringExpenseDetailSerializer }
+
+Validations:
+  - end_date >= start_date if provided
+  - vendor/project must belong to caller's org and be active
+
+
+--------------------------------------------------------------------------------
+2.2  POST /expenses/recurring/list/
+--------------------------------------------------------------------------------
+Request (all optional):
+{ "search": "rent", "expense_type": "rent", "frequency": "monthly", "vendor_id": 12, "project_id": null }
+
+Response 200: [ RecurringExpenseListSerializer array ]
+
+
+--------------------------------------------------------------------------------
+2.3  POST /expenses/recurring/detail/
+--------------------------------------------------------------------------------
+Request : { "recurring_expense_id": 15 }
+Response 200: {
+  ... RecurringExpenseDetailSerializer fields ...
+  "entries": [ {...entry detail}, {...} ]      // includes documents per entry
+}
+
+
+--------------------------------------------------------------------------------
+2.4  POST /expenses/recurring/update/
+--------------------------------------------------------------------------------
+Content-Type : application/json
+Request : any subset of the create fields + "recurring_expense_id" (required)
+Response 200: { full RecurringExpenseDetailSerializer }
+Response 400 (validation):
+Same validations as /recurring/create/:
+  - end_date >= start_date
+  - vendor must belong to caller's org and be active
+  - project must belong to caller's org and be active
+
+
+--------------------------------------------------------------------------------
+2.5  POST /expenses/recurring/deactivate/
+--------------------------------------------------------------------------------
+Request : { "recurring_expense_id": 15 }
+Response 200: { "status": true, "message": "Recurring expense deactivated successfully." }
+
+
+================================================================================
+SECTION 3 — RECURRING EXPENSE ENTRIES
+================================================================================
+
+--------------------------------------------------------------------------------
+3.1  POST /expenses/recurring/entries/create/
+--------------------------------------------------------------------------------
+Content-Type : multipart/form-data
+
+Request fields:
+  recurring_expense     integer, required
+  year                  integer (2000-2100), required
+  month                 integer (1-12), required
+  amount                decimal > 0, required
+  due_date              date, optional
+  payment_status        paid | unpaid (default unpaid)
+  payment_date          required if paid
+  payment_method        required if paid
+  reference_number      only for paid
+  notes                 string, optional
+  documents             file(s), optional
+
+Unique rule:
+  One entry per (recurring_expense, year, month). Duplicate → 400.
+
+Response 201: { full RecurringExpenseEntryDetailSerializer }
+Response 400 (duplicate):
+{
+  "status": false,
+  "message": "An entry already exists for this recurring expense and month."
+}
+
+
+--------------------------------------------------------------------------------
+3.2  POST /expenses/recurring/entries/update/
+--------------------------------------------------------------------------------
+Content-Type : multipart/form-data
+Request : entry_id (required) + any subset of the create fields + 
+          remove_document_ids (optional, repeated) + documents (optional, repeated)
+Response 200: { full entry detail }
+Response 400 (validation):
+Same validations as /recurring/entries/create/:
+  - year in 2000-2100
+  - month in 1-12
+  - amount > 0
+  - if payment_status=paid: payment_date and payment_method required
+  - if payment_status=unpaid: payment_date, payment_method, reference_number must be null
+Response 400 (unique clash on year/month change):
+{
+  "status": false,
+  "message": "An entry already exists for this recurring expense and month."
+}
+
+
+--------------------------------------------------------------------------------
+3.3  POST /expenses/recurring/entries/deactivate/
+--------------------------------------------------------------------------------
+Content-Type : application/json
+Request : { "entry_id": 220 }
+
+Behavior:
+  - Hard delete (not soft)
+  - Deletes all attached documents from S3
+  - Logs the deletion
+
+Response 200: { "status": true, "message": "Recurring expense entry deleted successfully." }
+
+
+================================================================================
+SECTION 4 — REIMBURSEMENTS (ADMIN VIEW)
+================================================================================
+
+--------------------------------------------------------------------------------
+4.1  POST /expenses/reimbursements/list/
+--------------------------------------------------------------------------------
+Purpose : List all employee reimbursement claims in the org
+Access  : Admin only
+Content-Type : application/json
+
+Request (all optional):
+{
+  "status": "PENDING",                    // PENDING | APPROVED | REJECTED | PAID | CANCELLED
+  "expense_type": "travel",
+  "employee_id": 25,
+  "project_id": 12,
+  "expense_date_from": "2026-11-01",
+  "expense_date_to": "2026-11-30",
+  "search": "cab"
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Reimbursements fetched successfully.",
+  "data": [
+    {
+      "id": 45,
+      "reimbursement_number": "REIMB-261115-00412",
+      "title": "Client visit taxi",
+      "description": "Cab to client site for demo",
+      "expense_type": "travel",
+      "expense_type_display": "Travel",
+      "amount": "450.00",
+      "expense_date": "2026-11-14",
+      "employee": 25,
+      "employee_code": "EMP-000025",
+      "employee_name": "Rahul Patil",
+      "project": 12,
+      "project_name": "Website Revamp",
+      "project_code": "PRJ-000012",
+      "payee_upi_id": "rahul@okhdfcbank",
+      "payee_name": "Rahul Patil",
+      "upi_link": null,
+      "status": "PENDING",
+      "payment_date": null,
+      "payment_method": null,
+      "payment_method_display": null,
+      "payment_reference": null,
+      "created_at": "2026-11-14T18:30:00Z"
+    }
+  ]
+}
+
+NOTE: `upi_link` is null on PENDING. It appears only in APPROVED responses.
+
+
+--------------------------------------------------------------------------------
+4.2  POST /expenses/reimbursements/detail/
+--------------------------------------------------------------------------------
+Purpose : View one reimbursement — SHARED with employee (scoped per caller)
+Access  : Admin (any in org) + Employee (own only)
+Content-Type : application/json
+
+Request : { "reimbursement_id": 45 }
+
+Response 200:
+{
+  "status": true,
+  "message": "Reimbursement details fetched successfully.",
+  "data": {
+    "id": 45,
+    "reimbursement_number": "REIMB-261115-00412",
+    "organization": 5,
+    "title": "Client visit taxi",
+    "description": "Cab to client site for demo",
+    "expense_type": "travel",
+    "expense_type_display": "Travel",
+    "amount": "450.00",
+    "expense_date": "2026-11-14",
+    "employee": 25,
+    "employee_code": "EMP-000025",
+    "employee_name": "Rahul Patil",
+    "project": 12,
+    "project_name": "Website Revamp",
+    "project_code": "PRJ-000012",
+    "payee_upi_id": "rahul@okhdfcbank",
+    "payee_name": "Rahul Patil",
+    "upi_link": null,
+    "status": "PENDING",
+    "reviewed_by_details": null,
+    "reviewed_at": null,
+    "review_notes": null,
+    "rejection_reason": null,
+    "payment_date": null,
+    "payment_method": null,
+    "payment_method_display": null,
+    "payment_reference": null,
+    "paid_by_details": null,
+    "documents": [
+      {
+        "id": 301,
+        "title": "taxi-receipt.jpg",
+        "file": "https://employee-attendance-media.s3.amazonaws.com/expenses/reimbursements/documents/taxi-receipt.jpg",
+        "description": null,
+        "created_at": "2026-11-14T18:30:00Z"
+      }
+    ],
+    "is_active": true,
+    "created_at": "2026-11-14T18:30:00Z",
+    "updated_at": "2026-11-14T18:30:00Z"
+  }
+}
+
+Response 404 (not in org / doesn't exist):
+{ "status": false, "message": "Reimbursement not found." }
+
+
+--------------------------------------------------------------------------------
+4.3  POST /expenses/reimbursements/review/
+--------------------------------------------------------------------------------
+Purpose : Approve or reject a pending reimbursement
+Access  : Admin only
+Content-Type : application/json
+
+Request — approve:
+{
+  "reimbursement_id": 45,
+  "approve": true,
+  "review_notes": "Approved for client visit"
+}
+
+Request — reject:
+{
+  "reimbursement_id": 45,
+  "approve": false,
+  "rejection_reason": "Receipt unclear, please resubmit"
+}
+
+Response 200 (approve):
+{
+  "status": true,
+  "message": "Reimbursement approved.",
+  "data": {
+    "id": 45,
+    "reimbursement_number": "REIMB-261115-00412",
+    ...
+    "status": "APPROVED",
+    "payee_upi_id": "rahul@okhdfcbank",
+    "payee_name": "Rahul Patil",
+    "upi_link": "upi://pay?pa=rahul%40okhdfcbank&pn=Rahul%20Patil&am=450.00&cu=INR&tn=REIMB-261115-00412%20-%20Client%20visit%20taxi",
+    "reviewed_by_details": {
+      "id": 2,
+      "name": "Admin User",
+      "email": "admin@acme.com"
+    },
+    "reviewed_at": "2026-11-15T10:00:00Z",
+    "review_notes": "Approved for client visit",
+    "rejection_reason": null,
+    "payment_date": null,
+    "payment_method": null,
+    "payment_reference": null,
+    "paid_by_details": null,
+    ...
+  }
+}
+
+Response 200 (reject): same shape, `status: "REJECTED"`, `upi_link: null`,
+`rejection_reason` populated.
+
+Response 400 (reject without reason):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": { "rejection_reason": ["Rejection reason is required when rejecting."] }
+}
+
+Response 400 (not PENDING):
+{
+  "status": false,
+  "message": "Only PENDING reimbursements can be reviewed. Current status: APPROVED."
+}
+
+
+--------------------------------------------------------------------------------
+4.4  POST /expenses/reimbursements/mark-paid/
+--------------------------------------------------------------------------------
+Purpose : Record payment after the UPI/bank transfer is done
+Access  : Admin only
+Content-Type : application/json
+
+Request :
+{
+  "reimbursement_id": 45,
+  "payment_date": "2026-11-15",
+  "payment_method": "upi",                     // cash | bank_transfer | upi | card | cheque | other
+  "payment_reference": "UPI-20261115-ABC123"   // optional but recommended
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Reimbursement marked as paid.",
+  "data": {
+    "id": 45,
+    "reimbursement_number": "REIMB-261115-00412",
+    ...
+    "status": "PAID",
+    "upi_link": null,
+    "payment_date": "2026-11-15",
+    "payment_method": "upi",
+    "payment_method_display": "UPI",
+    "payment_reference": "UPI-20261115-ABC123",
+    "paid_by_details": {
+      "id": 2,
+      "name": "Admin User",
+      "email": "admin@acme.com"
+    },
+    ...
+  }
+}
+
+Response 400 (not APPROVED):
+{
+  "status": false,
+  "message": "Only APPROVED reimbursements can be marked paid. Current status: PENDING."
+}
+
+Response 400 (invalid payment_method):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": {
+    "payment_method": ["\"bogus\" is not a valid choice."]
+  }
+}
+
+
+================================================================================
+QUICK REFERENCE — ADMIN ENDPOINTS
+================================================================================
+
+EXPENSES (5)
+  POST /expenses/create/                          multipart
+  POST /expenses/list/                            JSON
+  POST /expenses/detail/                          JSON
+  POST /expenses/update/                          multipart
+  POST /expenses/deactivate/                      JSON
+
+RECURRING EXPENSES (5)
+  POST /expenses/recurring/create/                JSON
+  POST /expenses/recurring/list/                  JSON
+  POST /expenses/recurring/detail/                JSON
+  POST /expenses/recurring/update/                JSON
+  POST /expenses/recurring/deactivate/            JSON
+
+RECURRING EXPENSE ENTRIES (3)
+  POST /expenses/recurring/entries/create/        multipart
+  POST /expenses/recurring/entries/update/        multipart
+  POST /expenses/recurring/entries/deactivate/    JSON
+
+REIMBURSEMENTS (4)
+  POST /expenses/reimbursements/list/             JSON
+  POST /expenses/reimbursements/detail/           JSON  (shared with employee)
+  POST /expenses/reimbursements/review/           JSON
+  POST /expenses/reimbursements/mark-paid/        JSON
+
+TOTAL ADMIN ENDPOINTS: 17
+
+
+================================================================================
+KEY NOTES FOR FRONTEND — ADMIN SIDE
+================================================================================
+
+1. EXPENSE vs RECURRING EXPENSE — DIFFERENT ENUMS.
+   Expense.expense_type has 13 values (food, travel, ..., professional_services, other).
+   RecurringExpense.expense_type has 7 values (electricity, rent, cloud,
+   internet, software, telephone, other). Use the right enum in each UI dropdown.
+
+2. PAID/UNPAID CONSISTENCY.
+   paid   → payment_date + payment_method required, reference_number optional
+   unpaid → payment_date, payment_method, reference_number must all be null
+   Validation rejects any mismatch.
+
+3. RECURRING ENTRY UNIQUENESS.
+   One entry per (recurring_expense, month, year). Duplicates → 400 with
+   clear message. Admin must delete the existing entry or change month/year.
+
+4. RECURRING ENTRY DEACTIVATE IS HARD DELETE.
+   Unlike Expense and RecurringExpense (soft delete), the entry deactivate
+   endpoint hard-deletes the row and removes all attached documents from S3.
+   The audit log preserves the deletion record.
+
+5. REIMBURSEMENT FLOW IS TWO-STEP.
+   PENDING → APPROVED → PAID
+           → REJECTED (terminal)
+           → CANCELLED (terminal, employee-initiated)
+
+   Admin duties:
+   - review/       → move PENDING to APPROVED or REJECTED
+   - mark-paid/    → move APPROVED to PAID
+
+6. UPI LINK APPEARS ONLY ON APPROVED.
+   The `upi_link` field is:
+     null    → status is PENDING, REJECTED, CANCELLED, or PAID
+     "upi://" → status is APPROVED AND employee has a UPI
+
+   Frontend uses `upi_link` to render the QR code / "Open UPI App" button.
+   Present it only while status is APPROVED.
+
+7. REVIEW ENFORCES REJECTION REASON.
+   Rejecting without `rejection_reason` → 400. The employee sees this
+   reason in their app.
+
+8. SHARED DETAIL ENDPOINT.
+   /reimbursements/detail/ works for both admin and employee. Admin sees
+   any claim in the org; employee sees only their own. Employee hitting
+   someone else's claim → 404 (not 403) to avoid leaking existence.

@@ -1,21 +1,34 @@
 from django.db import transaction
 from django.db.models import Q
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from .models import (
-    Expense, ExpenseDocument, RecurringExpense, RecurringExpenseEntry, RecurringExpenseEntryDocument,
+    Expense,
+    ExpenseDocument,
+    RecurringExpense,
+    RecurringExpenseEntry,
+    RecurringExpenseEntryDocument,
+    EmployeeReimbursement,
+    EmployeeReimbursementDocument,
 )
 from .serializers import (
     ExpenseCreateSerializer, ExpenseListSerializer, ExpenseDetailSerializer, ExpenseUpdateSerializer,
     RecurringExpenseCreateSerializer, RecurringExpenseListSerializer, RecurringExpenseDetailSerializer,
     RecurringExpenseUpdateSerializer, RecurringExpenseEntryCreateSerializer,
     RecurringExpenseEntryDetailSerializer, RecurringExpenseEntryUpdateSerializer,
+    EmployeeReimbursementCreateSerializer, EmployeeReimbursementListSerializer, EmployeeReimbursementDetailSerializer,
+    EmployeeReimbursementReviewSerializer, EmployeeReimbursementMarkPaidSerializer,
 )
-from common.services import get_user_organization
+from common.services import get_user_organization, get_current_employee
 from common.s3_utils import upload_to_s3, delete_from_s3
-from common.code_generators import generate_expense_code
+from common.code_generators import (
+    generate_expense_code,
+    generate_reimbursement_code,
+)
+from app.communications.notification_service import notify
 from app.audit.services import log_activity
 
 
@@ -1064,5 +1077,745 @@ class RecurringExpenseEntryDeactivateAPIView(APIView):
 
         return Response(
             {"status": True, "message": "Recurring expense entry deleted successfully."},
+            status=status.HTTP_200_OK,
+        )
+
+
+# =========================================================
+# CREATE REIMBURSEMENT (EMPLOYEE)
+# =========================================================
+class EmployeeReimbursementCreateAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request):
+        organization, error_response = get_user_organization(request)
+        if error_response:
+            return error_response
+
+        employee, error_response = get_current_employee(request)
+        if error_response:
+            return error_response
+
+        if employee.organization_id != organization.id:
+            return Response(
+                {
+                    "status": False,
+                    "message": (
+                        "Your employee profile does not belong to "
+                        "this organization."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        data = request.data.copy()
+        data.pop("organization_id", None)
+
+        serializer = EmployeeReimbursementCreateSerializer(
+            data=data,
+            context={"organization": organization},
+        )
+
+        if not serializer.is_valid():
+            return Response(
+                {
+                    "status": False,
+                    "message": "Validation failed.",
+                    "errors": serializer.errors,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Resolve payee_upi_id: request wins, else fall back to Employee.upi_id
+        payee_upi_id = serializer.validated_data.get("payee_upi_id")
+        if not payee_upi_id:
+            payee_upi_id = employee.upi_id
+
+        reimbursement = serializer.save(
+            organization=organization,
+            employee=employee,
+            payee_upi_id=payee_upi_id,
+            reimbursement_number=generate_reimbursement_code(),
+            status="PENDING",
+            created_by=request.user,
+            updated_by=request.user,
+        )
+
+        files = request.FILES.getlist("documents")
+        uploaded_documents = []
+
+        for file in files:
+            file_path = upload_to_s3(
+                file=file,
+                folder="expenses/reimbursements/documents",
+            )
+
+            document = EmployeeReimbursementDocument.objects.create(
+                reimbursement=reimbursement,
+                title=file.name,
+                file=file_path,
+                uploaded_by=request.user,
+            )
+
+            uploaded_documents.append(
+                {
+                    "id": document.id,
+                    "title": document.title,
+                    "file": document.file.name,
+                }
+            )
+
+        log_activity(
+            request=request,
+            action="CREATE",
+            module="REIMBURSEMENT",
+            object_type="EmployeeReimbursement",
+            object_id=reimbursement.id,
+            description=(
+                f"Reimbursement {reimbursement.reimbursement_number} "
+                f"submitted by {employee.employee_code}."
+            ),
+            new_data={
+                "reimbursement_number": reimbursement.reimbursement_number,
+                "employee": employee.id,
+                "employee_code": employee.employee_code,
+                "title": reimbursement.title,
+                "expense_type": reimbursement.expense_type,
+                "amount": reimbursement.amount,
+                "expense_date": reimbursement.expense_date,
+                "project": reimbursement.project_id,
+                "organization_id": organization.id,
+                "payee_upi_id": reimbursement.payee_upi_id,
+                "status": reimbursement.status,
+                "documents": uploaded_documents,
+            },
+        )
+
+        # ---- Notify admin of reimbursement submission ----
+        admin_user = None
+        if organization.owner_id:
+            admin_user = organization.owner
+
+        if admin_user:
+            transaction.on_commit(lambda: notify(
+                users=admin_user,
+                event_code="REIMBURSEMENT_SUBMITTED",
+                title="Reimbursement claim submitted",
+                body=(
+                    f"{employee.employee_code} submitted a claim of "
+                    f"₹{reimbursement.amount} for "
+                    f"'{reimbursement.title}'."
+                ),
+                reference_type="reimbursement",
+                reference_id=reimbursement.id,
+                priority="HIGH",
+            ))
+
+        return Response(
+            {
+                "status": True,
+                "message": "Reimbursement claim submitted successfully.",
+                "data": EmployeeReimbursementDetailSerializer(
+                    reimbursement,
+                    context={"request": request},
+                ).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+# =========================================================
+# MY REIMBURSEMENTS (EMPLOYEE)
+# =========================================================
+class EmployeeReimbursementMyListAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        organization, error_response = get_user_organization(request)
+        if error_response:
+            return error_response
+
+        employee, error_response = get_current_employee(request)
+        if error_response:
+            return error_response
+
+        reimbursements = (
+            EmployeeReimbursement.objects.filter(
+                organization=organization,
+                employee=employee,
+                is_active=True,
+            )
+            .select_related("employee", "project")
+            .order_by("-expense_date", "-created_at")
+        )
+
+        status_filter = request.data.get("status")
+        expense_type = request.data.get("expense_type")
+        search = request.data.get("search")
+
+        if status_filter:
+            reimbursements = reimbursements.filter(status=status_filter)
+
+        if expense_type:
+            reimbursements = reimbursements.filter(
+                expense_type=expense_type
+            )
+
+        if search:
+            search = search.strip()
+            reimbursements = reimbursements.filter(
+                Q(reimbursement_number__icontains=search)
+                | Q(title__icontains=search)
+                | Q(description__icontains=search)
+            )
+
+        serializer = EmployeeReimbursementListSerializer(
+            reimbursements,
+            many=True,
+            context={"request": request},
+        )
+
+        return Response(
+            {
+                "status": True,
+                "message": "Reimbursements fetched successfully.",
+                "data": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+# =========================================================
+# REIMBURSEMENT DETAIL (EMPLOYEE + ADMIN)
+# =========================================================
+class EmployeeReimbursementDetailAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        reimbursement_id = request.data.get("reimbursement_id")
+        if not reimbursement_id:
+            return Response(
+                {"status": False, "message": "reimbursement_id is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        organization, error_response = get_user_organization(request)
+        if error_response:
+            return error_response
+
+        queryset = (
+            EmployeeReimbursement.objects.filter(
+                id=reimbursement_id,
+                organization=organization,
+                is_active=True,
+            )
+            .select_related(
+                "employee",
+                "project",
+                "reviewed_by",
+                "paid_by",
+            )
+            .prefetch_related("documents")
+        )
+
+        is_admin = (
+            request.user.is_superuser
+            or organization.owner_id == request.user.id
+        )
+
+        if not is_admin:
+            employee = getattr(request.user, "employee_profile", None)
+
+            if not employee or not employee.is_active:
+                return Response(
+                    {
+                        "status": False,
+                        "message": (
+                            "No active employee profile linked to "
+                            "your account."
+                        ),
+                    },
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            queryset = queryset.filter(employee=employee)
+
+        reimbursement = queryset.first()
+
+        if not reimbursement:
+            return Response(
+                {"status": False, "message": "Reimbursement not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        return Response(
+            {
+                "status": True,
+                "message": "Reimbursement details fetched successfully.",
+                "data": EmployeeReimbursementDetailSerializer(
+                    reimbursement,
+                    context={"request": request},
+                ).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+# =========================================================
+# CANCEL MY REIMBURSEMENT (EMPLOYEE)
+# =========================================================
+class EmployeeReimbursementCancelAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request):
+        reimbursement_id = request.data.get("reimbursement_id")
+        if not reimbursement_id:
+            return Response(
+                {"status": False, "message": "reimbursement_id is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        organization, error_response = get_user_organization(request)
+        if error_response:
+            return error_response
+
+        employee, error_response = get_current_employee(request)
+        if error_response:
+            return error_response
+
+        reimbursement = (
+            EmployeeReimbursement.objects.filter(
+                id=reimbursement_id,
+                organization=organization,
+                employee=employee,
+                is_active=True,
+            )
+            .select_related("employee")
+            .first()
+        )
+
+        if not reimbursement:
+            return Response(
+                {"status": False, "message": "Reimbursement not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if reimbursement.status != "PENDING":
+            return Response(
+                {
+                    "status": False,
+                    "message": (
+                        "Only PENDING reimbursements can be cancelled. "
+                        f"Current status: {reimbursement.status}."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        old_status = reimbursement.status
+        reimbursement.status = "CANCELLED"
+        reimbursement.updated_by = request.user
+        reimbursement.save(
+            update_fields=["status", "updated_by", "updated_at"]
+        )
+
+        log_activity(
+            request=request,
+            action="UPDATE",
+            module="REIMBURSEMENT",
+            object_type="EmployeeReimbursement",
+            object_id=reimbursement.id,
+            description=(
+                f"Reimbursement {reimbursement.reimbursement_number} "
+                "cancelled by employee."
+            ),
+            old_data={"status": old_status},
+            new_data={"status": "CANCELLED"},
+        )
+
+        return Response(
+            {
+                "status": True,
+                "message": "Reimbursement cancelled successfully.",
+                "data": EmployeeReimbursementDetailSerializer(
+                    reimbursement,
+                    context={"request": request},
+                ).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+# =========================================================
+# REIMBURSEMENT LIST (ADMIN)
+# =========================================================
+class EmployeeReimbursementListAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        organization, error_response = get_user_organization(request)
+        if error_response:
+            return error_response
+
+        reimbursements = (
+            EmployeeReimbursement.objects.filter(
+                organization=organization,
+                is_active=True,
+            )
+            .select_related("employee", "project")
+            .order_by("-expense_date", "-created_at")
+        )
+
+        status_filter = request.data.get("status")
+        expense_type = request.data.get("expense_type")
+        employee_id = request.data.get("employee_id")
+        project_id = request.data.get("project_id")
+        expense_date_from = request.data.get("expense_date_from")
+        expense_date_to = request.data.get("expense_date_to")
+        search = request.data.get("search")
+
+        if status_filter:
+            reimbursements = reimbursements.filter(status=status_filter)
+
+        if expense_type:
+            reimbursements = reimbursements.filter(
+                expense_type=expense_type
+            )
+
+        if employee_id:
+            reimbursements = reimbursements.filter(employee_id=employee_id)
+
+        if project_id:
+            reimbursements = reimbursements.filter(project_id=project_id)
+
+        if expense_date_from:
+            reimbursements = reimbursements.filter(
+                expense_date__gte=expense_date_from
+            )
+
+        if expense_date_to:
+            reimbursements = reimbursements.filter(
+                expense_date__lte=expense_date_to
+            )
+
+        if search:
+            search = search.strip()
+            reimbursements = reimbursements.filter(
+                Q(reimbursement_number__icontains=search)
+                | Q(title__icontains=search)
+                | Q(description__icontains=search)
+                | Q(employee__employee_code__icontains=search)
+                | Q(employee__first_name__icontains=search)
+                | Q(employee__last_name__icontains=search)
+            )
+
+        serializer = EmployeeReimbursementListSerializer(
+            reimbursements,
+            many=True,
+            context={"request": request},
+        )
+
+        return Response(
+            {
+                "status": True,
+                "message": "Reimbursements fetched successfully.",
+                "data": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+# =========================================================
+# REVIEW REIMBURSEMENT (ADMIN)
+# =========================================================
+class EmployeeReimbursementReviewAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request):
+        organization, error_response = get_user_organization(request)
+        if error_response:
+            return error_response
+
+        serializer = EmployeeReimbursementReviewSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                {
+                    "status": False,
+                    "message": "Validation failed.",
+                    "errors": serializer.errors,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        reimbursement = (
+            EmployeeReimbursement.objects.filter(
+                id=serializer.validated_data["reimbursement_id"],
+                organization=organization,
+                is_active=True,
+            )
+            .select_related("employee", "project")
+            .first()
+        )
+
+        if not reimbursement:
+            return Response(
+                {"status": False, "message": "Reimbursement not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if reimbursement.status != "PENDING":
+            return Response(
+                {
+                    "status": False,
+                    "message": (
+                        "Only PENDING reimbursements can be reviewed. "
+                        f"Current status: {reimbursement.status}."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        approve = serializer.validated_data["approve"]
+        review_notes = serializer.validated_data.get("review_notes") or ""
+        rejection_reason = (
+            serializer.validated_data.get("rejection_reason") or ""
+        )
+
+        old_data = {
+            "status": reimbursement.status,
+            "review_notes": reimbursement.review_notes,
+            "rejection_reason": reimbursement.rejection_reason,
+        }
+
+        reimbursement.reviewed_by = request.user
+        reimbursement.reviewed_at = timezone.now()
+        reimbursement.review_notes = review_notes
+        reimbursement.updated_by = request.user
+
+        if approve:
+            reimbursement.status = "APPROVED"
+            reimbursement.rejection_reason = None
+        else:
+            reimbursement.status = "REJECTED"
+            reimbursement.rejection_reason = rejection_reason
+
+        reimbursement.save(
+            update_fields=[
+                "status",
+                "reviewed_by",
+                "reviewed_at",
+                "review_notes",
+                "rejection_reason",
+                "updated_by",
+                "updated_at",
+            ]
+        )
+
+        log_activity(
+            request=request,
+            action="UPDATE",
+            module="REIMBURSEMENT",
+            object_type="EmployeeReimbursement",
+            object_id=reimbursement.id,
+            description=(
+                f"Reimbursement {reimbursement.reimbursement_number} "
+                f"{'approved' if approve else 'rejected'}."
+            ),
+            old_data=old_data,
+            new_data={
+                "status": reimbursement.status,
+                "review_notes": reimbursement.review_notes,
+                "rejection_reason": reimbursement.rejection_reason,
+            },
+        )
+
+        # ---- Notify employee of review outcome ----
+        if reimbursement.employee.user_id:
+            if approve:
+                notif_title = "Reimbursement approved"
+                notif_body = (
+                    f"Your claim of ₹{reimbursement.amount} for "
+                    f"'{reimbursement.title}' has been approved. "
+                    f"Payment will be processed shortly."
+                )
+                notif_priority = "NORMAL"
+            else:
+                notif_title = "Reimbursement rejected"
+                notif_body = (
+                    f"Your claim of ₹{reimbursement.amount} for "
+                    f"'{reimbursement.title}' was rejected."
+                )
+                if rejection_reason:
+                    notif_body += f" Reason: {rejection_reason}"
+                notif_priority = "HIGH"
+
+            transaction.on_commit(lambda: notify(
+                users=reimbursement.employee.user,
+                event_code=(
+                    "REIMBURSEMENT_APPROVED" if approve
+                    else "REIMBURSEMENT_REJECTED"
+                ),
+                title=notif_title,
+                body=notif_body,
+                reference_type="reimbursement",
+                reference_id=reimbursement.id,
+                priority=notif_priority,
+            ))
+
+        return Response(
+            {
+                "status": True,
+                "message": (
+                    "Reimbursement approved."
+                    if approve
+                    else "Reimbursement rejected."
+                ),
+                "data": EmployeeReimbursementDetailSerializer(
+                    reimbursement,
+                    context={"request": request},
+                ).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+# =========================================================
+# MARK REIMBURSEMENT AS PAID (ADMIN)
+# =========================================================
+class EmployeeReimbursementMarkPaidAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request):
+        organization, error_response = get_user_organization(request)
+        if error_response:
+            return error_response
+
+        serializer = EmployeeReimbursementMarkPaidSerializer(
+            data=request.data
+        )
+        if not serializer.is_valid():
+            return Response(
+                {
+                    "status": False,
+                    "message": "Validation failed.",
+                    "errors": serializer.errors,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        reimbursement = (
+            EmployeeReimbursement.objects.filter(
+                id=serializer.validated_data["reimbursement_id"],
+                organization=organization,
+                is_active=True,
+            )
+            .select_related("employee", "project")
+            .first()
+        )
+
+        if not reimbursement:
+            return Response(
+                {"status": False, "message": "Reimbursement not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if reimbursement.status != "APPROVED":
+            return Response(
+                {
+                    "status": False,
+                    "message": (
+                        "Only APPROVED reimbursements can be marked paid. "
+                        f"Current status: {reimbursement.status}."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        old_data = {
+            "status": reimbursement.status,
+            "payment_date": reimbursement.payment_date,
+            "payment_method": reimbursement.payment_method,
+            "payment_reference": reimbursement.payment_reference,
+        }
+
+        reimbursement.status = "PAID"
+        reimbursement.payment_date = serializer.validated_data[
+            "payment_date"
+        ]
+        reimbursement.payment_method = serializer.validated_data[
+            "payment_method"
+        ]
+        reimbursement.payment_reference = (
+            serializer.validated_data.get("payment_reference") or None
+        )
+        reimbursement.paid_by = request.user
+        reimbursement.updated_by = request.user
+
+        reimbursement.save(
+            update_fields=[
+                "status",
+                "payment_date",
+                "payment_method",
+                "payment_reference",
+                "paid_by",
+                "updated_by",
+                "updated_at",
+            ]
+        )
+
+        log_activity(
+            request=request,
+            action="UPDATE",
+            module="REIMBURSEMENT",
+            object_type="EmployeeReimbursement",
+            object_id=reimbursement.id,
+            description=(
+                f"Reimbursement {reimbursement.reimbursement_number} "
+                "marked as paid."
+            ),
+            old_data=old_data,
+            new_data={
+                "status": reimbursement.status,
+                "payment_date": str(reimbursement.payment_date),
+                "payment_method": reimbursement.payment_method,
+                "payment_reference": reimbursement.payment_reference,
+            },
+        )
+
+        # ---- Notify employee that reimbursement was paid ----
+        if reimbursement.employee.user_id:
+            payment_method_display = (
+                reimbursement.get_payment_method_display()
+                if reimbursement.payment_method
+                else "the recorded payment method"
+            )
+
+            transaction.on_commit(lambda: notify(
+                users=reimbursement.employee.user,
+                event_code="REIMBURSEMENT_PAID",
+                title="Reimbursement paid",
+                body=(
+                    f"₹{reimbursement.amount} has been paid for "
+                    f"'{reimbursement.title}' via "
+                    f"{payment_method_display}."
+                ),
+                reference_type="reimbursement",
+                reference_id=reimbursement.id,
+                priority="HIGH",
+            ))
+
+        return Response(
+            {
+                "status": True,
+                "message": "Reimbursement marked as paid.",
+                "data": EmployeeReimbursementDetailSerializer(
+                    reimbursement,
+                    context={"request": request},
+                ).data,
+            },
             status=status.HTTP_200_OK,
         )

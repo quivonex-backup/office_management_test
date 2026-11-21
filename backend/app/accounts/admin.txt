@@ -1,0 +1,511 @@
+================================================================================
+ACCOUNTS / ORGANIZATION APP — ADMIN (ORG OWNER) API REFERENCE
+================================================================================
+
+Base URL       : /
+Method         : All endpoints are POST
+Auth           : Bearer token (IsAuthenticated) unless marked PUBLIC
+Envelope       : { "status": true|false, "message": "...", "data": {...}?, "errors": {...}? }
+
+Who uses this document:
+  - Organization owner (organization.owner == current user)
+  - The Admin role holder for a specific organization
+  - Business owners who manage their own tenant
+
+What Admin owns:
+  - Their organization's profile (logo, address, contact)
+  - Assigning new members to the org (subject to role restrictions)
+  - Deactivating their own organization (rare — usually only on closure)
+  - All org-scoped business operations (projects, employees, attendance,
+    payroll, expenses, leave, communications — covered in other apps)
+
+What Admin DOES NOT do here:
+  - Create organizations (super admin)
+  - Create users (super admin)
+  - Create roles (super admin)
+  - Assign org ownership (super admin)
+
+
+================================================================================
+BOOTSTRAP ORDER — ORG SETUP (WHAT SUPER ADMIN DID FOR YOU)
+================================================================================
+
+  STEP 1 — Super admin created your organization
+    └─ You received an owner assignment
+
+  STEP 2 — Super admin assigned you as owner
+    └─ Your User.role is now "Admin"
+    └─ Your OrganizationMembership is active
+
+  STEP 3 — You configure the org profile
+    └─ POST /accounts/organization/update/
+       Add logo, address, contact info, etc.
+
+  STEP 4 — You invite members
+    └─ Super admin creates the users (User rows)
+    └─ You assign them to your org via /accounts/organization/assign-user/
+
+  STEP 5 — You build your team
+    └─ /employees/create/ — create Employee HR records for those users
+    └─ /employees/create-user/ — OR link existing users to Employees
+
+NOTE: Admin ≠ Employee in the system. As an Admin (org owner), you do
+      NOT have a row in the Employee table. You have a User row. If you
+      also need to be tracked as an Employee (for attendance, payroll,
+      etc.), the super admin must create an Employee record for your
+      user separately.
+
+
+================================================================================
+SECTION 1 — AUTHENTICATION (ADMIN + SHARED)
+================================================================================
+
+--------------------------------------------------------------------------------
+1.1  POST /accounts/login/
+--------------------------------------------------------------------------------
+Auth : PUBLIC
+Purpose : Authenticate. Returns JWT + user object.
+
+Request :
+{
+  "username": "rahul",
+  "password": "SecurePass@123"
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Login successful.",
+  "data": {
+    "access": "eyJ0eXAi...",
+    "refresh": "eyJ0eXAi...",
+    "user": {
+      "id": 25,
+      "username": "rahul",
+      "first_name": "Rahul",
+      "last_name": "Patil",
+      "email": "rahul@example.com",
+      "mobile": "9876543210",
+      "profile_photo": "users/profile/abc.jpg",
+      "role": 1,
+      "role_details": {
+        "id": 1,
+        "name": "Admin",
+        "is_active": true,
+        "created_at": "...",
+        "updated_at": "..."
+      },
+      "is_active": true,
+      "date_joined": "...",
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  }
+}
+
+NOTE: role_details.name = "Admin" is how the frontend knows this is
+      an org owner. Combined with the /my-organizations/ response
+      (which includes the owned org), the UI can determine "this user
+      is an Admin of org X."
+
+--------------------------------------------------------------------------------
+1.2  POST /accounts/refresh-token/
+--------------------------------------------------------------------------------
+Auth : PUBLIC
+Purpose : Exchange a valid refresh token for a new access + refresh pair.
+
+Request :
+{ "refresh": "eyJ0eXAi..." }
+
+Response 200:
+{
+  "status": true,
+  "message": "Token refreshed successfully.",
+  "data": {
+    "access": "eyJ0eXAi...new...",
+    "refresh": "eyJ0eXAi...new..."
+  }
+}
+
+⚠ REFRESH ROTATION IS ON — overwrite BOTH tokens.
+   Reusing the old refresh token → 401.
+
+Response 401 (invalid/expired/blacklisted):
+{ "status": false, "message": "Invalid or expired refresh token. Please login again." }
+
+Response 401 (user deactivated):
+{ "status": false, "message": "User not found or inactive." }
+
+
+================================================================================
+SECTION 2 — MY PROFILE (ADMIN + SHARED)
+================================================================================
+
+--------------------------------------------------------------------------------
+2.1  POST /accounts/my-profile/
+--------------------------------------------------------------------------------
+Auth : Any authenticated user
+Purpose : Fetch own profile.
+
+Request : {}
+
+Response 200: { ...full user object... }
+
+--------------------------------------------------------------------------------
+2.2  POST /accounts/my-profile/update/
+--------------------------------------------------------------------------------
+Auth : Any authenticated user
+Purpose : Update own profile. Cannot change role or is_active.
+Type : multipart/form-data
+
+Request :
+{
+  "first_name": "Rahul",
+  "last_name": "Patil",
+  "email": "rahul.new@example.com",
+  "mobile": "9876543211",
+  "profile_photo": <file>
+}
+
+Response 200: { ...full user object... }
+
+Response 400 (uniqueness):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": {
+    "email": ["user with this email already exists."],
+    "mobile": ["user with this mobile already exists."]
+  }
+}
+
+NOTE:
+  - Partial update.
+  - Old photo deleted from S3 after successful save.
+  - Audit log "UPDATE USER".
+
+--------------------------------------------------------------------------------
+2.3  POST /accounts/change-password/
+--------------------------------------------------------------------------------
+Auth : Any authenticated user
+Purpose : Change own password (requires old password).
+
+Request :
+{
+  "old_password": "SecurePass@123",
+  "new_password": "NewPass@456",
+  "confirm_password": "NewPass@456"
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Password changed successfully. Please login again.",
+  "data": null
+}
+
+Response 400 variants:
+{ "status": false, "message": "Old password is required." }
+{ "status": false, "message": "New password is required." }
+{ "status": false, "message": "Confirm password is required." }
+{ "status": false, "message": "Old password is incorrect." }
+{ "status": false, "message": "New password and confirm password do not match." }
+{ "status": false, "message": "New password cannot be the same as old password." }
+
+NOTE:
+  - ⚠ Django validators are currently DISABLED (commented in the view).
+    Password strength is NOT enforced here. Flag for backend.
+  - Audit log "PASSWORD_CHANGE".
+
+
+================================================================================
+SECTION 3 — ORGANIZATION (ADMIN-VISIBLE)
+================================================================================
+
+--------------------------------------------------------------------------------
+3.1  POST /accounts/organization/list/
+--------------------------------------------------------------------------------
+Auth : Any authenticated user (scoped by role)
+Purpose : List orgs the caller can see.
+          - Super admin → all active orgs
+          - Admin → orgs they own or are member of
+          - Employee → orgs they belong to
+
+Request : {}
+
+Response 200: { ...array of orgs... }
+
+NOTE: For a single-org Admin, this returns the 1 owned org.
+
+--------------------------------------------------------------------------------
+3.2  POST /accounts/organization/detail/
+--------------------------------------------------------------------------------
+Auth : Any authenticated user (scoped by role)
+Purpose : Fetch one org.
+
+Request : { "id": 5 }
+
+Response 200: { ...org object... }
+
+Response 404:
+{ "status": false, "message": "Organization not found or access denied." }
+
+--------------------------------------------------------------------------------
+3.3  POST /accounts/organization/my-organizations/
+--------------------------------------------------------------------------------
+Auth : Any authenticated user
+Purpose : Convenience alias — list own orgs.
+
+Request : {}
+
+Response 200:
+{
+  "status": true,
+  "message": "Your organizations fetched successfully.",
+  "data": [
+    {
+      "id": 5,
+      "organization_name": "Acme Pvt Ltd",
+      "legal_name": "Acme Private Limited",
+      "organization_code": "ORG-261101-00412",
+      "business_type": "Private Limited",
+      "industry": "Software",
+      "description": "ERP product company",
+      "email": "info@acme.com",
+      "phone_number": "02212345678",
+      "alternate_phone_number": "9876543210",
+      "website": "https://acme.com",
+      "address_line_1": "Plot 12, Tech Park",
+      "address_line_2": "Andheri East",
+      "city": "Mumbai",
+      "district": "Mumbai",
+      "state": "Maharashtra",
+      "pincode": "400069",
+      "country": "India",
+      "latitude": "19.119000",
+      "longitude": "72.846000",
+      "logo": "organizations/logos/acme.png",
+      "owner": 25,
+      "is_active": true,
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  ]
+}
+
+NOTE:
+  - For an Admin owning 1 org, this returns 1 element.
+  - Used by the admin dashboard to load org branding (logo, name).
+
+--------------------------------------------------------------------------------
+3.4  POST /accounts/organization/update/
+--------------------------------------------------------------------------------
+Auth : #A (owner of that org only — enforced)
+Purpose : Update an org's profile (partial).
+          Cannot change organization_code or owner.
+Type : multipart/form-data
+
+Request :
+{
+  "id": 5,
+  "organization_name": "Acme Pvt Ltd",
+  "city": "Pune",
+  "state": "Maharashtra",
+  "logo": <file>
+}
+
+Response 200: { ...full org object... }
+
+Response 400:
+{ "status": false, "message": "Organization id is required." }
+{ "status": false, "message": "Validation failed.", "errors": {...} }
+
+Response 404:
+{ "status": false, "message": "Organization not found." }
+
+NOTE:
+  - Lookup filters by owner=request.user AND is_active=True.
+    → Admin of another org gets 404.
+    → Super admin who is not the owner also gets 404.
+  - organization_code and owner are read-only.
+  - New logo uploaded to S3; old logo deleted after successful save.
+  - Audit log "UPDATE ORGANIZATION".
+
+--------------------------------------------------------------------------------
+3.5  POST /accounts/organization/deactivate/
+--------------------------------------------------------------------------------
+Auth : #A (owner of that org only)
+Purpose : Soft-delete an org. Sets is_active=false.
+
+Request : { "id": 5 }
+
+Response 200:
+{
+  "status": true,
+  "message": "Organization deactivated successfully.",
+  "data": null
+}
+
+Response 404:
+{ "status": false, "message": "Organization not found or already inactive." }
+
+NOTE:
+  - Same owner-only lookup as update.
+  - ⚠ Deactivating an org does NOT cascade — users, employees, projects
+    remain active. The org just disappears from list endpoints.
+    Side effect: users of that org can no longer resolve their org on
+    most APIs (which will fail with 400 "No active organization").
+  - Audit log "DELETE ORGANIZATION".
+
+--------------------------------------------------------------------------------
+3.6  POST /accounts/organization/assign-user/
+--------------------------------------------------------------------------------
+Auth : #A #SU
+Purpose : Assign a non-owner member to YOUR organization.
+
+Request :
+{
+  "organization_id": 5,
+  "user_id": 30,
+  "role_id": 3
+}
+
+Response 201 (created):
+{
+  "status": true,
+  "message": "Organization member assigned successfully.",
+  "data": {
+    "membership_id": 15,
+    "organization_id": 5,
+    "organization_name": "Acme Pvt Ltd",
+    "user_id": 30,
+    "username": "priya",
+    "email": "priya@example.com",
+    "role_id": 3,
+    "role": "Employee",
+    "is_active": true
+  }
+}
+
+Response 200 (reactivated existing membership):
+Same shape.
+
+Response 400 variants:
+{ "status": false, "message": "organization_id, user_id and role_id are required." }
+{ "status": false, "message": "The Admin role is reserved for organization owners. Use the owner assignment API instead." }
+{ "status": false, "message": "This user is the organization owner. Use the owner assignment API to manage ownership." }
+{ "status": false, "message": "This user already belongs to another active organization." }
+
+Response 403:
+{ "status": false, "message": "Only the super admin or the organization owner can assign organization members." }
+
+Response 404:
+{ "status": false, "message": "Organization not found or inactive." }
+{ "status": false, "message": "User not found or inactive." }
+{ "status": false, "message": "Role not found or inactive." }
+
+NOTE:
+  - As an Admin, you can only assign users to YOUR OWN org.
+  - Cannot assign the "Admin" role — that's owner-only via super admin.
+  - Cannot reassign your own ownership.
+  - One-active-org-per-user enforced.
+  - The user must already exist (created by super admin via /register/).
+  - Audit log "CREATE" or "UPDATE".
+
+
+================================================================================
+QUICK REFERENCE — ADMIN ENDPOINTS
+================================================================================
+
+AUTHENTICATION (2)
+  POST /accounts/login/                       (shared)
+  POST /accounts/refresh-token/               (shared)
+
+MY PROFILE (3)
+  POST /accounts/my-profile/                  (shared)
+  POST /accounts/my-profile/update/           (shared)
+  POST /accounts/change-password/             (shared)
+
+ORGANIZATION (5)
+  POST /accounts/organization/list/           (scoped)
+  POST /accounts/organization/detail/         (scoped)
+  POST /accounts/organization/my-organizations/ (scoped)
+  POST /accounts/organization/update/         #A  ✅ owner-only
+  POST /accounts/organization/deactivate/     #A  ✅ owner-only
+
+MEMBER MANAGEMENT (1)
+  POST /accounts/organization/assign-user/    #A #SU  ✅ enforced
+
+TOTAL: 11 endpoints (including shared ones).
+
+
+================================================================================
+KEY NOTES FOR FRONTEND — ADMIN SIDE
+================================================================================
+
+1. ADMIN = ORG OWNER, NOT SUPER ADMIN
+   The frontend determines "is this user an Admin?" by checking:
+     a) user.role_details.name == "Admin"  (from login/my-profile)
+     b) AND /organization/my-organizations/ returns an org where
+        org.owner == user.id
+   Both checks together confirm ownership. role_details.name alone is
+   not enough — a super admin might also be labeled "Admin" by role,
+   and a downgraded previous owner becomes "Accountant" not "Admin".
+
+2. ADMIN IS NOT AN EMPLOYEE
+   As an Admin, you have a User row but NO Employee row.
+   You cannot:
+     - Mark your own attendance
+     - View your own payslips
+     - See your own projects
+   Unless super admin separately creates an Employee record linked to
+   your User. Most orgs keep the owner as a non-employee (pure admin
+   role) and hire a separate HR person.
+
+3. ADMIN CANNOT CREATE USERS
+   Only super admin creates User rows (/register/). As an Admin you
+   assign existing users to your org (/assign-user/).
+   If you need a new employee:
+     → Ask super admin to create the User
+     → You then call /employees/create-user/ to create the Employee
+       (see employees app doc)
+
+4. ONE ORG PER ADMIN
+   Each Admin owns exactly one organization. You cannot own two.
+   Multi-org admins don't exist in this system (one-active-org rule).
+
+5. ORG UPDATE IS OWNER-ONLY
+   /organization/update/ and /organization/deactivate/ only work for
+   the OWNER of that specific org. Even super admin gets 404 on an org
+   they don't own (which is a bug to fix, but the current behavior).
+
+6. DEACTIVATING YOUR ORG BREAKS YOUR USERS
+   Deactivating your org:
+     - Does NOT cascade to users, employees, projects, etc.
+     - DOES remove the org from /organization/list/ results
+     - DOES cause all org-scoped APIs to fail for your users with
+       "No active organization membership" errors
+   Deactivation should only be used on true org closure. Not a light
+   toggle.
+
+7. ASSIGN-USER CANNOT TOUCH ADMIN ROLE
+   You cannot assign anyone the "Admin" role through /assign-user/.
+   Only super admin can create a new owner via /assign-owner/ — which
+   automatically downgrades you to "Accountant" and makes the new user
+   the Admin.
+
+8. ROLE HIERARCHY AT A GLANCE
+   - Admin role    → always exactly 1 per org (the owner)
+   - Accountant    → role assigned to a demoted previous owner
+   - Employee      → default role for members
+   - Custom roles  → you can create more roles if super admin allows,
+                     but assignment via /assign-user/ is the only way
+
+9. AUDIT LOG EVERYTHING
+   Every write writes a log_activity row. Call the audit app (separate
+   doc) to view "who changed what when."
+
+10. ⚠ PASSWORD STRENGTH IS NOT ENFORCED
+    /change-password/ has Django validators commented out. Users can
+    set "123" as their password. If your org needs strong passwords,
+    flag to backend for re-enabling validators on this endpoint.

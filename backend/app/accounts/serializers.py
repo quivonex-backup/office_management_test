@@ -1,6 +1,7 @@
 from django.contrib.auth.password_validation import validate_password
+from django.conf import settings
 from rest_framework import serializers
-from .models import User, Role, EmailOTP, Organization
+from .models import User, Role, EmailOTP, Organization, DatabaseBackup
 
 
 # ---------- Role ----------
@@ -331,3 +332,92 @@ class OrganizationSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
+
+
+# ---------- Database Backup ----------
+class DatabaseBackupSerializer(serializers.ModelSerializer):
+
+    file_name = serializers.SerializerMethodField()
+    storage_key = serializers.FileField(source="file", read_only=True)
+    file_size_mb = serializers.SerializerMethodField()
+
+    class Meta:
+        model = DatabaseBackup
+        fields = [
+            "id",
+            "file_name",
+            "storage_key",
+            "file_size",
+            "file_size_mb",
+            "created_by",
+            "created_at",
+        ]
+
+        read_only_fields = [
+            "id",
+            "file_name",
+            "storage_key",
+            "file_size",
+            "file_size_mb",
+            "created_by",
+            "created_at",
+        ]
+
+    def get_file_name(self, obj):
+        import os
+        return os.path.basename(obj.file.name)
+
+    # def get_storage_key(self, obj):
+    #     return obj.file.name
+
+    def get_file_size_mb(self, obj):
+        return round(obj.file_size / (1024 * 1024), 2)
+
+
+# ---------- Database Backup Download ----------
+class DatabaseBackupDownloadSerializer(serializers.Serializer):
+
+    id = serializers.IntegerField(min_value=1)
+
+
+# ---------- Database Backup Restore ----------
+class DatabaseBackupRestoreSerializer(serializers.Serializer):
+
+    file = serializers.FileField()
+
+    confirmation = serializers.CharField()
+
+    def validate_file(self, value):
+
+        if not value.name.lower().endswith(".sql"):
+            raise serializers.ValidationError(
+                "Only .sql files are accepted."
+            )
+
+        if value.size <= 0:
+            raise serializers.ValidationError(
+                "Uploaded SQL file is empty."
+            )
+
+        max_size = getattr(
+            settings,
+            "DATABASE_BACKUP_MAX_UPLOAD_SIZE",
+            2 * 1024 * 1024 * 1024,
+        )
+
+        if value.size > max_size:
+            raise serializers.ValidationError(
+                "Uploaded SQL file exceeds the allowed size."
+            )
+
+        return value
+
+    def validate_confirmation(self, value):
+
+        if value != "RESTORE DATABASE":
+            raise serializers.ValidationError(
+                "Please enter RESTORE DATABASE to confirm."
+            )
+
+        return value

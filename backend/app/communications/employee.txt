@@ -1,0 +1,987 @@
+================================================================================
+COMMUNICATIONS APP — EMPLOYEE API REFERENCE
+================================================================================
+
+Base URL   : /
+Method     : All endpoints are POST
+Auth       : Bearer token (IsAuthenticated)
+Envelope   : { "status": true|false, "message": "...", "data": {...}?, "errors": {...}? }
+
+Who uses this document:
+  - Any user with an active Employee profile
+  - The employee app's "Announcements" screen
+  - The employee app's "Project Chat" screen
+
+CRITICAL IDENTITY RULE:
+  The client NEVER sends employee_id.
+  The backend derives identity from request.user.
+
+CHAT SENDER NOTE:
+  Both employees and admins can appear as chat senders. The sender
+  object has the SAME shape for both:
+    - Employee senders: employee_code populated, role_label = designation
+    - Admin senders: employee_code is null, role_label = "Admin"
+
+
+================================================================================
+CONTENT TYPE PER ENDPOINT
+================================================================================
+
+Endpoint                                              Content-Type
+---------------------------------------------------   ------------------
+POST /communications/announcements/my/                application/json
+POST /communications/project-chat/messages/           application/json
+POST /communications/project-chat/send/               multipart/form-data
+POST /communications/project-chat/delete/             application/json
+
+RULE FOR THE FRONTEND:
+  - /announcements/my/ and /project-chat/messages/ are JSON reads.
+  - /project-chat/send/ MUST use FormData, even without attachments.
+  - /project-chat/delete/ is JSON only.
+  - Do not mix content types across these four.
+
+
+================================================================================
+CHOICE ENUMS — FOR UI DROPDOWNS, FILTERS, AND BADGES
+================================================================================
+
+ANNOUNCEMENT PRIORITY (filter dropdown, badge color):
+  NORMAL   — grey
+  HIGH     — yellow / orange
+  URGENT   — red
+
+CHAT POSTING PERMISSION (read-only display; only admins change it):
+  ADMIN_ONLY      → banner: "Only the admin can post in this chat."
+  ADMIN_AND_HEAD  → banner: "Only the admin and project head can post in this chat."
+  ALL_MEMBERS     → (no banner; input shown if can_current_user_post is true)
+
+CHAT SENDER TYPE (derived from sender.employee_code; display only):
+  employee_code != null  → Employee sender
+  employee_code == null  → Admin sender
+
+CHAT MESSAGE STATE (derived from is_deleted; display only):
+  is_deleted == false → normal message
+  is_deleted == true  → greyed "[deleted]" placeholder row
+
+Note: There is no "priority" enum for chat messages. Priority only applies
+to announcements.
+
+
+================================================================================
+SECTION 1 — ANNOUNCEMENTS (EMPLOYEE)
+================================================================================
+
+--------------------------------------------------------------------------------
+1.1  POST /communications/announcements/my/
+--------------------------------------------------------------------------------
+Purpose : List announcements visible to me (active + non-expired)
+Access  : Any authenticated employee
+Content-Type : application/json
+
+Request (all optional):
+{
+  "priority": "HIGH"
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Announcements fetched successfully.",
+  "data": [
+    {
+      "id": 2,
+      "title": "All-hands meeting on Friday",
+      "description": "Join at 4 PM in the main hall.",
+      "priority": "URGENT",
+      "is_pinned": true,
+      "expires_at": null,
+      "attachments": [],
+      "created_by_name": "Admin User",
+      "created_at": "2026-11-09T10:00:00Z"
+    },
+    {
+      "id": 1,
+      "title": "Office closed on Nov 15",
+      "description": "The office will be closed on Nov 15 for Diwali. No WFH required.",
+      "priority": "HIGH",
+      "is_pinned": false,
+      "expires_at": "2026-11-16T00:00:00Z",
+      "attachments": [
+        {
+          "id": 10,
+          "title": "holiday-notice.pdf",
+          "file": "https://employee-attendance-media.s3.amazonaws.com/announcements/attachments/holiday-notice.pdf",
+          "created_at": "2026-11-10T09:00:00Z"
+        }
+      ],
+      "created_by_name": "Admin User",
+      "created_at": "2026-11-10T09:00:00Z"
+    }
+  ]
+}
+
+Response 200 (empty):
+{
+  "status": true,
+  "message": "Announcements fetched successfully.",
+  "data": []
+}
+
+Response 404 (no employee profile linked):
+{
+  "status": false,
+  "message": "No employee profile linked to your account."
+}
+
+
+================================================================================
+SECTION 2 — PROJECT CHAT (EMPLOYEE)
+================================================================================
+
+Chat access depends on your role in the project:
+
+  - Allocated to a project → you can READ its chat.
+  - Posting depends on posting_permission:
+      ALL_MEMBERS     → you can post.
+      ADMIN_AND_HEAD  → only if you are the project head.
+      ADMIN_ONLY      → read-only for you.
+  - If you are the project head, you can DELETE any message in that project.
+  - If you are a regular member, you can DELETE only your own messages
+    within 15 minutes of posting.
+
+
+--------------------------------------------------------------------------------
+2.1  POST /communications/project-chat/messages/
+--------------------------------------------------------------------------------
+Purpose : List messages in a project's chat (polling or backfill)
+Access  : Any active team member of that project
+Content-Type : application/json
+
+Request — initial load (latest 50):
+{
+  "project_id": 12,
+  "limit": 50
+}
+
+Request — poll for new messages:
+{
+  "project_id": 12,
+  "since_id": 500,
+  "limit": 50
+}
+
+Request — scroll up for older messages:
+{
+  "project_id": 12,
+  "before_id": 501,
+  "limit": 50
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Messages fetched successfully.",
+  "data": {
+    "project_id": 12,
+    "posting_permission": "ALL_MEMBERS",
+    "can_current_user_post": true,
+    "messages": [
+      {
+        "id": 501,
+        "body": "Any update on the login page?",
+        "sender": {
+          "id": 25,
+          "name": "Rahul Patil",
+          "email": "rahul@example.com",
+          "profile_photo": "https://employee-attendance-media.s3.amazonaws.com/users/profile/rahul.jpg",
+          "employee_code": "EMP-000025",
+          "role_label": "Software Engineer"
+        },
+        "attachments": [],
+        "is_deleted": false,
+        "created_at": "2026-11-10T09:01:00Z"
+      },
+      {
+        "id": 502,
+        "body": "Working on it, EOD today.",
+        "sender": {
+          "id": 30,
+          "name": "Priya Sharma",
+          "email": "priya@example.com",
+          "profile_photo": null,
+          "employee_code": "EMP-000030",
+          "role_label": "UI Designer"
+        },
+        "attachments": [],
+        "is_deleted": false,
+        "created_at": "2026-11-10T09:03:00Z"
+      },
+      {
+        "id": 503,
+        "body": "Thanks! Also pinned the Figma link.",
+        "sender": {
+          "id": 2,
+          "name": "Admin User",
+          "email": "admin@acme.com",
+          "profile_photo": "https://employee-attendance-media.s3.amazonaws.com/users/profile/admin.jpg",
+          "employee_code": null,
+          "role_label": "Admin"
+        },
+        "attachments": [
+          {
+            "id": 40,
+            "title": "figma-link.txt",
+            "file": "https://employee-attendance-media.s3.amazonaws.com/projects/chat/attachments/figma-link.txt",
+            "created_at": "2026-11-10T09:05:00Z"
+          }
+        ],
+        "is_deleted": false,
+        "created_at": "2026-11-10T09:05:00Z"
+      }
+    ],
+    "latest_id": 503
+  }
+}
+
+Response 200 (restricted chat — member cannot post):
+{
+  "status": true,
+  "message": "Messages fetched successfully.",
+  "data": {
+    "project_id": 12,
+    "posting_permission": "ADMIN_ONLY",
+    "can_current_user_post": false,
+    "messages": [
+      {
+        "id": 503,
+        "body": "Thanks! Also pinned the Figma link.",
+        "sender": {
+          "id": 2,
+          "name": "Admin User",
+          "email": "admin@acme.com",
+          "profile_photo": "https://employee-attendance-media.s3.amazonaws.com/users/profile/admin.jpg",
+          "employee_code": null,
+          "role_label": "Admin"
+        },
+        "attachments": [
+          {
+            "id": 40,
+            "title": "figma-link.txt",
+            "file": "https://employee-attendance-media.s3.amazonaws.com/projects/chat/attachments/figma-link.txt",
+            "created_at": "2026-11-10T09:05:00Z"
+          }
+        ],
+        "is_deleted": false,
+        "created_at": "2026-11-10T09:05:00Z"
+      }
+    ],
+    "latest_id": 503
+  }
+}
+
+Response 200 (deleted message visible in timeline):
+{
+  "status": true,
+  "message": "Messages fetched successfully.",
+  "data": {
+    "project_id": 12,
+    "posting_permission": "ALL_MEMBERS",
+    "can_current_user_post": true,
+    "messages": [
+      {
+        "id": 504,
+        "body": "[deleted]",
+        "sender": {
+          "id": 25,
+          "name": "Rahul Patil",
+          "email": "rahul@example.com",
+          "profile_photo": null,
+          "employee_code": "EMP-000025",
+          "role_label": "Software Engineer"
+        },
+        "attachments": [],
+        "is_deleted": true,
+        "created_at": "2026-11-10T09:10:00Z"
+      }
+    ],
+    "latest_id": 504
+  }
+}
+
+Response 403 (not a project member):
+{
+  "status": false,
+  "message": "You do not have access to this project."
+}
+
+
+--------------------------------------------------------------------------------
+2.2  POST /communications/project-chat/send/
+--------------------------------------------------------------------------------
+Purpose : Send a message in a project's chat
+Access  : Depends on posting_permission
+Content-Type : multipart/form-data (REQUIRED — accepts file attachments)
+
+Request fields (all sent as form fields):
+  project_id    — integer, required
+  body          — string, required, max 2000 chars
+  attachments   — file(s), optional, repeated field name
+
+Request example (FormData):
+  project_id  = 12
+  body        = "Deployed to staging."
+  attachments = <deploy-log.txt>
+
+Response 201 (success):
+{
+  "status": true,
+  "message": "Message sent successfully.",
+  "data": {
+    "id": 505,
+    "body": "Deployed to staging.",
+    "sender": {
+      "id": 25,
+      "name": "Rahul Patil",
+      "email": "rahul@example.com",
+      "profile_photo": "https://employee-attendance-media.s3.amazonaws.com/users/profile/rahul.jpg",
+      "employee_code": "EMP-000025",
+      "role_label": "Software Engineer"
+    },
+    "attachments": [
+      {
+        "id": 42,
+        "title": "deploy-log.txt",
+        "file": "https://employee-attendance-media.s3.amazonaws.com/projects/chat/attachments/deploy-log.txt",
+        "created_at": "2026-11-10T10:00:00Z"
+      }
+    ],
+    "is_deleted": false,
+    "created_at": "2026-11-10T10:00:00Z"
+  }
+}
+
+Response 403 (chat restricted — as member under ADMIN_AND_HEAD):
+{
+  "status": false,
+  "message": "Only the admin and project head can post in this project's chat."
+}
+
+Response 403 (chat restricted — as head under ADMIN_ONLY):
+{
+  "status": false,
+  "message": "Only the admin can post in this project's chat."
+}
+
+Response 403 (not a project member):
+{
+  "status": false,
+  "message": "You do not have access to this project."
+}
+
+Response 400 (blank body):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": {
+    "body": ["Message body cannot be blank."]
+  }
+}
+
+Response 400 (body too long):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": {
+    "body": ["Ensure this field has no more than 2000 characters."]
+  }
+}
+
+
+--------------------------------------------------------------------------------
+2.3  POST /communications/project-chat/delete/
+--------------------------------------------------------------------------------
+Purpose : Soft-delete a message
+Access  :
+  - Own message within 15 minutes
+  - OR any message if you are the project head
+Content-Type : application/json
+
+Request :
+{
+  "message_id": 505
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Message deleted successfully."
+}
+
+Response 404 (already deleted or not found):
+{
+  "status": false,
+  "message": "Message not found or already deleted."
+}
+
+Response 403 (own message, past 15 minutes, as member):
+{
+  "status": false,
+  "message": "You are not allowed to delete this message. Own messages can be deleted within 15 minutes."
+}
+
+Response 403 (someone else's message, as member):
+{
+  "status": false,
+  "message": "You are not allowed to delete this message. Own messages can be deleted within 15 minutes."
+}
+
+
+================================================================================
+SECTION 3 — DEVICE TOKEN REGISTRATION (FCM)
+================================================================================
+
+Every authenticated user must register their FCM (Firebase Cloud Messaging)
+device token after login so the backend can send push notifications
+(announcements, chat messages, and future notifications).
+
+Register on:
+  - First login on a new device
+  - Every app launch if the FCM token has changed (FCM tokens rotate
+    periodically — usually every 30–90 days, and always on app reinstall
+    or data clear)
+  - After login on a shared device (transfers ownership of the token to
+    the new user)
+
+Only ONE token per device. Registering the same token again just updates
+the owner / device_type / is_active — no duplicates.
+
+--------------------------------------------------------------------------------
+3.1  POST /communications/device-token/register/
+--------------------------------------------------------------------------------
+Auth : Any authenticated user
+Content-Type : application/json
+
+Request :
+{
+  "token": "fM3k...long-fcm-token...",
+  "device_type": "ANDROID"        // ANDROID | IOS | WEB
+}
+
+Response 201 (new token registered):
+{
+  "status": true,
+  "message": "Device token registered successfully.",
+  "data": {
+    "id": 1,
+    "device_type": "ANDROID",
+    "is_active": true
+  }
+}
+
+Response 200 (existing token — owner/type/active updated):
+{
+  "status": true,
+  "message": "Device token updated successfully.",
+  "data": {
+    "id": 1,
+    "device_type": "IOS",
+    "is_active": true
+  }
+}
+
+Response 400 (missing or blank token):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": {
+    "token": ["FCM token cannot be blank."]
+  }
+}
+
+Response 400 (invalid device_type):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": {
+    "device_type": ["\"BOGUS\" is not a valid choice."]
+  }
+}
+
+================================================================================
+CLIENT RESPONSIBILITIES
+================================================================================
+
+1. REGISTER AFTER LOGIN
+   After every successful login, immediately call this endpoint with the
+   FCM token obtained from the device's messaging SDK.
+
+2. RE-REGISTER IF FCM TOKEN CHANGES
+   The FCM SDK exposes a token refresh callback. When it fires:
+     a) Optionally show nothing to the user
+     b) Call /device-token/register/ with the new token
+   If the app is closed when the token changes, the next app launch
+   should compare the current FCM token to the last-registered one and
+   re-register if different.
+
+3. REGISTER ON EVERY APP LAUNCH (SAFEST)
+   Re-register on every app launch after auth is confirmed. The backend
+   uses update_or_create, so this is cheap and idempotent — 1 HTTP call,
+   1 INSERT-or-UPDATE. Do not skip this; FCM tokens can silently rotate.
+
+4. SHARED DEVICE HANDLING
+   If a different user logs in on the same device (same FCM token), the
+   backend automatically reassigns the token to the new user.
+   You do NOT need to "un-register" the previous user's token — the
+   reassignment happens on the next register call.
+
+5. NO UN-REGISTER ENDPOINT (CURRENTLY)
+   There is no API to deactivate a device token on logout. If you need
+   "stop notifications after logout" behavior, either:
+     a) Accept that a logged-out device may still receive push until
+        another user logs in, OR
+     b) Ask the backend team to add a /device-token/deactivate/ endpoint.
+   For v1, most apps accept (a) — the token is harmless once the user
+   logs out; the next login overwrites it if the device changes hands.
+
+6. DO NOT SEND TOKENS TO UNTRUSTED SERVERS
+   The FCM token is a sensitive credential. Only send it to your own
+   backend. Never log it in plaintext, never include it in error reports.
+
+================================================================================
+
+
+================================================================================
+SECTION 4 — NOTIFICATIONS (IN-APP + FCM PUSH)
+================================================================================
+
+Every notification your account receives — from any app in the system — lands
+in a single inbox, delivered by two mechanisms:
+
+  1. **In-app (bell icon)** — stored in the database, visible on the bell
+     screen, with read/unread state, pagination, and filtering.
+  2. **FCM push** — a device banner appears when a notification is sent.
+     Tapping it deep-links into the referenced screen.
+
+Both layers work together. The DB is the source of truth. FCM is the wakeup.
+
+Notifications are auto-created by the backend at specific "trigger points"
+in other apps (leave approved, task assigned, reimbursement paid, etc.).
+You do NOT create notifications manually — you only consume them.
+
+Per-app event catalog is documented in each app's reference (Leave,
+Expenses, Projects, Payroll, etc.). This section documents the notification
+**infrastructure** — the 5 endpoints that serve the bell UI and FCM deep-links.
+
+
+================================================================================
+CONTENT TYPE PER ENDPOINT
+================================================================================
+
+All 5 notification endpoints are pure JSON.
+
+Endpoint                                                Content-Type
+-----------------------------------------------------   ------------------
+POST /communications/notifications/list/                application/json
+POST /communications/notifications/mark-read/           application/json
+POST /communications/notifications/mark-all-read/       application/json
+POST /communications/notifications/unread-count/        application/json
+POST /communications/notifications/delete/              application/json
+
+
+================================================================================
+CHOICE ENUMS
+================================================================================
+
+NOTIFICATION PRIORITY (badge color):
+  NORMAL   — grey
+  HIGH     — red / orange (shown with a dot)
+
+Note: notification priority is different from announcement priority
+(which has NORMAL | HIGH | URGENT). Notifications only have two levels
+because they don't need three visually distinct states in the bell.
+
+
+================================================================================
+SECTION 4.1 — LIST MY NOTIFICATIONS
+================================================================================
+
+--------------------------------------------------------------------------------
+4.1  POST /communications/notifications/list/
+--------------------------------------------------------------------------------
+Purpose : List my notifications (paginated, filterable)
+Access  : Any authenticated user (self only)
+
+Request (all optional):
+{
+  "unread_only": false,           // true → only unread
+  "event_prefix": "LEAVE",        // optional: prefix filter (e.g. LEAVE, TASK, REIMBURSEMENT)
+  "limit": 50,                    // default 50, max 200
+  "before_id": null               // pagination cursor (null for first page)
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Notifications fetched successfully.",
+  "data": {
+    "unread_count": 3,
+    "notifications": [
+      {
+        "id": 42,
+        "event_code": "LEAVE_APPROVED",
+        "title": "Leave approved",
+        "body": "Your casual leave from Nov 5-6 has been approved.",
+        "reference_type": "leave_application",
+        "reference_id": 101,
+        "priority": "NORMAL",
+        "is_read": false,
+        "read_at": null,
+        "created_at": "2026-11-15T10:30:00Z"
+      },
+      {
+        "id": 41,
+        "event_code": "TASK_ASSIGNED",
+        "title": "New task assigned",
+        "body": "You've been assigned 'Build login API'",
+        "reference_type": "task",
+        "reference_id": 500,
+        "priority": "HIGH",
+        "is_read": false,
+        "read_at": null,
+        "created_at": "2026-11-15T09:15:00Z"
+      }
+    ],
+    "has_more": false
+  }
+}
+
+Response 200 (empty — no notifications yet):
+{
+  "status": true,
+  "message": "Notifications fetched successfully.",
+  "data": {
+    "unread_count": 0,
+    "notifications": [],
+    "has_more": false
+  }
+}
+
+PAGINATION:
+  - First page: send {} or { "limit": 50 }
+  - Next page: send { "before_id": <id of last item in previous response> }
+  - `has_more` tells you if there are older notifications
+  - Never re-fetch page 1 — use before_id to walk backward through history
+
+DEEP-LINKING:
+  Every notification has reference_type + reference_id:
+    ("leave_application", 101) → open /leave/applications/101/
+    ("task", 500)              → open /projects/tasks/500/
+    ("reimbursement", 45)      → open /expenses/reimbursements/45/
+    (null, null)               → informational; open bell list only
+
+  If reference_type and reference_id are both null, show the notification
+  as non-tappable (or tap → mark read only, no navigation).
+
+
+================================================================================
+SECTION 4.2 — MARK SPECIFIC NOTIFICATIONS AS READ
+================================================================================
+
+--------------------------------------------------------------------------------
+4.2  POST /communications/notifications/mark-read/
+--------------------------------------------------------------------------------
+Purpose : Mark one or more notifications as read
+Access  : Any authenticated user (self only)
+
+Request :
+{
+  "notification_ids": [42, 41, 40]
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "3 notification(s) marked as read.",
+  "data": { "updated_count": 3 }
+}
+
+Response 400 (empty or invalid list):
+{
+  "status": false,
+  "message": "notification_ids must be a non-empty list."
+}
+
+BEHAVIOR:
+  - Only your own notifications are affected (backend scopes by recipient).
+  - Passing ids of someone else's notifications → those are silently
+    ignored (you can't mark someone else's as read).
+  - Passing ids that are already read → those don't change; only the
+    count of newly-marked ones is returned.
+  - read_at is set to the current timestamp.
+
+
+================================================================================
+SECTION 4.3 — MARK ALL AS READ
+================================================================================
+
+--------------------------------------------------------------------------------
+4.3  POST /communications/notifications/mark-all-read/
+--------------------------------------------------------------------------------
+Purpose : Mark ALL unread notifications as read
+Access  : Any authenticated user (self only)
+
+Request : {}
+
+Response 200:
+{
+  "status": true,
+  "message": "All notifications marked as read.",
+  "data": { "updated_count": 7 }
+}
+
+BEHAVIOR:
+  - Marks every unread notification belonging to you.
+  - If you have 0 unread, returns updated_count: 0.
+  - Idempotent — safe to call multiple times.
+
+
+================================================================================
+SECTION 4.4 — UNREAD COUNT (BELL BADGE)
+================================================================================
+
+--------------------------------------------------------------------------------
+4.4  POST /communications/notifications/unread-count/
+--------------------------------------------------------------------------------
+Purpose : Just the unread count for the bell badge
+Access  : Any authenticated user (self only)
+
+Request : {}
+
+Response 200:
+{
+  "status": true,
+  "message": "Unread count fetched.",
+  "data": { "unread_count": 3 }
+}
+
+WHEN TO CALL:
+  - FCM-driven: on every FCM message received + on app resume
+  - Polling fallback: every 30s if FCM is not yet active on that device
+  - After any user action that might create notifications
+
+WHY THIS EXISTS SEPARATELY FROM /list/:
+  - /list/ returns up to 50 notifications + full data → heavier
+  - /unread-count/ returns one number → lighter
+  - For the bell badge only, this is the right call
+
+
+================================================================================
+SECTION 4.5 — DELETE NOTIFICATIONS
+================================================================================
+
+--------------------------------------------------------------------------------
+4.5  POST /communications/notifications/delete/
+--------------------------------------------------------------------------------
+Purpose : Delete one or more notifications
+Access  : Any authenticated user (self only)
+
+Request :
+{
+  "notification_ids": [42, 41]
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "2 notification(s) deleted.",
+  "data": { "deleted_count": 2 }
+}
+
+Response 400 (empty or invalid list):
+{
+  "status": false,
+  "message": "notification_ids must be a non-empty list."
+}
+
+BEHAVIOR:
+  - Hard delete. The row is gone permanently.
+  - Only your own notifications are affected.
+  - Deleting an unread notification decrements the unread count.
+  - Idempotent for missing ids — deleting an already-deleted id is a no-op.
+
+
+================================================================================
+FCM PAYLOAD CONTRACT
+================================================================================
+
+When the backend sends an FCM push for a notification, the payload looks
+like this:
+
+{
+  "notification": {
+    "title": "Leave approved",
+    "body": "Your casual leave from Nov 5-6 has been approved."
+  },
+  "data": {
+    "notification_id": "42",
+    "event_code": "LEAVE_APPROVED",
+    "reference_type": "leave_application",
+    "reference_id": "101",
+    "priority": "NORMAL"
+  }
+}
+
+FLUTTER HANDLERS YOU NEED:
+
+1. onMessage (foreground):
+   - App is open, notification arrives
+   - OS does NOT show a banner automatically
+   - Optional: show in-app toast OR just refresh the bell state
+   - Refresh: call /notifications/unread-count/ or /notifications/list/
+
+2. onMessageOpenedApp (background tapped):
+   - User taps the banner while app was backgrounded
+   - Fires with the `data` payload
+   - Navigate: use data['reference_type'] + data['reference_id']
+
+3. getInitialMessage (cold-start):
+   - User taps the banner while app was fully closed
+   - On next app launch, returns the message
+   - Same navigation as #2
+
+RECOMMENDED FLOW:
+
+  FirebaseMessaging.onMessage.listen((message) {
+    _refreshUnreadCount();
+    // optionally show in-app toast
+  });
+
+  FirebaseMessaging.onMessageOpenedApp.listen((message) {
+    _navigateToReference(
+      message.data['reference_type'],
+      message.data['reference_id'],
+    );
+    _markNotificationRead(message.data['notification_id']);
+  });
+
+  FirebaseMessaging.instance.getInitialMessage().then((message) {
+    if (message != null) {
+      _navigateToReference(
+        message.data['reference_type'],
+        message.data['reference_id'],
+      );
+    }
+  });
+
+================================================================================
+KEY NOTES FOR FRONTEND — NOTIFICATIONS
+================================================================================
+
+1. THE BELL IS ALWAYS DRIVEN BY THE DB.
+   FCM shows the banner. The DB populates the bell screen.
+   They are separate mechanisms. Both are needed.
+
+2. POLLING vs FCM — BOTH SUPPORTED
+   - If FCM is active on the device: use onMessage callbacks to trigger
+     refreshes. No timer needed.
+   - Fallback (FCM not yet registered on this device): poll
+     /unread-count/ every 30s while foregrounded.
+   The API doesn't know or care which one you use — both work.
+
+3. DEEP-LINKING IS MANDATORY.
+   Every notification carries reference_type + reference_id.
+   Tapping a notification MUST navigate to the referenced screen.
+   Do NOT show a toast-only experience.
+
+4. UNREAD COUNT IS PRECOMPUTED.
+   /list/ returns unread_count inline. You usually don't need a separate
+   /unread-count/ call after /list/ — use the count from /list/.
+   /unread-count/ is for the badge when you're NOT on the bell screen.
+
+5. PAGINATION IS CURSOR-BASED.
+   Use before_id = id of the last item on the current page.
+   Never use offset/page numbers — they break when new items arrive.
+
+6. PRIORITY IS VISUAL ONLY.
+   NORMAL vs HIGH affects badge color/icon in the bell.
+   Do NOT change polling behavior based on priority — all notifications
+   arrive the same way.
+
+7. DELETE IS HARD DELETE.
+   Deleted notifications are gone forever. No undo.
+   Mobile apps usually add a "swipe to delete" or "clear all" button.
+   For "clear all", call this endpoint with all visible ids — or add a
+   /delete-all/ endpoint if the product needs it (currently not present).
+
+8. THE 5 ENDPOINTS ARE SHARED ACROSS ALL APPS.
+   Whether a notification is about Leave, Tasks, Reimbursements, or
+   Payroll, it appears in the SAME bell list. Filter by event_prefix
+   to scope by feature area:
+     { "event_prefix": "LEAVE" }         → all leave-related
+     { "event_prefix": "TASK" }          → all task-related
+     { "event_prefix": "REIMBURSEMENT" } → all expense-related
+   No prefix → everything in one unified inbox.
+
+
+================================================================================
+QUICK REFERENCE — EMPLOYEE ENDPOINTS
+================================================================================
+
+FCM (1)
+  POST /communications/device-token/register/         JSON
+
+NOTIFICATIONS (5)
+  POST /communications/notifications/list/            JSON
+  POST /communications/notifications/mark-read/       JSON
+  POST /communications/notifications/mark-all-read/   JSON
+  POST /communications/notifications/unread-count/    JSON
+  POST /communications/notifications/delete/          JSON
+
+ANNOUNCEMENTS (1)
+  POST /communications/announcements/my/          JSON
+
+PROJECT CHAT (3)
+  POST /communications/project-chat/messages/     JSON
+  POST /communications/project-chat/send/         multipart
+  POST /communications/project-chat/delete/       JSON
+
+TOTAL EMPLOYEE ENDPOINTS: 4
+
+
+================================================================================
+KEY NOTES FOR FRONTEND — EMPLOYEE SIDE
+================================================================================
+
+1. IDENTITY IS DERIVED SERVER-SIDE.
+   No employee_id anywhere. Missing employee profile → 404 on /my/.
+
+2. SENDER OBJECT IS UNIFIED.
+   Same shape for employee and admin senders. Do not branch by type.
+
+3. USE can_current_user_post AS THE GATE.
+   Do NOT check posting_permission directly. Just:
+     if can_current_user_post → show input box
+     else → show read-only banner
+
+4. CHAT CANNOT BE DISABLED.
+   Every project has chat. If /messages/ returns successfully, chat is on.
+
+5. DELETED MESSAGES STAY IN THE TIMELINE.
+   is_deleted == true → body is "[deleted]". Render greyed placeholder.
+
+6. ATTACHMENTS ARE FULL S3 URLs.
+   No URL building needed. Use directly in <img>, <a download>, or viewer.
+
+7. POLLING DISCIPLINE.
+   - Every 8–10 seconds while chat tab in foreground.
+   - Stop on tab blur / navigate-away.
+   - After inactivity, do a single backfill call with since_id.
+
+8. MESSAGE BODY LIMIT: 2000 CHARS.
+   Show counter, disable send at 2000.
+
+9. NO EDIT AFTER SEND.
+   Delete within 15 minutes (own), or ask the head to remove it.
+
+10. ANNOUNCEMENTS AUTO-HIDE.
+    Expired ones are filtered server-side. No client filtering needed.

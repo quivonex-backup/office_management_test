@@ -1,0 +1,205 @@
+ERP Database Backup Management              Manual
+
+
+Backup to AWS
+Generate SQL and upload to S3.
+
+
+Download Backup
+Download an existing backup locally.
+
+
+Backup History
+View all stored backups.
+
+
+Restore Database
+Restore a SQL backup.
+
+
+There are two things to check before using it:
+1. MySQL consistency: --single-transaction gives a consistent snapshot for InnoDB tables. It does not guarantee consistency for MyISAM or other non-transactional tables.
+2. Upload limits: Your serializer allows SQL files up to 2 GB by default, but Django and your web server must also allow requests of that size. Otherwise, large restores can be rejected before reaching the serializer.
+The restore API is destructive: it executes the uploaded SQL against the configured database. Keep it restricted to the super admin and only restore trusted backup files.
+
+
+
+
+
+
+
+the final endpoints will be:
+API	Method	URL
+Create backup	POST	/accounts/database/backup/create/
+List backups	POST	/accounts/database/backup/list/
+Download backup	POST	/accounts/database/backup/download/
+Restore backup	POST	/accounts/database/backup/restore/
+
+2. API requests and expected responses
+All four APIs require an authenticated super-admin access token.
+API 1 — Create database backup
+Endpoint: POST /accounts/database/backup/create/
+
+Headers:
+Authorization: Bearer YOUR_ACCESS_TOKEN
+Content-Type: application/json
+
+
+Request body:
+{}
+
+
+No request fields are required. The service runs mysqldump, saves the SQL file using Django's configured storage, and creates a DatabaseBackup record.
+
+Expected response — 201 Created:
+{
+    "status": true,
+    "message": "Database backup created successfully.",
+    "data": {
+        "id": 1,
+        "file_name": "office_management_backup_18_11_26_14_30_00.sql",
+        "storage_key": "database_backups/full/office_management_backup_18_11_26_14_30_00.sql",
+        "file_size": 15728640,
+        "file_size_mb": 15.0,
+        "created_by": 1,
+        "created_at": "2026-11-18T14:30:00Z"
+    }
+}
+
+
+The values above are examples. The actual filename, size, user ID and timestamp will come from the generated backup.
+API 2 — List database backups
+Endpoint: POST /accounts/database/backup/list/
+
+Request body:
+{}
+
+
+Expected response — 200 OK:
+{
+    "status": true,
+    "message": "Database backups fetched successfully.",
+    "data": {
+        "total_backups": 2,
+        "backups": [
+            {
+                "id": 2,
+                "file_name": "office_management_backup_18_11_26_14_30_00.sql",
+                "storage_key": "database_backups/full/office_management_backup_18_11_26_14_30_00.sql",
+                "file_size": 15728640,
+                "file_size_mb": 15.0,
+                "created_by": 1,
+                "created_at": "2026-11-18T14:30:00Z"
+            },
+            {
+                "id": 1,
+                "file_name": "office_management_backup_17_11_26_14_30_00.sql",
+                "storage_key": "database_backups/full/office_management_backup_17_11_26_14_30_00.sql",
+                "file_size": 10485760,
+                "file_size_mb": 10.0,
+                "created_by": 1,
+                "created_at": "2026-11-17T14:30:00Z"
+            }
+        ]
+    }
+}
+
+
+The newest backup appears first. The frontend can use each backup's id when requesting a download.
+API 3 — Download database backup
+Endpoint: POST /accounts/database/backup/download/
+
+Request body:
+{
+    "id": 2
+}
+
+
+Expected response:
+
+This endpoint does not return a JSON response on success. It returns the actual .sql file as a downloadable attachment.
+
+The response includes headers similar to:
+HTTP/1.1 200 OK
+Content-Type: application/sql
+Content-Disposition: attachment; filename="office_management_backup_18_11_26_14_30_00.sql"
+
+
+The frontend should handle the response as a binary file/blob and save it using the filename supplied in Content-Disposition.
+
+Possible error responses:
+
+Invalid ID:
+{
+    "status": false,
+    "message": "Validation failed.",
+    "errors": {
+        "id": ["A valid integer is required."]
+    }
+}
+
+
+Backup not found:
+{
+    "status": false,
+    "message": "Database backup not found."
+}
+
+
+Backup file missing from storage:
+{
+    "status": false,
+    "message": "Backup file not found in storage."
+}
+
+
+API 4 — Restore database from uploaded SQL file
+Endpoint: POST /accounts/database/backup/restore/
+
+Content-Type: multipart/form-data
+
+Request fields:
+Field	Type	Required	Value
+file	File	Yes	Trusted .sql backup file
+confirmation	Text	Yes	RESTORE DATABASE
+
+Example Postman request:
+Body
+form-data
+
+Key	Type	Value
+file	File	office_management_backup.sql
+confirmation	Text	RESTORE DATABASE
+
+
+Expected response — 200 OK:
+{
+    "status": true,
+    "message": "Database restored successfully.",
+    "data": {
+        "file_name": "office_management_backup.sql",
+        "restored_at": "2026-11-18T14:45:00Z"
+    }
+}
+
+
+Validation error — 400 Bad Request:
+{
+    "status": false,
+    "message": "Validation failed.",
+    "errors": {
+        "confirmation": [
+            "Please enter RESTORE DATABASE to confirm."
+        ]
+    }
+}
+
+
+Restore failure — 500 Internal Server Error:
+{
+    "status": false,
+    "message": "Database restore failed. The database may be partially restored."
+}
+
+
+The restore process does not read a storage key or backup ID. The admin downloads a backup, selects the SQL file and uploads it through this endpoint.

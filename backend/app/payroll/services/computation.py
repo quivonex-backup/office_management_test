@@ -291,18 +291,58 @@ def compute_payslip_data(employee, organization, period_start, period_end):
     warnings = attendance["warnings"]
     requires_review = attendance["requires_review"]
     sources = attendance["sources"]
+    notes = attendance.get("notes", [])
+
+    # An assignment that does not cover the whole period would price the
+    # whole period at this one structure. Flag it for review.
+    if (
+        assignment.effective_from > period_start
+        or (assignment.effective_to is not None
+            and assignment.effective_to < period_end)
+    ):
+        warnings.append(
+            f"Salary assignment '{structure.name}' covers "
+            f"{assignment.effective_from} to "
+            f"{assignment.effective_to or 'open-ended'}, not the whole "
+            f"period; the whole period was calculated with this structure. "
+            f"Check the salary assignments."
+        )
 
     # ---- Base days for per-day rate ----
+    period_days = Decimal((period_end - period_start).days + 1)
+    not_employed_days = counts.get("not_employed_days", ZERO)
+    not_employed_working = counts.get("not_employed_working_days", ZERO)
+
+    if (
+        settings.salary_basis == "WORKING_DAYS"
+        and not_employed_days > ZERO
+        and not_employed_working <= ZERO
+    ):
+        warnings.append(
+            f"Employee was not employed for {int(not_employed_days)} day(s) "
+            f"but no scheduled working days were found for them (no shift "
+            f"assigned?). Pay on the working-days basis may be overstated. "
+            f"Assign a shift and recompute, or accept with a review note."
+        )
+
     if settings.salary_basis == "FIXED_30":
         base_days = Decimal("30")
     elif settings.salary_basis == "WORKING_DAYS":
-        base_days = (
-            counts["working_days"]
-            if counts["working_days"] > ZERO
-            else Decimal("30")
-        )
+        # Working days of the WHOLE period, including any days before joining
+        # / after exit, so the per-day rate does not inflate for part-month staff.
+        base_days = counts["working_days"] + not_employed_working
+        if base_days <= ZERO:
+            base_days = Decimal("30")
     else:  # CALENDAR_DAYS
-        base_days = Decimal((period_end - period_start).days + 1)
+        base_days = period_days
+
+    # Days before joining / after resignation are unpaid.
+    if settings.salary_basis == "WORKING_DAYS":
+        not_employed_equiv = not_employed_working
+    elif period_days > ZERO:
+        not_employed_equiv = base_days * not_employed_days / period_days
+    else:
+        not_employed_equiv = ZERO
 
     # ---- Component amounts ----
     component_amounts, entries = _resolve_component_amounts(structure)
@@ -325,16 +365,25 @@ def compute_payslip_data(employee, organization, period_start, period_end):
             f"Fix the structure before running payroll."
         )
 
-    # ---- Per-day rate ----
+    # ---- Per-day rate (display + overtime base) ----
     per_day_rate = q2(full_gross / base_days) if base_days > ZERO else ZERO
 
     # ---- Loss of Pay ----
-    effective_absent_equivalent = (
+    absence_equivalent = (
         counts["absent_days"] * settings.absent_deduction_multiplier
         + counts["half_days"] * settings.half_day_deduction_multiplier
         + counts["unpaid_leave_days"] * settings.unpaid_leave_multiplier
     )
-    lop_amount = q2(effective_absent_equivalent * per_day_rate)
+    effective_absent_equivalent = absence_equivalent + not_employed_equiv
+
+    # Use the unrounded rate so that "all days lost" deducts exactly the
+    # gross, and never more than the gross.
+    if base_days > ZERO:
+        lop_amount = q2(full_gross * effective_absent_equivalent / base_days)
+    else:
+        lop_amount = ZERO
+    if lop_amount > full_gross:
+        lop_amount = full_gross
 
     # ---- Earned ratio (drives earned statutory base) ----
     paid_days_equivalent = base_days - effective_absent_equivalent
@@ -458,6 +507,7 @@ def compute_payslip_data(employee, organization, period_start, period_end):
                     "absent_days": str(counts["absent_days"]),
                     "half_days": str(counts["half_days"]),
                     "unpaid_leave_days": str(counts["unpaid_leave_days"]),
+                    "not_employed_days": str(not_employed_days),
                     "per_day_rate": str(per_day_rate),
                 },
             })
@@ -563,6 +613,7 @@ def compute_payslip_data(employee, organization, period_start, period_end):
                     "absent_days": str(counts["absent_days"]),
                     "half_days": str(counts["half_days"]),
                     "unpaid_leave_days": str(counts["unpaid_leave_days"]),
+                    "not_employed_days": str(not_employed_days),
                     "per_day_rate": str(per_day_rate),
                 },
             })
@@ -586,6 +637,10 @@ def compute_payslip_data(employee, organization, period_start, period_end):
         "full_gross": str(full_gross),
         "earned_ratio": str(earned_ratio),
         "effective_absent_equivalent": str(effective_absent_equivalent),
+        "not_employed_days": str(not_employed_days),
+        "payable_days": str(q2(paid_days_equivalent)),
+        "working_days": str(counts["working_days"]),
+        "attendance_notes": notes,
         "component_amounts": {
             code: str(amount) for code, amount in component_amounts.items()
         },

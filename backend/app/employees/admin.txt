@@ -1,0 +1,412 @@
+================================================================================
+EMPLOYEE APP — ADMIN / ORG OWNER API REFERENCE
+================================================================================
+
+Base URL   : /
+Method     : All endpoints are POST
+Auth       : Bearer token (IsAuthenticated)
+Envelope   : { "status": true|false, "message": "...", "data": {...}?, "errors": {...}? }
+
+Organization context:
+  - Single-org users: omit organization_id
+  - Multi-org users: include organization_id in body
+
+Who uses this document:
+  - Org owner / Admin role
+  - HR / anyone managing employees in the org
+
+NOTE: All endpoints in this document require employee_id (or document_id)
+      in the request body. They are admin-facing. For an employee viewing
+      their own profile, see the Employee document.
+
+BOOTSTRAP ORDER:
+  1. Ensure the "Employee" role exists (in /accounts/)
+  2. Create employees           → /employees/create/
+  3. (Optional) Create user accounts → /employees/create-user/
+     (or auto-create at step 2 with create_user=true)
+  4. Upload documents           → /employees/document/upload/
+  5. Employees can now log in   → Employee doc handles self-service
+
+
+================================================================================
+SECTION 1 — EMPLOYEE CRUD
+================================================================================
+
+--------------------------------------------------------------------------------
+1.1  POST /employees/create/
+--------------------------------------------------------------------------------
+Purpose : Create a new employee (optionally with a user account)
+Access  : Admin (org owner)
+Type    : multipart/form-data (accepts file uploads)
+Request :
+{
+  "first_name": "Rahul",
+  "middle_name": null,
+  "last_name": "Patil",
+  "date_of_birth": "1995-03-12",
+  "gender": "MALE",                     // MALE | FEMALE | OTHER
+  "mobile": "9876543210",
+  "alternate_mobile": null,
+  "personal_email": "rahul@example.com",
+  "address": "12, MG Road",
+  "state": "Karnataka",
+  "district": "Bangalore",
+  "taluka": "Whitefield",
+  "pincode": "560066",
+  "designation": "Software Engineer",
+  "department": "Engineering",
+  "joining_date": "2024-06-01",
+  "employment_status": "ACTIVE",        // ACTIVE | INACTIVE | ON_LEAVE |
+                                        // RESIGNED | TERMINATED
+  "resignation_date": null,
+  "emergency_contact_name": "Priya Patil",
+  "emergency_contact_number": "9876543211",
+  "emergency_contact_relation": "Spouse",
+  "pf_uan": "123456789012",
+  "esi_ip_number": null,
+  "pan_number": "ABCDE1234F",
+  "work_state": 12,
+  "tax_regime": "NEW",                  // OLD | NEW
+  "bank_account_number": "1234567890",
+  "bank_ifsc": "HDFC0001234",
+  "bank_name": "HDFC Bank",
+  "bank_branch": "MG Road",
+  "upi_id": "rahul@okhdfcbank",
+  "create_user": true,                  // optional, default false
+  "profile_photo": <file>,              // optional
+  "documents": [<file1>, <file2>]       // optional, repeated key
+}
+
+Response 201 (with user account):
+{
+  "status": true,
+  "message": "Employee and user account created successfully. Account credentials will be sent by email.",
+  "data": { full EmployeeDetailSerializer },
+  "user_account": {
+    "created": true,
+    "user_id": 42,
+    "username": "rahul.patil",
+    "email": "rahul@example.com",
+    "role": "Employee",
+    "membership_id": 88
+  }
+}
+
+Response 201 (without user account):
+{
+  "status": true,
+  "message": "Employee created successfully.",
+  "data": { full EmployeeDetailSerializer },
+  "user_account": { "created": false, "user_id": null, ... }
+}
+
+Behavior:
+  - employee_code is auto-generated: "EMP-{zero-padded id}"
+  - When create_user=true:
+      * A User account is created with a random generated password
+      * Role "Employee" is assigned (must exist)
+      * OrganizationMembership is created
+      * Credentials are emailed to personal_email
+  - If create_user=true and the Employee role does not exist → 400
+
+Validations:
+  - first_name, last_name are required
+  - personal_email and mobile are used for linked User account, must be
+    unique across the platform if the user is created
+  - Cross-org IDs (work_state from another org, etc.) are not applicable —
+    work_state is from a global location master
+
+--------------------------------------------------------------------------------
+1.2  POST /employees/create-user/
+--------------------------------------------------------------------------------
+Purpose : Create a user account for an EXISTING employee
+Access  : Admin (org owner)
+Request :
+{
+  "employee_id": 15
+}
+Response 201:
+{
+  "status": true,
+  "message": "Employee user account created successfully. Account credentials will be sent by email.",
+  "data": {
+    "employee_id": 15,
+    "employee_code": "EMP-000015",
+    "user_id": 42,
+    "username": "rahul.patil",
+    "email": "rahul@example.com",
+    "role": "Employee",
+    "membership_id": 88,
+    "account_active": true
+  }
+}
+
+Behavior:
+  - Fails with 400 if the employee already has a linked user account
+    (the "user" field on Employee is already set)
+  - Fails with 400 if "Employee" role doesn't exist
+  - Fails with 400 if personal_email or mobile is missing on the employee
+    (required to create a User)
+  - Sends credential email to personal_email
+
+--------------------------------------------------------------------------------
+1.3  POST /employees/list/
+--------------------------------------------------------------------------------
+Purpose : List all active employees in the caller's org
+Access  : Admin (org owner)
+Request (optional):
+{
+  "search": "rahul"          // matches code, name, mobile, email,
+                             // department, designation
+}
+Response 200:
+{
+  "status": true,
+  "message": "Employees fetched successfully.",
+  "data": [
+    {
+      "id": 15,
+      "employee_code": "EMP-000015",
+      "full_name": "Rahul Patil",
+      "first_name": "Rahul",
+      "middle_name": null,
+      "last_name": "Patil",
+      "date_of_birth": "1995-03-12",
+      "gender": "MALE",
+      "mobile": "9876543210",
+      "alternate_mobile": null,
+      "personal_email": "rahul@example.com",
+      "address": "12, MG Road",
+      "state": "Karnataka",
+      "district": "Bangalore",
+      "taluka": "Whitefield",
+      "pincode": "560066",
+      "designation": "Software Engineer",
+      "department": "Engineering",
+      "joining_date": "2024-06-01",
+      "employment_status": "ACTIVE",
+      "resignation_date": null,
+      "emergency_contact_name": "Priya Patil",
+      "emergency_contact_number": "9876543211",
+      "emergency_contact_relation": "Spouse",
+      "profile_photo": "employees/profile/rahul.jpg",
+      "pf_uan": "123456789012",
+      "esi_ip_number": null,
+      "pan_number": "ABCDE1234F",
+      "work_state": 12,
+      "work_state_name": "Karnataka",
+      "tax_regime": "NEW",
+      "bank_account_number": "1234567890",
+      "bank_ifsc": "HDFC0001234",
+      "bank_name": "HDFC Bank",
+      "bank_branch": "MG Road",
+      "upi_id": "rahul@okhdfcbank",
+      "documents": [ ... ],
+      "is_active": true,
+      "created_at": "2024-06-01T10:00:00Z",
+      "has_user_account": true
+    }
+  ]
+}
+
+NOTE: Only is_active=True employees are returned. Deactivated employees
+      are excluded. Order: newest first.
+
+--------------------------------------------------------------------------------
+1.4  POST /employees/detail/
+--------------------------------------------------------------------------------
+Purpose : Get full details of one employee
+Access  : Admin (org owner)
+Request :
+{
+  "employee_id": 15
+}
+Response 200:
+{
+  "status": true,
+  "message": "Employee details fetched successfully.",
+  "data": { full EmployeeDetailSerializer }
+}
+Response 404: "Employee not found." (if not in caller's org, or inactive)
+
+--------------------------------------------------------------------------------
+1.5  POST /employees/update/
+--------------------------------------------------------------------------------
+Purpose : Update an employee's profile
+Access  : Admin (org owner)
+Type    : multipart/form-data
+Request :
+{
+  "employee_id": 15,
+  "first_name": "Rahul",
+  "last_name": "Patil",
+  "mobile": "9876543299",
+  "personal_email": "rahul.new@example.com",
+  "designation": "Senior Engineer",
+  "employment_status": "ACTIVE",
+  "profile_photo": <file>,              // optional: replaces existing
+  "documents": [<new_file1>],           // optional: appended
+  "remove_document_ids": [301, 302]     // optional: delete these
+}
+Response 200: { full EmployeeDetailSerializer }
+
+Behavior:
+  - Partial update: only sent fields are modified
+  - If employee has a linked User account:
+      * personal_email uniqueness checked across all Users
+      * mobile uniqueness checked across all Users
+      * first_name, last_name, mobile, personal_email are synced
+        to the linked User
+      * Empty personal_email or mobile is rejected (400) when user exists
+  - Profile photo replaced → old S3 file deleted, new uploaded
+  - Documents: appended via files, removed via remove_document_ids
+
+Audit:
+  - Logs old and new snapshot including document add/remove lists
+
+--------------------------------------------------------------------------------
+1.6  POST /employees/deactivate/
+--------------------------------------------------------------------------------
+Purpose : Soft-delete an employee
+Access  : Admin (org owner)
+Request :
+{
+  "employee_id": 15
+}
+Response 200:
+{
+  "status": true,
+  "message": "Employee deactivated successfully."
+}
+
+Behavior:
+  - Sets is_active = false
+  - Sets employment_status = "INACTIVE"
+  - Does NOT deactivate the linked User account
+  - Does NOT remove org membership
+  - Employee disappears from all list endpoints and self-service calls
+
+NOTE: To fully remove a user's access, also deactivate their User account
+      and OrganizationMembership from /accounts/ endpoints (separate app).
+
+
+================================================================================
+SECTION 2 — EMPLOYEE DOCUMENTS
+================================================================================
+Employees can have any number of documents (offer letter, ID proof, etc.).
+Documents are stored on S3 and linked via EmployeeDocument model.
+
+--------------------------------------------------------------------------------
+2.1  POST /employees/document/upload/
+--------------------------------------------------------------------------------
+Purpose : Upload a document for an employee
+Access  : Admin (org owner)
+Type    : multipart/form-data
+Request :
+{
+  "employee_id": 15,
+  "file": <file>,                       // required
+  "title": "Offer Letter",              // optional; defaults to file.name
+  "description": "Signed copy"          // optional
+}
+Response 201:
+{
+  "status": true,
+  "message": "Employee document uploaded successfully.",
+  "data": {
+    "id": 301,
+    "title": "Offer Letter",
+    "file": "employees/documents/offer_letter.pdf",
+    "description": "Signed copy",
+    "created_at": "2026-01-15T09:00:00Z"
+  }
+}
+Response 404: employee not found in caller's org
+
+--------------------------------------------------------------------------------
+2.2  POST /employees/document/delete/
+--------------------------------------------------------------------------------
+Purpose : Delete an employee document
+Access  : Admin (org owner)
+Request :
+{
+  "document_id": 301
+}
+Response 200:
+{
+  "status": true,
+  "message": "Employee document deleted successfully."
+}
+
+Behavior:
+  - Deletes the file from S3
+  - Deletes the DB record
+  - Audit logs the deleted document's metadata
+
+
+================================================================================
+QUICK REFERENCE — ADMIN ENDPOINTS
+================================================================================
+
+EMPLOYEE (6)
+  POST /employees/create/
+  POST /employees/create-user/
+  POST /employees/list/
+  POST /employees/detail/
+  POST /employees/update/
+  POST /employees/deactivate/
+
+DOCUMENTS (2)
+  POST /employees/document/upload/
+  POST /employees/document/delete/
+
+TOTAL ADMIN ENDPOINTS: 8
+
+
+================================================================================
+KEY NOTES FOR FRONTEND — ADMIN SIDE
+================================================================================
+
+1. employee_id IS MANDATORY ON EVERY ENDPOINT HERE.
+   Unlike the Project/Payroll apps, Employee admin endpoints expect
+   employee_id in the body. The backend scopes by organization first,
+   then by employee_id.
+
+2. CREATE_USER FLAG IS THE MOST IMPACTFUL CHOICE.
+   - create_user=false → employee exists in HR system only; no login
+   - create_user=true  → employee can log in; credentials emailed;
+                         "Employee" role + org membership created
+   Best UX: pre-check whether the org has an "Employee" role. If not,
+   the create API will fail with 400 — surface that clearly.
+
+3. SYNC BETWEEN EMPLOYEE AND LINKED USER
+   When you update personal_email or mobile, both the Employee row
+   AND the linked User row change. Uniqueness is enforced against User
+   emails/mobiles globally.
+   If you set personal_email or mobile to empty on an employee WITH a
+   linked User, the API returns 400 to prevent locking the user out.
+
+4. PROFILE PHOTO AND DOCUMENTS ARE S3-BACKED
+   - Uploading a new profile photo deletes the old one from S3
+   - Deleting a document removes the S3 file AND the DB row
+   - No orphaned files should remain, but there's no "restore" path —
+     deleted documents are gone
+
+5. UPDATE IS PARTIAL
+   Send only what you want to change. Fields not in the request are
+   left as-is. This makes the endpoint safe for incremental updates.
+
+6. DEACTIVATE DOES NOT DETACH THE USER
+   After deactivating an employee:
+   - Employee.is_active = false
+   - Employee.employment_status = "INACTIVE"
+   - User.is_active is UNCHANGED
+   - OrganizationMembership is UNCHANGED
+   If the frontend wants to fully lock the employee out, the admin must
+   ALSO deactivate the User account from /accounts/ endpoints.
+   (This is intentional — you may want to keep the login to view
+   archived payslips, for example.)
+
+7. NO ROLE MANAGEMENT HERE
+   Role assignment (Admin, Manager, etc.) happens in /accounts/.
+   Employee creation only assigns the "Employee" role by default.

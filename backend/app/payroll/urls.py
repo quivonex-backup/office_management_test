@@ -50,10 +50,16 @@ from .views import (
     PaymentBulkRecordForRunAPIView,
     PaymentListAPIView,
 
+    # Org Admin — Payslip Download
+    PayrollPayslipDownloadAPIView,
+
+    PayrollCalculatorAPIView,
+
     # Employee
     MyPayslipListAPIView,
     MyPayslipDetailAPIView,
     MySalaryAssignmentAPIView,
+    MyPayslipDownloadAPIView,
 )
 
 
@@ -126,9 +132,20 @@ urlpatterns = [
     path("payments/list/", PaymentListAPIView.as_view()),
 
     # =========================================================
+    # ORG ADMIN — PAYSLIP DOWNLOAD
+    # =========================================================
+    path("payslips/download/", PayrollPayslipDownloadAPIView.as_view()),
+
+    # =========================================================
+    # ORG ADMIN — Payroll Calculator
+    # =========================================================
+    path("calculator/", PayrollCalculatorAPIView.as_view()),
+
+    # =========================================================
     # EMPLOYEE
     # =========================================================
     path("my/payslips/", MyPayslipListAPIView.as_view()),
     path("my/payslips/detail/", MyPayslipDetailAPIView.as_view()),
     path("my/salary/", MySalaryAssignmentAPIView.as_view()),
+    path("my/payslips/download/", MyPayslipDownloadAPIView.as_view()),
 ]

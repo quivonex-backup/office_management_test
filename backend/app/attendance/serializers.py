@@ -1,6 +1,9 @@
 from rest_framework import serializers
 from datetime import date
 from django.db.models import Q
+from django.utils import timezone
+from datetime import date
+from .services import get_attendance_settings
 
 from .models import (
     AttendanceSettings,
@@ -48,6 +51,8 @@ class AttendanceSettingsSerializer(serializers.ModelSerializer):
             "half_day_threshold_minutes",
             "early_departure_half_day_threshold_minutes",
             "late_half_day_threshold_minutes",
+            "overtime_minimum_minutes",
+            "overtime_include_threshold",
             "auto_mark_absent",
             "absent_after_minutes",
             "created_by",
@@ -512,3 +517,74 @@ class AttendanceCorrectionSerializer(serializers.ModelSerializer):
             })
 
         return attrs
+
+
+# =========================================================
+# MY SHIFT ASSIGNMENT SERIALIZER (EMPLOYEE)
+# =========================================================
+class MyShiftAssignmentSerializer(serializers.ModelSerializer):
+
+    assignment_id = serializers.IntegerField(source="id", read_only=True)
+    shift_id = serializers.IntegerField(source="shift.id", read_only=True)
+    shift_name = serializers.CharField(source="shift.name", read_only=True)
+    start_time = serializers.TimeField(source="shift.start_time", read_only=True)
+    end_time = serializers.TimeField(source="shift.end_time", read_only=True)
+    crosses_midnight = serializers.BooleanField(source="shift.crosses_midnight", read_only=True)
+
+    late_grace_minutes = serializers.SerializerMethodField()
+    early_departure_grace_minutes = serializers.SerializerMethodField()
+    is_current = serializers.SerializerMethodField()
+    is_future = serializers.SerializerMethodField()
+    is_past = serializers.SerializerMethodField()
+
+    class Meta:
+        model = EmployeeShiftAssignment
+        fields = [
+            "assignment_id",
+            "shift_id",
+            "shift_name",
+            "start_time",
+            "end_time",
+            "crosses_midnight",
+            "late_grace_minutes",
+            "early_departure_grace_minutes",
+            "effective_from",
+            "effective_to",
+            "is_current",
+            "is_future",
+            "is_past",
+        ]
+
+    def _attendance_settings(self):
+        return self.context.get("attendance_settings")
+
+    def get_late_grace_minutes(self, obj):
+        if obj.shift.late_grace_minutes is not None:
+            return obj.shift.late_grace_minutes
+        settings = self._attendance_settings()
+        return settings.late_grace_minutes if settings else 0
+
+    def get_early_departure_grace_minutes(self, obj):
+        if obj.shift.early_departure_grace_minutes is not None:
+            return obj.shift.early_departure_grace_minutes
+        settings = self._attendance_settings()
+        return settings.early_departure_grace_minutes if settings else 0
+
+    def _today(self):
+        # return date.today()
+        return timezone.localdate()
+
+    def get_is_past(self, obj):
+        today = self._today()
+        return obj.effective_to is not None and obj.effective_to < today
+
+    def get_is_future(self, obj):
+        return obj.effective_from > self._today()
+
+    def get_is_current(self, obj):
+        today = self._today()
+        return (
+            obj.effective_from <= today
+            and (obj.effective_to is None or obj.effective_to >= today)
+        )
+    

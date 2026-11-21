@@ -1,0 +1,740 @@
+================================================================================
+LEAVE APP — ADMIN API REFERENCE
+================================================================================
+
+Base URL   : /
+Method     : All endpoints are POST
+Auth       : Bearer token (IsAuthenticated)
+Envelope   : { "status": true|false, "message": "...", "data": {...}?, "errors": {...}? }
+
+Organization context:
+  - All admin endpoints are scoped to the caller's organization.
+  - The view resolves organization from the authenticated user.
+  - Do NOT send organization_id — it is ignored.
+
+Who uses this document:
+  - Organization owner (Admin role)
+  - Any org member with Admin-level access
+
+
+================================================================================
+BOOTSTRAP ORDER — READ FIRST
+================================================================================
+
+  1. Create leave types      (/types/create/)
+  2. Initialize balances     (/balances/initialize/)   — grants the annual days
+  3. Employees apply         (employee doc: /applications/create/)
+  4. Admin reviews           (/applications/review/)
+  5. Admin views audit trail (/transactions/list/)
+
+  Without step 1, employees cannot apply.
+  Without step 2, employees have 0 available days.
+
+
+================================================================================
+SECTION 1 — LEAVE TYPES
+================================================================================
+
+--------------------------------------------------------------------------------
+1.1  POST /leave/types/list/
+--------------------------------------------------------------------------------
+Purpose : List all active leave types in the caller's org
+Access  : Admin AND Employee (shared)
+Request : {}
+
+Response 200:
+{
+  "status": true,
+  "message": "Leave types fetched successfully.",
+  "data": [
+    {
+      "id": 1,
+      "name": "Casual Leave",
+      "code": "CL",
+      "description": "Personal leave",
+      "annual_allocation": "12.00",
+      "is_paid": true,
+      "is_active": true,
+      "created_at": "2026-01-01T10:00:00Z",
+      "updated_at": "2026-01-01T10:00:00Z"
+    }
+  ]
+}
+
+Response 400 (no active org):
+{ "status": false, "message": "<get_user_organization error message>" }
+
+Notes:
+  - Only is_active=True leave types are returned.
+  - No pagination.
+  - Used to populate leave-type dropdowns on admin forms (balance
+    initialize, application filters) AND on the employee's apply form.
+
+
+--------------------------------------------------------------------------------
+1.2  POST /leave/types/create/
+--------------------------------------------------------------------------------
+Purpose : Create a new leave type
+Access  : Admin
+Request :
+{
+  "name": "Casual Leave",           // required
+  "code": "CL",                     // required, unique per org
+  "description": "Personal leave",  // optional
+  "annual_allocation": "12.00",     // required, >= 0
+  "is_paid": true                   // optional, default true
+}
+
+Response 201:
+{
+  "status": true,
+  "message": "Leave type created successfully.",
+  "data": {
+    "id": 1,
+    "name": "Casual Leave",
+    "code": "CL",
+    "description": "Personal leave",
+    "annual_allocation": "12.00",
+    "is_paid": true,
+    "is_active": true,
+    "created_at": "2026-01-01T10:00:00Z",
+    "updated_at": "2026-01-01T10:00:00Z"
+  }
+}
+
+Response 400 (validation):
+{
+  "status": false,
+  "message": "Invalid leave type data.",
+  "errors": {
+    "name": ["This field is required."],
+    "annual_allocation": ["Ensure this value is greater than or equal to 0."]
+  }
+}
+
+Response 400 (duplicate name or code):
+{
+  "status": false,
+  "message": "A leave type with this name or code already exists."
+}
+
+Notes:
+  - organization is derived from request.user — do NOT send it.
+  - is_active is read-only on the serializer — always true on create.
+  - name and code must be unique per organization (DB constraint).
+
+
+--------------------------------------------------------------------------------
+1.3  POST /leave/types/update/
+--------------------------------------------------------------------------------
+Purpose : Update an existing leave type (partial)
+Access  : Admin
+Request :
+{
+  "leave_type_id": 1,               // required
+  "name": "Casual Leave",           // optional (partial update)
+  "code": "CL",                     // optional
+  "description": "Updated desc",    // optional
+  "annual_allocation": "15.00",     // optional
+  "is_paid": true                   // optional
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Leave type updated successfully.",
+  "data": { ...full leave type object... }
+}
+
+Response 400 (missing param):
+{ "status": false, "message": "leave_type_id is required." }
+
+Response 400 (validation):
+{
+  "status": false,
+  "message": "Invalid leave type data.",
+  "errors": { "name": ["This field is required."] }
+}
+
+Response 400 (duplicate name or code):
+{
+  "status": false,
+  "message": "A leave type with this name or code already exists."
+}
+
+Response 404 (not found / another org):
+{
+  "detail": "No LeaveType matches the given query."
+}
+
+⚠️ IMPORTANT: 404 from this endpoint does NOT follow the envelope shape
+   ({status/message}). The view uses get_object_or_404 which DRF converts
+   to {"detail": "..."}. Handle both shapes in the UI, or wrap the call
+   to normalize. This is a backend inconsistency, not a doc error.
+
+Notes:
+  - Partial update — any field omitted keeps its current value.
+  - annual_allocation change does NOT retroactively update existing
+    balances — use /balances/adjust/ for that.
+  - is_active is read-only — use /types/deactivate/ to deactivate.
+
+
+--------------------------------------------------------------------------------
+1.4  POST /leave/types/deactivate/
+--------------------------------------------------------------------------------
+Purpose : Deactivate a leave type
+Access  : Admin
+Request :
+{
+  "leave_type_id": 1                // required
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Leave type deactivated successfully."
+}
+
+Response 400 (missing param):
+{ "status": false, "message": "leave_type_id is required." }
+
+Response 400 (already inactive):
+{ "status": false, "message": "Leave type is already inactive." }
+
+Response 404 (not found / another org):
+{
+  "detail": "No LeaveType matches the given query."
+}
+
+⚠️ Same 404 shape caveat as 1.3 — not the envelope.
+
+Notes:
+  - Soft delete: is_active=False. The row stays in DB.
+  - Deactivated types disappear from /types/list/.
+  - Existing balances and applications referencing this leave type are
+    NOT affected — they keep pointing to the (now inactive) row.
+
+
+================================================================================
+SECTION 2 — LEAVE BALANCES
+================================================================================
+
+--------------------------------------------------------------------------------
+2.1  POST /leave/balances/list/
+--------------------------------------------------------------------------------
+Purpose : List all employee leave balances across the organization
+Access  : Admin
+Request (all optional):
+{
+  "employee_id": 15,
+  "leave_type_id": 1,
+  "leave_year": 2026
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Organization leave balances fetched successfully.",
+  "data": [
+    {
+      "id": 10,
+      "employee": 15,
+      "employee_code": "EMP001",
+      "employee_name": "Rahul Patil",
+      "leave_type": 1,
+      "leave_type_name": "Casual Leave",
+      "leave_year": 2026,
+      "opening_balance": "0.00",
+      "allocated_days": "12.00",
+      "used_days": "2.00",
+      "pending_days": "1.00",
+      "available_days": "9.00",
+      "created_at": "2026-01-01T10:00:00Z",
+      "updated_at": "2026-01-02T10:00:00Z"
+    }
+  ]
+}
+
+Response 400 (invalid leave_year):
+{ "status": false, "message": "Invalid leave_year." }
+
+Notes:
+  - All filters optional. Send {} for every balance in the org.
+  - available_days = opening_balance + allocated_days - used_days - pending_days
+  - No pagination — returns full filtered list.
+
+
+--------------------------------------------------------------------------------
+2.2  POST /leave/balances/initialize/
+--------------------------------------------------------------------------------
+Purpose : Initialize yearly balances for all active employees
+Access  : Admin
+Request :
+{
+  "leave_year": 2026,               // required
+  "leave_type_ids": [1, 2]          // optional; omit for all active types
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Leave balances initialized successfully.",
+  "data": {
+    "created": 20,
+    "existing": 5
+  }
+}
+
+Response 400 (invalid year):
+{ "status": false, "message": "A valid leave_year is required." }
+
+Response 400 (leave_type_ids not a list):
+{ "status": false, "message": "leave_type_ids must be a list." }
+
+Response 400 (invalid or inactive leave type ids):
+{
+  "status": false,
+  "message": "One or more leave types are invalid or inactive."
+}
+
+Response 500 (unexpected error):
+{
+  "status": false,
+  "message": "Unable to initialize leave balances."
+}
+
+Notes:
+  - Iterates every active employee x every active leave type.
+  - Existing balances are NOT overwritten — they're counted in "existing".
+  - Newly created rows get allocated_days = leave_type.annual_allocation.
+  - Safe to re-run — idempotent per (employee, leave_type, leave_year).
+  - "created" + "existing" = total (employee x leave_type) combinations
+    that were touched.
+
+
+--------------------------------------------------------------------------------
+2.3  POST /leave/balances/adjust/
+--------------------------------------------------------------------------------
+Purpose : Manually adjust an employee's leave allocation
+Access  : Admin
+Request :
+{
+  "balance_id": 10,                 // required
+  "days": 2,                        // required, positive or negative
+  "remarks": "Additional leave allocation"   // optional
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Leave balance adjusted successfully.",
+  "data": {
+    "id": 10,
+    "employee": 15,
+    "employee_code": "EMP001",
+    "employee_name": "Rahul Patil",
+    "leave_type": 1,
+    "leave_type_name": "Casual Leave",
+    "leave_year": 2026,
+    "opening_balance": "0.00",
+    "allocated_days": "14.00",        // ← +2 applied
+    "used_days": "2.00",
+    "pending_days": "1.00",
+    "available_days": "11.00",
+    "created_at": "2026-01-01T10:00:00Z",
+    "updated_at": "2026-01-03T10:00:00Z"
+  }
+}
+
+Response 400 (missing params):
+{ "status": false, "message": "balance_id is required." }
+{ "status": false, "message": "days is required." }
+
+Response 400 (invalid days):
+{ "status": false, "message": "days must be a valid number." }
+
+Response 400 (zero days):
+{ "status": false, "message": "Adjustment days cannot be zero." }
+
+Response 400 (would make allocated negative):
+{ "status": false, "message": "Allocated balance cannot become negative." }
+
+Response 400 (would make available negative):
+{
+  "status": false,
+  "message": "Adjustment would make available leave balance negative."
+}
+
+Response 400 (balance not found):
+{ "status": false, "message": "Leave balance not found." }
+
+Notes:
+  - Positive days = increase allocation.
+  - Negative days = decrease allocation.
+  - Cannot push allocated_days or available_days below 0.
+  - Creates a LeaveBalanceTransaction of type ADJUSTMENT for the audit trail.
+
+
+================================================================================
+SECTION 3 — LEAVE APPLICATIONS
+================================================================================
+
+--------------------------------------------------------------------------------
+3.1  POST /leave/applications/list/
+--------------------------------------------------------------------------------
+Purpose : List all leave applications in the org (review queue + history)
+Access  : Admin
+Request (all optional):
+{
+  "status": "PENDING",              // PENDING | APPROVED | REJECTED | CANCELLED
+  "employee_id": 15,
+  "leave_type_id": 1,
+  "from_date": "2026-11-01",        // YYYY-MM-DD
+  "to_date": "2026-11-30"           // YYYY-MM-DD
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Leave applications fetched successfully.",
+  "data": [
+    {
+      "id": 101,
+      "employee": 15,
+      "employee_code": "EMP001",
+      "employee_name": "Rahul Patil",
+      "leave_type": 1,
+      "leave_type_name": "Casual Leave",
+      "start_date": "2026-11-05",
+      "end_date": "2026-11-06",
+      "total_days": "2.00",
+      "reason": "Personal work",
+      "status": "PENDING",
+      "reviewed_by": null,
+      "reviewed_by_name": null,
+      "reviewed_at": null,
+      "review_remarks": "",
+      "created_at": "2026-10-30T10:00:00Z",
+      "updated_at": "2026-10-30T10:00:00Z"
+    }
+  ]
+}
+
+Response 400 (invalid status):
+{ "status": false, "message": "Invalid application status." }
+
+Response 400 (invalid date format):
+{ "status": false, "message": "from_date must use YYYY-MM-DD format." }
+
+Notes:
+  - Date range filter uses OVERLAP semantics — an application is included
+    if its date span overlaps [from_date, to_date], not just if it starts
+    or ends in the range.
+  - No pagination — returns full filtered list. For large orgs, always
+    pass status=PENDING for the review queue, or narrow with date range.
+
+
+--------------------------------------------------------------------------------
+3.2  POST /leave/applications/review/
+--------------------------------------------------------------------------------
+Purpose : Approve or reject a pending leave application
+Access  : Admin
+Request (approve):
+{
+  "application_id": 101,            // required
+  "decision": "APPROVED",           // required: APPROVED | REJECTED
+  "review_remarks": "Approved"      // optional
+}
+
+Request (reject):
+{
+  "application_id": 101,
+  "decision": "REJECTED",
+  "review_remarks": "Insufficient supporting information"
+}
+
+Response 200 (approved):
+{
+  "status": true,
+  "message": "Leave application approved successfully.",
+  "data": {
+    "id": 101,
+    "employee": 15,
+    "employee_code": "EMP001",
+    "employee_name": "Rahul Patil",
+    "leave_type": 1,
+    "leave_type_name": "Casual Leave",
+    "start_date": "2026-11-05",
+    "end_date": "2026-11-06",
+    "total_days": "2.00",
+    "reason": "Personal work",
+    "status": "APPROVED",
+    "reviewed_by": 5,
+    "reviewed_by_name": "Admin User",
+    "reviewed_at": "2026-10-30T11:00:00Z",
+    "review_remarks": "Approved",
+    "created_at": "2026-10-30T10:00:00Z",
+    "updated_at": "2026-10-30T11:00:00Z"
+  }
+}
+
+Response 200 (rejected): same shape with status="REJECTED"
+
+Response 400 (missing param):
+{ "status": false, "message": "application_id is required." }
+
+Response 400 (invalid decision):
+{ "status": false, "message": "decision must be APPROVED or REJECTED." }
+
+Response 400 (application already reviewed):
+{ "status": false, "message": "Application has already been approved." }
+{ "status": false, "message": "Application has already been rejected." }
+
+Response 400 (application not found):
+{ "status": false, "message": "Leave application not found." }
+
+Response 400 (balance reservation missing):
+{ "status": false, "message": "Leave balance reservation was not found." }
+
+Response 500 (unexpected error):
+{ "status": false, "message": "Unable to review leave application." }
+
+Side effects on APPROVE:
+  - pending_days moved to used_days on each affected balance.
+  - Creates APPROVAL transaction rows for the audit trail.
+  - Attendance rows for the leave dates are set to ON_LEAVE.
+  - If the employee already checked in on any leave date, approval fails
+    with a 400 (attendance conflict) and the whole review is rolled back.
+
+Side effects on REJECT:
+  - pending_days released back to available.
+  - Creates REJECTION transaction rows.
+  - No attendance changes.
+
+
+--------------------------------------------------------------------------------
+3.3  POST /leave/applications/cancel/organization/
+--------------------------------------------------------------------------------
+Purpose : Cancel any employee's leave application (pending OR approved)
+Access  : Admin
+Request :
+{
+  "application_id": 101             // required
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Leave application cancelled successfully.",
+  "data": { ...full application with status="CANCELLED"... }
+}
+
+Response 400 (missing param):
+{ "status": false, "message": "application_id is required." }
+
+Response 400 (application not found):
+{ "status": false, "message": "Leave application not found." }
+
+Response 400 (already terminal status):
+{
+  "status": false,
+  "message": "Only pending or approved applications can be cancelled."
+}
+
+Response 400 (attendance conflict on approved cancel):
+{
+  "status": false,
+  "message": "Cannot cancel approved leave because attendance has already been recorded for one or more leave dates."
+}
+
+Response 500:
+{ "status": false, "message": "Unable to cancel leave application." }
+
+Notes:
+  - PENDING application: releases pending_days back to available.
+  - APPROVED application: restores used_days AND resets the ON_LEAVE
+    attendance rows to INCOMPLETE (the absence scheduler will re-evaluate
+    those dates).
+  - Both cases create a CANCELLATION transaction for the audit trail.
+  - If any of the leave dates already has a check-in, the cancel fails —
+    the admin must handle attendance first.
+
+
+================================================================================
+SECTION 4 — LEAVE TRANSACTIONS
+================================================================================
+
+--------------------------------------------------------------------------------
+4.1  POST /leave/transactions/list/
+--------------------------------------------------------------------------------
+Purpose : View the audit trail of all leave balance changes
+Access  : Admin
+Request (all optional):
+{
+  "employee_id": 15,
+  "leave_type_id": 1,
+  "transaction_type": "PENDING_RESERVE"
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Leave balance transactions fetched successfully.",
+  "data": [
+    {
+      "id": 501,
+      "employee": 15,
+      "employee_code": "EMP001",
+      "employee_name": "Rahul Patil",
+      "leave_type": 1,
+      "leave_type_name": "Casual Leave",
+      "leave_balance": 10,
+      "leave_application": 101,
+      "transaction_type": "PENDING_RESERVE",
+      "days": "2.00",
+      "remarks": "Leave application submitted.",
+      "created_by": 15,
+      "created_at": "2026-10-30T10:00:00Z"
+    }
+  ]
+}
+
+Response 400 (invalid transaction_type):
+{ "status": false, "message": "Invalid transaction_type." }
+
+Transaction types (send exactly one of these for the filter):
+  ALLOCATION       — initial annual allocation when balance is created
+  PENDING_RESERVE  — days reserved when an application is submitted
+  APPROVAL         — pending moved to used on approval (positive)
+  REJECTION        — pending released on rejection (negative)
+  CANCELLATION     — pending/used released on cancellation (negative)
+  ADJUSTMENT       — manual admin adjustment (positive or negative)
+
+Notes:
+  - "days" is signed: positive increases the allocation, negative reduces.
+  - leave_application may be null (e.g. for ALLOCATION and ADJUSTMENT
+    rows that aren't tied to a specific application).
+  - No pagination — returns full filtered list. Narrow by employee or
+    date range in the UI for large orgs.
+
+
+================================================================================
+QUICK REFERENCE — ADMIN ENDPOINTS
+================================================================================
+
+LEAVE TYPES (4)
+  POST /leave/types/list/
+  POST /leave/types/create/
+  POST /leave/types/update/
+  POST /leave/types/deactivate/
+
+LEAVE BALANCES (3)
+  POST /leave/balances/list/
+  POST /leave/balances/initialize/
+  POST /leave/balances/adjust/
+
+LEAVE APPLICATIONS (3)
+  POST /leave/applications/list/
+  POST /leave/applications/review/
+  POST /leave/applications/cancel/organization/
+
+LEAVE TRANSACTIONS (1)
+  POST /leave/transactions/list/
+
+TOTAL ADMIN ENDPOINTS: 11
+
+
+================================================================================
+ENUMS — FOR UI MAPPING
+================================================================================
+
+LEAVE APPLICATION STATUS:
+  PENDING | APPROVED | REJECTED | CANCELLED
+
+TRANSACTION TYPE:
+  ALLOCATION | PENDING_RESERVE | APPROVAL | REJECTION | CANCELLATION | ADJUSTMENT
+
+LEAVE TYPE is_paid / is_active:
+  boolean (true / false)
+
+
+================================================================================
+COMMON ERROR SHAPES
+================================================================================
+
+Validation / business error (400):
+{
+  "status": false,
+  "message": "Human-readable message.",
+  "errors": { "field": ["..."] }   // only when validation-level
+}
+
+404 from get_object_or_404 endpoints (types/update, types/deactivate):
+{ "detail": "No LeaveType matches the given query." }
+⚠️ Not the envelope shape — handle separately in the UI.
+
+500 (unexpected):
+{ "status": false, "message": "Unable to <action>." }
+
+
+================================================================================
+KEY NOTES FOR FRONTEND / UI DESIGNER
+================================================================================
+
+1. THIS DOC EXCLUDES EMPLOYEE-ONLY ENDPOINTS.
+   The employee's own "my balances", "my applications", "apply", and
+   "cancel my application" endpoints are in the EMPLOYEE doc — the admin
+   panel does not call them.
+
+2. BOOTSTRAP ORDER MATTERS.
+   Create leave types first → initialize balances second → employees
+   can then apply. If you skip /initialize/, employees will see 0
+   available days and cannot apply.
+
+3. BALANCE MATH.
+   available_days = opening_balance + allocated_days - used_days
+                    - pending_days
+   Show all five fields in the admin balance table so the numbers are
+   auditable. "pending" is the reserved bucket for PENDING applications
+   — it will move to "used" on approval or back to "available" on
+   rejection/cancellation.
+
+4. ADJUSTMENT IS POSITIVE OR NEGATIVE.
+   "days": 2 → +2 allocation. "days": -2 → -2 allocation.
+   The view rejects zero and rejects any change that would push
+   allocated_days or available_days below 0.
+
+5. DATE FILTER ON /applications/list/ IS OVERLAP, NOT CONTAINMENT.
+   from_date=2026-11-01 & to_date=2026-11-30 returns applications whose
+   date span overlaps November — including applications that started in
+   October and end in November. That's what an admin review queue wants.
+
+6. REVIEW IS ATOMIC.
+   Approving a leave writes to: application.status, balance.pending_days,
+   balance.used_days, new transaction rows, AND attendance records.
+   If any step fails (e.g. employee already checked in on a leave date),
+   the whole review rolls back — no partial state. Return the 400 error
+   message to the admin as-is so they know what to fix.
+
+7. CANCELLATION SIDE EFFECTS.
+   Cancelling an APPROVED application resets ON_LEAVE attendance to
+   INCOMPLETE. If the employee has already checked in on any leave date,
+   cancellation fails with a 400 — the admin must resolve attendance
+   first.
+
+8. 404 SHAPE CAVEAT.
+   /types/update/ and /types/deactivate/ use get_object_or_404, which
+   returns {"detail": "..."} instead of the envelope. Wrap these calls
+   in the UI to normalize the error display. This is a backend
+   inconsistency, not a doc bug.
+
+9. NO PAGINATION.
+   All list endpoints return the full filtered list. For large orgs,
+   always narrow by status or date range in the admin review queue.
+   Client-side pagination on the returned array is fine.
+
+10. SHARED /types/list/.
+    Both the admin panel and the employee panel call this endpoint.
+    The admin panel uses it for: the balance initialize leave-type
+    picker, the balance list filter, and the application list filter.
+    The employee panel uses it for the apply-form dropdown.

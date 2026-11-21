@@ -1,14 +1,18 @@
+import os
+import logging
 import secrets
 from datetime import timedelta
 
 from django.conf import settings
 from django.core.mail import send_mail
 from django.core.exceptions import ValidationError
+from django.core.files.storage import default_storage
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.hashers import make_password, check_password
 from django.contrib.auth import authenticate
 from django.db import IntegrityError
 from django.db import transaction
+from django.http import FileResponse
 from django.utils import timezone
 from django.db.models import Q
 
@@ -16,7 +20,8 @@ from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.tokens import RefreshToken, TokenError
+from rest_framework.parsers import MultiPartParser, FormParser
 
 from .services import is_super_admin, send_user_registration_email
 from common.s3_utils import (
@@ -26,7 +31,7 @@ from common.s3_utils import (
 )
 from common.code_generators import generate_organization_code
 
-from .models import User, Role, EmailOTP, Organization, OrganizationMembership
+from .models import User, Role, EmailOTP, Organization, OrganizationMembership, DatabaseBackup
 from .serializers import (
     UserSerializer,
     UserCreateSerializer,
@@ -37,9 +42,20 @@ from .serializers import (
     ForgotPasswordSerializer,
     RoleSerializer,
     OrganizationSerializer,
+    DatabaseBackupSerializer,
+    DatabaseBackupDownloadSerializer,
+    DatabaseBackupRestoreSerializer,
 )
 
+from .backup_services import (
+    create_database_backup,
+    restore_database_from_upload,
+)
+
+from app.communications.notification_service import notify
 from app.audit.services import log_activity
+
+logger = logging.getLogger(__name__)
 
 
 # ----------------------------------------------------------------------
@@ -144,32 +160,62 @@ class RegisterAPIView(APIView):
             )
 
 
+
 class LoginAPIView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        username = request.data.get("username")
+        username_or_email = request.data.get("username")
         password = request.data.get("password")
-        if not username or not password:
+
+        if not username_or_email or not password:
             return Response(
                 {
                     "status": False,
-                    "message": "Username and password are required.",
+                    "message": "Username/email and password are required.",
                     "data": None,
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        user = authenticate(request=request, username=username, password=password)
+
+        # Check whether the input is an email or username
+        user = User.objects.filter(
+            username__iexact=username_or_email
+        ).first()
+        
+        if user is None:
+            user = User.objects.filter(
+                email__iexact=username_or_email
+            ).first()
+
         if user is None:
             return Response(
                 {
                     "status": False,
-                    "message": "Invalid username or password.",
+                    "message": "Invalid username/email or password.",
                     "data": None,
                 },
                 status=status.HTTP_401_UNAUTHORIZED,
             )
-        if not user.is_active:
+
+        # Authenticate using the actual username
+        authenticated_user = authenticate(
+            request=request,
+            username=user.username,
+            password=password,
+        )
+
+        if authenticated_user is None:
+            return Response(
+                {
+                    "status": False,
+                    "message": "Invalid username/email or password.",
+                    "data": None,
+                },
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        if not authenticated_user.is_active:
             return Response(
                 {
                     "status": False,
@@ -178,16 +224,19 @@ class LoginAPIView(APIView):
                 },
                 status=status.HTTP_403_FORBIDDEN,
             )
-        refresh = RefreshToken.for_user(user)
+
+        refresh = RefreshToken.for_user(authenticated_user)
+
         log_activity(
             request=request,
-            user=user,
+            user=authenticated_user,
             action="LOGIN",
             module="AUTH",
             object_type="User",
-            object_id=user.id,
-            description=f"User '{user.username}' logged in successfully.",
+            object_id=authenticated_user.id,
+            description=f"User '{authenticated_user.username}' logged in successfully.",
         )
+
         return Response(
             {
                 "status": True,
@@ -195,11 +244,68 @@ class LoginAPIView(APIView):
                 "data": {
                     "access": str(refresh.access_token),
                     "refresh": str(refresh),
-                    "user": UserSerializer(user).data,
+                    "user": UserSerializer(authenticated_user).data,
                 },
             },
             status=status.HTTP_200_OK,
         )
+
+
+
+class RefreshTokenAPIView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+
+        refresh_token = request.data.get("refresh")
+
+        if not refresh_token:
+            return Response({
+                "status": False,
+                "message": "Refresh token is required.",
+                "data": None
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            refresh = RefreshToken(refresh_token)
+
+            user_id = refresh.payload.get("user_id")
+
+            user = User.objects.filter(
+                id=user_id,
+                is_active=True
+            ).first()
+
+            if not user:
+                return Response({
+                    "status": False,
+                    "message": "User not found or inactive.",
+                    "data": None
+                }, status=status.HTTP_401_UNAUTHORIZED)
+
+            # Generate new access token
+            access_token = str(refresh.access_token)
+
+            # Rotate refresh token
+            refresh.blacklist()
+
+            new_refresh = RefreshToken.for_user(user)
+
+            return Response({
+                "status": True,
+                "message": "Token refreshed successfully.",
+                "data": {
+                    "access": access_token,
+                    "refresh": str(new_refresh)
+                }
+            }, status=status.HTTP_200_OK)
+
+        except TokenError:
+            return Response({
+                "status": False,
+                "message": "Invalid or expired refresh token. Please login again.",
+                "data": None
+            }, status=status.HTTP_401_UNAUTHORIZED)
 
 
 class ChangePasswordAPIView(APIView):
@@ -273,6 +379,21 @@ class ChangePasswordAPIView(APIView):
             # No old_data/new_data to avoid exposing passwords
         )
 
+        # ---- Notify user that their password was changed ----
+        _user = user
+        transaction.on_commit(lambda: notify(
+            users=_user,
+            event_code="PASSWORD_CHANGED",
+            title="Password changed",
+            body=(
+                "Your password was changed just now. "
+                "If this wasn't you, contact your admin immediately."
+            ),
+            reference_type=None,
+            reference_id=None,
+            priority="HIGH",
+        ))
+
         return Response(
             {"status": True, "message": "Password changed successfully. Please login again.", "data": None},
             status=status.HTTP_200_OK,
@@ -322,6 +443,21 @@ class ForgotPasswordAPIView(APIView):
                 object_id=user.id,
                 description=f"Password reset for user '{user.username}'.",
             )
+
+            # ---- Notify user that their password was reset ----
+            _user = user
+            transaction.on_commit(lambda: notify(
+                users=_user,
+                event_code="PASSWORD_RESET_SUCCESSFUL",
+                title="Password reset",
+                body=(
+                    "Your password was reset just now. "
+                    "If this wasn't you, contact your admin immediately."
+                ),
+                reference_type=None,
+                reference_id=None,
+                priority="HIGH",
+            ))
 
             return Response(
                 {
@@ -1781,3 +1917,237 @@ class OrganizationDeactivateAPIView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+# ----------------------------------------------------------------------
+# DATABASE BACKUP
+# ----------------------------------------------------------------------
+
+class DatabaseBackupCreateAPIView(APIView):
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+
+        if not is_super_admin(request.user):
+            return Response(
+                {
+                    "status": False,
+                    "message": "Only the super admin can create database backups.",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+
+            backup = create_database_backup(
+                created_by=request.user
+            )
+
+            return Response(
+                {
+                    "status": True,
+                    "message": "Database backup created successfully.",
+                    "data": DatabaseBackupSerializer(backup).data,
+                },
+                status=status.HTTP_201_CREATED,
+            )
+
+        except Exception:
+
+            logger.exception("Database backup creation failed.")
+
+            return Response(
+                {
+                    "status": False,
+                    "message": "Unable to create database backup.",
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class DatabaseBackupListAPIView(APIView):
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+
+        if not is_super_admin(request.user):
+            return Response(
+                {
+                    "status": False,
+                    "message": "Only the super admin can view database backups.",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        backups = DatabaseBackup.objects.all().order_by(
+            "-created_at"
+        )
+
+        serializer = DatabaseBackupSerializer(
+            backups,
+            many=True
+        )
+
+        return Response(
+            {
+                "status": True,
+                "message": "Database backups fetched successfully.",
+                "data": {
+                    "total_backups": backups.count(),
+                    "backups": serializer.data,
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class DatabaseBackupDownloadAPIView(APIView):
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+
+        if not is_super_admin(request.user):
+            return Response(
+                {
+                    "status": False,
+                    "message": "Only the super admin can download database backups.",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        serializer = DatabaseBackupDownloadSerializer(
+            data=request.data
+        )
+
+        if not serializer.is_valid():
+
+            return Response(
+                {
+                    "status": False,
+                    "message": "Validation failed.",
+                    "errors": serializer.errors,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        backup = DatabaseBackup.objects.filter(
+            id=serializer.validated_data["id"]
+        ).first()
+
+        if not backup:
+            return Response(
+                {
+                    "status": False,
+                    "message": "Database backup not found.",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if not default_storage.exists(backup.file.name):
+            return Response(
+                {
+                    "status": False,
+                    "message": "Backup file not found in storage.",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+
+            file = default_storage.open(
+                backup.file.name,
+                "rb"
+            )
+
+            return FileResponse(
+                file,
+                as_attachment=True,
+                filename=os.path.basename(backup.file.name),
+                content_type="application/sql",
+            )
+
+        except Exception:
+
+            logger.exception("Database backup download failed.")
+
+            return Response(
+                {
+                    "status": False,
+                    "message": "Unable to download database backup.",
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class DatabaseBackupRestoreAPIView(APIView):
+
+    permission_classes = [IsAuthenticated]
+
+    parser_classes = [
+        MultiPartParser,
+        FormParser,
+    ]
+
+    def post(self, request):
+
+        if not is_super_admin(request.user):
+            return Response(
+                {
+                    "status": False,
+                    "message": "Only the super admin can restore the database.",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        serializer = DatabaseBackupRestoreSerializer(
+            data=request.data
+        )
+
+        if not serializer.is_valid():
+
+            return Response(
+                {
+                    "status": False,
+                    "message": "Validation failed.",
+                    "errors": serializer.errors,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        uploaded_file = serializer.validated_data["file"]
+
+        try:
+
+            restore_database_from_upload(
+                uploaded_file=uploaded_file
+            )
+
+            return Response(
+                {
+                    "status": True,
+                    "message": "Database restored successfully.",
+                    "data": {
+                        "file_name": uploaded_file.name,
+                        "restored_at": timezone.now(),
+                    },
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        except Exception:
+
+            logger.exception("Database restore operation failed.")
+
+            return Response(
+                {
+                    "status": False,
+                    "message": (
+                        "Database restore failed. "
+                        "The database may be partially restored."
+                    ),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )

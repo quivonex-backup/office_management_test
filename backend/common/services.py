@@ -62,3 +62,184 @@ def get_user_organization(request):
     )
 
     return organization, None
+
+
+def get_current_employee(request):
+    """
+    Resolve the employee linked to the authenticated user.
+    Returns (employee, error_response).
+    """
+    from rest_framework import status
+    from rest_framework.response import Response
+
+    employee = getattr(request.user, "employee_profile", None)
+
+    if not employee:
+        return None, Response(
+            {
+                "status": False,
+                "message": "No employee profile linked to your account.",
+            },
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if not employee.is_active:
+        return None, Response(
+            {
+                "status": False,
+                "message": "Your employee profile is inactive.",
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    return employee, None
+
+
+def get_project_permission(request, project_id):
+    """
+    Resolve caller's permission on a project.
+    Returns (permission, project, allocation, error_response).
+
+    permission: 'ADMIN' | 'HEAD' | 'MEMBER' | None
+    """
+    from rest_framework import status
+    from rest_framework.response import Response
+
+    from app.projects.models import Project, ProjectTeamAllocation
+    from app.accounts.services import is_super_admin
+
+    if not project_id:
+        return None, None, None, Response(
+            {"status": False, "message": "project_id is required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    project = (
+        Project.objects
+        .filter(id=project_id, is_active=True)
+        .select_related("organization", "client")
+        .first()
+    )
+
+    if not project:
+        return None, None, None, Response(
+            {"status": False, "message": "Project not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    user = request.user
+
+    # Super admin — treat as ADMIN on any project.
+    if is_super_admin(user):
+        return "ADMIN", project, None, None
+
+    # Organization owner — ADMIN on all projects in their org.
+    if project.organization_id and project.organization.owner_id == user.id:
+        return "ADMIN", project, None, None
+
+    employee = getattr(user, "employee_profile", None)
+    if employee and employee.organization_id == project.organization_id:
+        allocation = ProjectTeamAllocation.objects.filter(
+            project=project,
+            employee=employee,
+            is_active=True,
+        ).first()
+        if allocation:
+            if allocation.is_project_head:
+                return "HEAD", project, allocation, None
+            return "MEMBER", project, allocation, None
+
+    return None, project, None, Response(
+        {
+            "status": False,
+            "message": "You do not have access to this project.",
+        },
+        status=status.HTTP_403_FORBIDDEN,
+    )
+
+
+def get_accessible_projects(request):
+    """
+    Resolve the set of projects the caller can see, for cross-project listing.
+
+    Returns (projects_qs, permission_map, error_response).
+
+    permission_map: {project_id: 'ADMIN' | 'HEAD' | 'MEMBER'}
+    """
+    from rest_framework import status
+    from rest_framework.response import Response
+
+    from app.projects.models import Project, ProjectTeamAllocation
+    from app.accounts.services import is_super_admin
+
+    user = request.user
+
+    # Super admin — all active projects.
+    if is_super_admin(user):
+        projects = Project.objects.filter(is_active=True)
+        permission_map = {p.id: "ADMIN" for p in projects}
+        return projects, permission_map, None
+
+    # Build scope: orgs the user owns + orgs they are active members of.
+    from app.accounts.models import OrganizationMembership
+
+    memberships = (
+        OrganizationMembership.objects
+        .filter(user=user, is_active=True, organization__is_active=True)
+        .select_related("organization")
+    )
+
+    # Organizations where the caller is the owner → ADMIN on all projects.
+    owned_org_ids = list(
+        memberships
+        .filter(organization__owner_id=user.id)
+        .values_list("organization_id", flat=True)
+    )
+
+    # Organizations the user belongs to as a plain member.
+    member_org_ids = list(
+        memberships
+        .exclude(organization__owner_id=user.id)
+        .values_list("organization_id", flat=True)
+    )
+
+    project_ids = set()
+    permission_map = {}
+
+    # ADMIN projects (owned orgs).
+    if owned_org_ids:
+        admin_projects = Project.objects.filter(
+            organization_id__in=owned_org_ids, is_active=True
+        ).values_list("id", flat=True)
+        for pid in admin_projects:
+            project_ids.add(pid)
+            permission_map[pid] = "ADMIN"
+
+    # HEAD/MEMBER projects (member orgs).
+    employee = getattr(user, "employee_profile", None)
+    if employee and employee.organization_id in member_org_ids:
+        allocations = (
+            ProjectTeamAllocation.objects
+            .filter(
+                employee=employee,
+                is_active=True,
+                project__is_active=True,
+                project__organization_id__in=member_org_ids,
+            )
+            .values_list("project_id", "is_project_head")
+        )
+        for pid, is_head in allocations:
+            project_ids.add(pid)
+            permission_map[pid] = "HEAD" if is_head else "MEMBER"
+
+    if not project_ids:
+        return Project.objects.none(), {}, Response(
+            {
+                "status": False,
+                "message": "You do not have access to any projects.",
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    projects = Project.objects.filter(id__in=project_ids, is_active=True)
+    return projects, permission_map, None

@@ -1,0 +1,489 @@
+================================================================================
+LOCATION MASTER APP — API REFERENCE
+================================================================================
+
+Base URL   : /location_master/
+Method     : All endpoints are POST
+Auth       : Bearer token (IsAuthenticated)
+Envelope   : { "status": true|false, "message": "...", "data": {...}?, "errors": {...}? }
+
+WHO USES THIS DOCUMENT
+  Every authenticated user (admin + employee + super-admin) who needs
+  location dropdowns in any form. This is a UTILITY app — no
+  org-scoping, no per-user data. Location master data is global.
+
+WHO CALLS WHAT
+  Lists       -> every authenticated user   (form dropdowns)
+  Create      -> super admin only           (seeding / maintenance)
+  Deactivate  -> super admin only           (seeding / maintenance)
+
+  The UI never shows "create state" or "deactivate district" buttons
+  in normal admin or employee flows. Those endpoints exist for backend
+  seeding and super-admin maintenance only. The lists are the ones
+  every form calls.
+
+
+================================================================================
+BOOTSTRAP ORDER — READ FIRST (CASCADING LOOKUPS)
+================================================================================
+
+  Forms that need a full address (state + district + taluka) must call
+  in this cascade:
+
+    1. POST /location_master/states/list/              -> populate State dropdown
+    2. POST /location_master/districts/list/  {state_id}   -> populate District dropdown
+    3. POST /location_master/talukas/list/    {district_id} -> populate Taluka dropdown
+
+  Rule: a district belongs to exactly one state; a taluka belongs to
+  exactly one district (and its parent state is stored on the taluka
+  row for denormalized filtering).
+
+  Do NOT pre-fetch all districts/talukas at app load — they are large
+  and depend on the user's selected state/district. Fetch on change.
+
+  State list is small enough (typically 28-36 rows for India) to cache
+  once per session. District and taluka lists should be fetched on
+  demand when the user picks the parent.
+
+
+================================================================================
+SECTION 1 — STATES
+================================================================================
+
+--------------------------------------------------------------------------------
+1.1  POST /location_master/states/list/
+--------------------------------------------------------------------------------
+Purpose : List all active states (for dropdowns)
+Access  : Any authenticated user
+Request (all optional):
+{
+  "search": "maha"           // matches state_name OR state_code (icontains)
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "States fetched successfully.",
+  "data": [
+    { "id": 1, "state_code": "MH", "state_name": "Maharashtra" },
+    { "id": 2, "state_code": "KA", "state_name": "Karnataka" }
+  ]
+}
+
+Ordering: state_name ASC
+Notes:
+  - Only is_active=True rows are returned. Deactivated states never appear.
+  - Empty body {} returns the full active list.
+  - No pagination — state count is small (India: ~36). Safe to cache.
+
+
+--------------------------------------------------------------------------------
+1.2  POST /location_master/states/create/
+--------------------------------------------------------------------------------
+Purpose : Create a new state
+Access  : Super admin only  (not called by any UI form)
+Request :
+{
+  "state_code": "MH",         // optional, max 5 chars
+  "state_name": "Maharashtra" // required
+}
+
+Response 201:
+{
+  "status": true,
+  "message": "State created successfully.",
+  "data": { "id": 1, "state_code": "MH", "state_name": "Maharashtra" }
+}
+
+Response 400 (validation):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": {
+    "state_name": ["This field is required."]
+  }
+}
+
+Notes:
+  - state_code is optional (blank/null allowed at model level).
+  - No unique constraint enforced on state_name or state_code — duplicate
+    names are technically allowed by the model. Backend does not block
+    duplicates here. If this becomes a problem, add unique=True on the
+    model (migration needed).
+
+
+--------------------------------------------------------------------------------
+1.3  POST /location_master/states/deactivate/
+--------------------------------------------------------------------------------
+Purpose : Soft-delete (deactivate) a state
+Access  : Super admin only  (not called by any UI form)
+Request :
+{
+  "state_id": 1
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "State deactivated successfully."
+}
+
+Response 400 (missing param):
+{ "status": false, "message": "state_id is required." }
+
+Response 404 (not found or already inactive):
+{ "status": false, "message": "State not found." }
+
+Notes:
+  - Soft delete: is_active=False. Row stays in DB for FK integrity
+    (existing districts/talukas still reference it).
+  - Deactivated states disappear from /states/list/.
+  - Districts and talukas under a deactivated state are NOT auto-deactivated.
+    They remain active rows. If the UI filters districts by a state that
+    is now inactive, the state won't appear in the state dropdown anyway,
+    so the cascade naturally hides them. But calling
+    /districts/list/ {state_id: <inactive>} directly will still return
+    active districts of that state — be aware.
+
+
+================================================================================
+SECTION 2 — DISTRICTS
+================================================================================
+
+--------------------------------------------------------------------------------
+2.1  POST /location_master/districts/list/
+--------------------------------------------------------------------------------
+Purpose : List active districts, optionally filtered by state
+Access  : Any authenticated user
+Request (all optional):
+{
+  "state_id": 1,             // filter: only districts of this state
+  "search": "pune"           // matches district_name (icontains)
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Districts fetched successfully.",
+  "data": [
+    { "id": 10, "state_id": 1, "district_name": "Pune" },
+    { "id": 11, "state_id": 1, "district_name": "Mumbai" }
+  ]
+}
+
+Ordering: district_name ASC
+Notes:
+  - state_id is the typical filter — pass it after the user picks a state.
+  - Omitting state_id returns ALL active districts across all states
+    (large — avoid on mobile unless search is also provided).
+  - Only is_active=True rows are returned.
+
+
+--------------------------------------------------------------------------------
+2.2  POST /location_master/districts/create/
+--------------------------------------------------------------------------------
+Purpose : Create a new district under a state
+Access  : Super admin only  (not called by any UI form)
+Request :
+{
+  "state_id": 1,             // required, FK to StateMaster
+  "district_name": "Pune"    // required
+}
+
+Response 201:
+{
+  "status": true,
+  "message": "District created successfully.",
+  "data": { "id": 10, "state_id": 1, "district_name": "Pune" }
+}
+
+Response 400 (validation — state_id missing or FK invalid):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": {
+    "state_id": ["Invalid pk \"999\" - object does not exist."]
+  }
+}
+
+Notes:
+  - state_id must reference an existing StateMaster row (active OR
+    inactive — FK integrity, not business rule). Creating a district
+    under an inactive state is technically allowed by the backend.
+    Super admin should only create under active states in practice.
+
+
+--------------------------------------------------------------------------------
+2.3  POST /location_master/districts/deactivate/
+--------------------------------------------------------------------------------
+Purpose : Soft-delete (deactivate) a district
+Access  : Super admin only  (not called by any UI form)
+Request :
+{
+  "district_id": 10
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "District deactivated successfully."
+}
+
+Response 400 (missing param):
+{ "status": false, "message": "district_id is required." }
+
+Response 404 (not found or already inactive):
+{ "status": false, "message": "District not found." }
+
+Notes:
+  - Same soft-delete pattern. Talukas under it are NOT auto-deactivated.
+  - Deactivated district disappears from /districts/list/.
+
+
+================================================================================
+SECTION 3 — TALUKAS
+================================================================================
+
+--------------------------------------------------------------------------------
+3.1  POST /location_master/talukas/list/
+--------------------------------------------------------------------------------
+Purpose : List active talukas, optionally filtered by district
+Access  : Any authenticated user
+Request (all optional):
+{
+  "district_id": 10,         // filter: only talukas of this district
+  "search": "haveli"         // matches taluka_name (icontains)
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Talukas fetched successfully.",
+  "data": [
+    { "id": 100, "state_id": 1, "district_id": 10, "taluka_name": "Haveli" },
+    { "id": 101, "state_id": 1, "district_id": 10, "taluka_name": "Mulshi" }
+  ]
+}
+
+Ordering: taluka_name ASC
+Notes:
+  - district_id is the typical filter — pass it after the user picks
+    a district.
+  - The response includes state_id too (denormalized on the TalukaMaster
+    row) — useful if the UI needs the full chain without a second call.
+  - Only is_active=True rows are returned.
+
+
+--------------------------------------------------------------------------------
+3.2  POST /location_master/talukas/create/
+--------------------------------------------------------------------------------
+Purpose : Create a new taluka under a district
+Access  : Super admin only  (not called by any UI form)
+Request :
+{
+  "district_id": 10,         // required
+  "taluka_name": "Haveli"    // required
+}
+
+Response 201:
+{
+  "status": true,
+  "message": "Taluka created successfully.",
+  "data": { "id": 100, "state_id": 1, "district_id": 10, "taluka_name": "Haveli" }
+}
+
+Response 400 (district not found):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": {
+    "non_field_errors": ["District not found."]
+  }
+}
+
+Notes:
+  - The request does NOT send state_id. The serializer auto-derives
+    state_id from the district (`data['state_id'] = district.state_id`).
+    This guarantees the state/district/taluka chain is always consistent.
+  - The serializer explicitly raises "District not found." if the
+    district_id does not resolve — this is a custom check in
+    TalukaCreateSerializer.validate(), not the standard FK validation.
+
+
+--------------------------------------------------------------------------------
+3.3  POST /location_master/talukas/deactivate/
+--------------------------------------------------------------------------------
+Purpose : Soft-delete (deactivate) a taluka
+Access  : Super admin only  (not called by any UI form)
+Request :
+{
+  "taluka_id": 100
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Taluka deactivated successfully."
+}
+
+Response 400 (missing param):
+{ "status": false, "message": "taluka_id is required." }
+
+Response 404 (not found or already inactive):
+{ "status": false, "message": "Taluka not found." }
+
+Notes:
+  - Same soft-delete pattern.
+  - Deactivated taluka disappears from /talukas/list/.
+
+
+================================================================================
+QUICK REFERENCE — LOCATION MASTER ENDPOINTS
+================================================================================
+
+LISTS (any authenticated user — the ones forms call)
+  POST /location_master/states/list/
+  POST /location_master/districts/list/
+  POST /location_master/talukas/list/
+
+CREATE (super admin only — seeding/maintenance)
+  POST /location_master/states/create/
+  POST /location_master/districts/create/
+  POST /location_master/talukas/create/
+
+DEACTIVATE (super admin only — seeding/maintenance)
+  POST /location_master/states/deactivate/
+  POST /location_master/districts/deactivate/
+  POST /location_master/talukas/deactivate/
+
+TOTAL: 9 endpoints
+
+
+================================================================================
+CASCADE REFERENCE — HOW FORMS USE THIS
+================================================================================
+
+Full-address form (employee profile, client, vendor, project, etc.):
+  Step 1  ->  POST /states/list/           {}                         (once per session)
+  Step 2  ->  POST /districts/list/        {"state_id": <picked>}     (on state change)
+  Step 3  ->  POST /talukas/list/          {"district_id": <picked>}  (on district change)
+
+Partial forms:
+  - Only state needed (e.g. work_state on payroll)     -> states/list only
+  - State + district (no taluka)                       -> states + districts
+  - Taluka is always the leaf; never has children.
+
+Search:
+  - Any list endpoint accepts "search" for type-ahead.
+  - Combine with parent filter: {"state_id": 1, "search": "pu"}
+    filters Pune/Pune City/etc. within Maharashtra only.
+
+
+================================================================================
+DATA SHAPES — FOR UI TYPES
+================================================================================
+
+StateMaster (list item):
+{
+  "id": 1,
+  "state_code": "MH",        // may be null if not set
+  "state_name": "Maharashtra"
+}
+
+DistrictMaster (list item):
+{
+  "id": 10,
+  "state_id": 1,
+  "district_name": "Pune"
+}
+
+TalukaMaster (list item):
+{
+  "id": 100,
+  "state_id": 1,             // denormalized, already on the row
+  "district_id": 10,
+  "taluka_name": "Haveli"
+}
+
+Envelope error shapes:
+  Validation (400):
+  {
+    "status": false,
+    "message": "Validation failed.",
+    "errors": { "field_name": ["Error message."] }
+  }
+
+  Missing param (400):
+  { "status": false, "message": "state_id is required." }
+
+  Not found / already inactive (404):
+  { "status": false, "message": "State not found." }
+
+
+================================================================================
+KEY NOTES FOR FRONTEND / UI DESIGNER
+================================================================================
+
+1. THIS IS A UTILITY APP.
+   Every form across the product that has an address field calls these
+   endpoints (employee, client, vendor, project, payroll work-state,
+   etc.). You will import this doc's list endpoints into multiple form
+   screens. You never call create/deactivate from UI — those are backend
+   seeding.
+
+2. CASCADE ORDER IS FIXED.
+   State -> District (filtered by state_id) -> Taluka (filtered by
+   district_id). Never fetch districts before a state is picked; never
+   fetch talukas before a district is picked. Fetch on change, not on
+   load.
+
+3. CACHING POLICY
+   - states/list  : fetch once per app session, cache in memory/state.
+                    Small (~36 rows for India).
+   - districts/list: fetch on state change. Do not pre-fetch all.
+   - talukas/list  : fetch on district change. Do not pre-fetch all.
+
+4. "search" IS SUBSTRING, CASE-INSENSITIVE.
+   search=maha matches Maharashtra. search=pu matches Pune and Pudukkottai.
+   Empty search returns the full filtered list.
+
+5. DEACTIVATED ROWS DISAPPEAR FROM LISTS.
+   Do not build UI to "show inactive states" — the list endpoints filter
+   is_active=True. No query param to include inactive rows. If a form
+   is EDITING a record whose state was later deactivated, the saved value
+   may not appear in the dropdown — handle this by showing the saved
+   label as a fallback ("Maharashtra (inactive)") read-only until the
+   user picks a new active state. Backend will accept the old id on
+   update only if the update does not re-validate the FK active flag
+   (current views do not re-check active on FK — but this may change).
+
+6. IDS ARE INTEGERS.
+   state_id, district_id, taluka_id are integer PKs. JSON body must send
+   integers, not strings. {"state_id": "1"} may fail FK validation on
+   some DB backends depending on serializer coercion — send as int.
+
+7. NO PAGINATION.
+   All list endpoints return the full filtered list. This is safe for
+   states (~36) and per-state districts (~30) and per-district talukas
+   (~10-15). Do not add client-side pagination — it would be worse UX
+   for a dropdown.
+
+8. ERROR BOUNDARY
+   The 404 shape on deactivate endpoints is also returned when the row
+   is already inactive ("State not found.") — treat it as idempotent
+   success from the UI side (the end state the caller wanted is already
+   true). Don't show a red error to the super admin; log it and move on.
+
+
+================================================================================
+SUPER-ADMIN SEEDING ORDER
+================================================================================
+
+If you are seeding location data from an admin console (or a script):
+
+  1. Create all states first           -> collect returned state ids
+  2. Create districts per state        -> collect returned district ids
+  3. Create talukas per district       (state_id auto-derived)
+
+Order matters — a district needs a valid state_id, a taluka needs a
+valid district_id. Circular references are impossible in this model.

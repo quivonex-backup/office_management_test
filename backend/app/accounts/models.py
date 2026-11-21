@@ -154,3 +154,24 @@ class OrganizationMembership(models.Model):
                 name="unique_organization_user_membership",
             )
         ]
+
+
+# ---------- DATABASE BACKUP MODEL ----------
+class DatabaseBackup(models.Model):
+    file = models.FileField(upload_to="database_backups/full/")
+    file_size = models.PositiveBigIntegerField(default=0)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="database_backups"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "database_backups"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return self.file.name

@@ -1,0 +1,2198 @@
+================================================================================
+PAYROLL APP — ADMIN API REFERENCE
+================================================================================
+
+Base URL   : /
+Method     : All endpoints are POST
+Auth       : Bearer token (IsAuthenticated)
+Envelope   : { "status": true|false, "message": "...", "data": {...}?, "errors": {...}? }
+
+Organization context:
+  - All endpoints are scoped to the caller's organization via
+    get_user_organization.
+  - Do NOT send organization_id — it is ignored.
+
+Who uses this document:
+  - Organization owner (Admin role)
+  - Any org member with Admin-level access (typically HR / finance)
+
+This app has three audience tiers:
+  - SUPER ADMIN (8)  — statutory rate configs + slabs (see SUPERADMIN doc)
+  - ORG ADMIN (25)   — payroll lifecycle (THIS DOC)
+  - EMPLOYEE (3)     — self-service (see EMPLOYEE doc)
+
+This doc covers all 25 org-admin endpoints, split into 8 sections:
+  1. Payroll Settings                 (1 endpoint)
+  2. Company Statutory Settings       (1 endpoint)
+  3. Salary Components                (2 endpoints)
+  4. Salary Structures                (5 endpoints)
+  5. Employee Salary Assignments      (5 endpoints)
+  6. Payroll Runs                     (6 endpoints)
+  7. Payroll Records                  (2 endpoints)
+  8. Payroll Payments                 (3 endpoints)
+
+
+================================================================================
+BOOTSTRAP ORDER — READ FIRST
+================================================================================
+
+  1. Configure Payroll Settings          /settings/
+  2. Configure Statutory Settings        /statutory-settings/
+  3. Create Salary Components            /components/create/
+  4. Create Salary Structures            /structures/create/
+  5. Assign Structures to Employees      /assignments/create/ or /bulk-assign/
+  6. (Optional) Preview a run            /runs/preview/
+  7. Create a Payroll Run (DRAFT)        /runs/create/
+  8. Generate the run                    /runs/generate/
+  9. Review records + fix deductions     /records/list/, /records/update-deductions/
+ 10. Finalize the run                    /runs/finalize/
+ 11. Record payments                     /payments/record/ or /bulk-record/
+
+  Steps 1–2 are one-time setup.
+  Steps 3–5 are structure setup — repeat when policies change.
+  Steps 6–11 are the monthly cycle.
+
+  IMPORTANT:
+    - Finalizing a run triggers a PAYSLIP_FINALIZED notification to every
+      GENERATED record's employee.
+    - Recording a payment triggers a PAYMENT_RECORDED notification to the
+      employee.
+    - Super-admin-managed statutory RATES and SLABS must already be in place
+      globally before payroll computes correctly (see SUPERADMIN doc).
+
+
+================================================================================
+SECTION 1 — PAYROLL SETTINGS
+================================================================================
+
+--------------------------------------------------------------------------------
+1.1  POST /payroll/settings/
+--------------------------------------------------------------------------------
+Purpose : Get or update payroll settings (single record per org)
+Access  : Org Admin
+
+Request (GET behavior — empty body):
+{}
+
+Response 200 (fetched):
+{
+  "status": true,
+  "message": "Payroll settings fetched.",
+  "data": {
+    "id": 1,
+    "organization": 1,
+    "cycle_start_day": 1,
+    "default_pay_day": 15,
+    "currency": "INR",
+    "salary_basis": "CALENDAR_DAYS",
+    "absent_deduction_multiplier": "1.00",
+    "half_day_deduction_multiplier": "0.50",
+    "unpaid_leave_multiplier": "1.00",
+    "overtime_enabled": true,
+    "overtime_rate_multiplier": "1.50",
+    "standard_work_hours_per_day": "8.00",
+    "missing_attendance_action": "ABSENT",
+    "payslip_mode": "FULL",
+    "payroll_enabled": true,
+    "created_by": 2,
+    "updated_by": 2,
+    "created_at": "...",
+    "updated_at": "..."
+  }
+}
+
+Request (UPDATE behavior — any of these keys):
+{
+  "cycle_start_day": 1,
+  "default_pay_day": 15,
+  "currency": "INR",
+  "salary_basis": "CALENDAR_DAYS",
+  "absent_deduction_multiplier": "1.00",
+  "half_day_deduction_multiplier": "0.50",
+  "unpaid_leave_multiplier": "1.00",
+  "overtime_enabled": true,
+  "overtime_rate_multiplier": "1.50",
+  "standard_work_hours_per_day": "8.00",
+  "missing_attendance_action": "ABSENT",
+  "payslip_mode": "FULL",
+  "payroll_enabled": true
+}
+
+Response 200 (updated):
+{
+  "status": true,
+  "message": "Payroll settings updated.",
+  "data": { ...same shape with updated values... }
+}
+
+Response 400 (validation):
+{
+  "status": false,
+  "message": "Invalid payroll settings.",
+  "errors": {
+    "cycle_start_day": ["cycle_start_day must be between 1 and 28."]
+  }
+}
+
+Notes:
+  - Auto-creates the settings row if not present (defaults apply).
+  - Sending empty body {} OR {"organization_id": ...} alone acts as GET.
+  - Any other key triggers UPDATE.
+  - cycle_start_day range: 1–28.
+  - default_pay_day range: 1–31.
+  - All multipliers >= 0.
+  - standard_work_hours_per_day > 0.
+
+Enums:
+  salary_basis              : CALENDAR_DAYS | FIXED_30 | WORKING_DAYS
+  missing_attendance_action : REVIEW | ABSENT | SKIP
+  payslip_mode              : SIMPLE | FULL
+
+
+================================================================================
+SECTION 2 — COMPANY STATUTORY SETTINGS
+================================================================================
+
+--------------------------------------------------------------------------------
+2.1  POST /payroll/statutory-settings/
+--------------------------------------------------------------------------------
+Purpose : Get or update company statutory settings (single record per org)
+Access  : Org Admin
+
+Request (GET — empty body):
+{}
+
+Response 200 (fetched):
+{
+  "status": true,
+  "message": "Statutory settings fetched.",
+  "data": {
+    "id": 1,
+    "organization": 1,
+    "is_pf_applicable": false,
+    "pf_establishment_code": null,
+    "pf_org_name": null,
+    "pf_contribution_type": "STATUTORY",
+    "is_esi_applicable": false,
+    "esi_employer_code": null,
+    "esi_org_name": null,
+    "is_pt_applicable": false,
+    "pt_state": null,
+    "pt_state_name": null,
+    "pt_registration_number": null,
+    "is_tds_applicable": false,
+    "tan_number": null,
+    "tds_deductor_name": null,
+    "tds_deductor_address": null,
+    "is_lwf_applicable": false,
+    "lwf_state": null,
+    "lwf_state_name": null,
+    "lwf_registration_number": null,
+    "created_by": 2,
+    "updated_by": 2,
+    "created_at": "...",
+    "updated_at": "..."
+  }
+}
+
+Request (UPDATE — any subset):
+{
+  "is_pf_applicable": true,
+  "pf_establishment_code": "MH/12345",
+  "pf_org_name": "Acme Corp",
+  "pf_contribution_type": "STATUTORY",
+  "is_esi_applicable": false,
+  "is_pt_applicable": true,
+  "pt_state": 1,
+  "pt_registration_number": "PT-123",
+  "is_tds_applicable": true,
+  "tan_number": "MUMX12345A",
+  "tds_deductor_name": "Acme Corp",
+  "tds_deductor_address": "Mumbai, MH",
+  "is_lwf_applicable": true,
+  "lwf_state": 1,
+  "lwf_registration_number": "LWF-123"
+}
+
+Response 200 (updated):
+{
+  "status": true,
+  "message": "Statutory settings updated.",
+  "data": { ...same shape with updated values... }
+}
+
+Response 400 (validation):
+{
+  "status": false,
+  "message": "Invalid statutory settings.",
+  "errors": {
+    "pt_state": ["pt_state is required when PT is enabled."]
+  }
+}
+
+Notes:
+  - Auto-creates the row if not present.
+  - is_pt_applicable=true  requires pt_state (StateMaster id).
+  - is_lwf_applicable=true requires lwf_state (StateMaster id).
+  - pt_state / lwf_state reference StateMaster from location_master app.
+  - These flags control WHICH statutory deductions apply. The actual
+    rates come from StatutoryRateConfig (super-admin managed).
+
+Enums:
+  pf_contribution_type : STATUTORY | VPF | COMPANY_SPECIFIC
+
+
+================================================================================
+SECTION 3 — SALARY COMPONENTS
+================================================================================
+
+--------------------------------------------------------------------------------
+3.1  POST /payroll/components/list/
+--------------------------------------------------------------------------------
+Purpose : List salary components visible to this org (global + org-specific)
+Access  : Org Admin
+Request (all optional):
+{
+  "component_type": "EARNING",
+  "is_active": true
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Salary components fetched.",
+  "data": [
+    {
+      "id": 1,
+      "organization": null,
+      "name": "Basic",
+      "code": "BASIC",
+      "description": null,
+      "component_type": "EARNING",
+      "calculation_type": "FIXED",
+      "component_role": "BASIC",
+      "percentage_of_component": null,
+      "is_taxable": true,
+      "is_pf_eligible": true,
+      "is_esi_eligible": true,
+      "is_active": true,
+      "display_order": 0,
+      "created_by": null,
+      "updated_by": null,
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  ]
+}
+
+Response 400 (invalid is_active):
+{ "status": false, "message": "is_active must be true or false." }
+
+Notes:
+  - Returns global (organization=null, from super admin) PLUS this org's
+    own components.
+  - Sort: display_order, name.
+  - Global components cannot be edited/deactivated from this app — they're
+    super-admin owned. Only listed here.
+
+Enums:
+  component_type      : EARNING | DEDUCTION
+  calculation_type    : FIXED | PERCENTAGE
+  component_role      : BASIC | DA | HRA | ALLOWANCE | BONUS | OT |
+                        PF_EMPLOYEE | PF_EMPLOYER | ESI_EMPLOYEE |
+                        ESI_EMPLOYER | PT | TDS | LWF | OTHER
+
+
+--------------------------------------------------------------------------------
+3.2  POST /payroll/components/create/
+--------------------------------------------------------------------------------
+Purpose : Create an org-specific salary component
+Access  : Org Admin
+Request :
+{
+  "name": "Special Allowance",
+  "code": "SPL_ALW",
+  "description": "Optional allowance",
+  "component_type": "EARNING",
+  "calculation_type": "FIXED",
+  "component_role": "ALLOWANCE",
+  "percentage_of_component": null,
+  "is_taxable": true,
+  "is_pf_eligible": false,
+  "is_esi_eligible": false,
+  "is_active": true,
+  "display_order": 10
+}
+
+Response 201:
+{
+  "status": true,
+  "message": "Salary component created.",
+  "data": { ...full component... }
+}
+
+Response 400 (duplicate code):
+{
+  "status": false,
+  "message": "Invalid salary component.",
+  "errors": {
+    "code": ["A component with code 'SPL_ALW' already exists in this scope."]
+  }
+}
+
+Response 400 (PERCENTAGE without parent):
+{
+  "status": false,
+  "message": "Invalid salary component.",
+  "errors": {
+    "percentage_of_component": ["percentage_of_component is required for PERCENTAGE components."]
+  }
+}
+
+Response 400 (FIXED with parent):
+{
+  "status": false,
+  "message": "Invalid salary component.",
+  "errors": {
+    "percentage_of_component": ["percentage_of_component must be empty for FIXED components."]
+  }
+}
+
+Notes:
+  - organization is auto-set to caller's org.
+  - code is upper-cased + stripped.
+  - code must be unique within (org, code) — global components with the
+    same code from super admin do NOT count as conflicts.
+  - PERCENTAGE components MUST point to percentage_of_component.
+  - FIXED components MUST have percentage_of_component=null.
+  - A component cannot reference itself as percentage parent (enforced
+    on update).
+
+
+[END OF PART 1 — CONTINUE BELOW]
+
+
+================================================================================
+SECTION 4 — SALARY STRUCTURES
+================================================================================
+
+--------------------------------------------------------------------------------
+4.1  POST /payroll/structures/list/
+--------------------------------------------------------------------------------
+Purpose : List salary structures in the org
+Access  : Org Admin
+Request (optional):
+{
+  "is_active": true
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Salary structures fetched.",
+  "data": [
+    {
+      "id": 5,
+      "organization": 1,
+      "name": "Standard Engineer",
+      "code": "STD_ENG",
+      "description": null,
+      "is_active": true,
+      "components": [
+        {
+          "id": 101,
+          "salary_structure": 5,
+          "salary_component": 1,
+          "component_code": "BASIC",
+          "component_name": "Basic",
+          "component_type": "EARNING",
+          "component_role": "BASIC",
+          "amount": "30000.00",
+          "percentage": null,
+          "created_at": "...",
+          "updated_at": "..."
+        }
+      ],
+      "total_gross": "30000.00",
+      "created_by": 2,
+      "updated_by": 2,
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  ]
+}
+
+Response 400 (invalid is_active):
+{ "status": false, "message": "is_active must be true or false." }
+
+Notes:
+  - Sort: name ASC.
+  - Each structure embeds its components array (full detail per component).
+  - "total_gross" = sum of FIXED EARNING components only. PERCENTAGE
+    earnings are excluded from this display total (they depend on a base).
+  - The embedded component item includes component_code, component_name,
+    component_type, component_role (denormalized from the linked
+    SalaryComponent) — so the UI doesn't need a second lookup.
+  - No pagination — full list returned.
+
+
+--------------------------------------------------------------------------------
+4.2  POST /payroll/structures/create/
+--------------------------------------------------------------------------------
+Purpose : Create a salary structure with its components in one atomic call
+Access  : Org Admin
+Request :
+{
+  "name": "Standard Engineer",              // required, unique per org
+  "code": "STD_ENG",                        // required, unique per org, auto upper
+  "description": "Standard engineering package",
+  "is_active": true,
+  "components": [                           // required, non-empty list
+    { "salary_component": 1, "amount": "30000.00", "percentage": null },
+    { "salary_component": 2, "amount": "12000.00" },
+    { "salary_component": 5, "percentage": "12.0000" }
+  ]
+}
+
+Response 201:
+{
+  "status": true,
+  "message": "Salary structure created.",
+  "data": { ...full structure with components embedded... }
+}
+
+Response 400 (no components):
+{ "status": false, "message": "components must be a non-empty list." }
+
+Response 400 (header validation):
+{
+  "status": false,
+  "message": "Invalid salary structure.",
+  "errors": {
+    "code": ["A structure with code 'STD_ENG' already exists."]
+  }
+}
+
+Response 400 (component validation):
+{
+  "status": false,
+  "message": "Invalid structure components.",
+  "errors": [
+    { "amount": ["Amount is required for FIXED components."] }
+  ]
+}
+
+Response 400 (duplicate component id in list):
+{ "status": false, "message": "Duplicate component ID 1 in structure." }
+
+Component entry rules (enforced per entry):
+  - salary_component : int id, must exist
+  - component must be from this org OR global (organization=null)
+  - component must be is_active=true
+  - FIXED component   : "amount" required, "percentage" must be empty
+  - PERCENTAGE component : "percentage" required, "amount" must be empty
+
+Notes:
+  - Atomic — if any component entry fails, the whole structure isn't created.
+  - components is a nested list of objects (not flat ids).
+  - Duplicate component IDs in the same structure are rejected.
+  - code upper-cased + stripped automatically.
+  - name and code must be unique per org, case-insensitive.
+  - "is_active" defaults to true if omitted.
+
+
+--------------------------------------------------------------------------------
+4.3  POST /payroll/structures/detail/
+--------------------------------------------------------------------------------
+Purpose : Get full detail of one salary structure
+Access  : Org Admin
+Request :
+{
+  "structure_id": 5
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Salary structure fetched.",
+  "data": { ...full structure with components embedded... }
+}
+
+Response 400 (missing param):
+{ "status": false, "message": "structure_id is required." }
+
+Response 400 (invalid type):
+{ "status": false, "message": "structure_id must be an integer." }
+
+Response 404 (not found or another org):
+{ "status": false, "message": "Salary structure not found." }
+
+
+--------------------------------------------------------------------------------
+4.4  POST /payroll/structures/update/
+--------------------------------------------------------------------------------
+Purpose : Update a structure (partial). Optionally REPLACE components.
+Access  : Org Admin
+
+Request (header-only — components untouched):
+{
+  "structure_id": 5,
+  "name": "Standard Engineer v2",
+  "description": "Updated description",
+  "is_active": true
+}
+
+Request (with full component replacement):
+{
+  "structure_id": 5,
+  "name": "Standard Engineer v2",
+  "components": [
+    { "salary_component": 1, "amount": "35000.00" },
+    { "salary_component": 2, "amount": "14000.00" }
+  ]
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Salary structure updated.",
+  "data": { ...full updated structure with components... }
+}
+
+Response 400 (missing param):
+{ "status": false, "message": "structure_id is required." }
+
+Response 400 (header validation):
+{
+  "status": false,
+  "message": "Invalid salary structure.",
+  "errors": { "name": ["This field may not be blank."] }
+}
+
+Response 400 (components not a list):
+{ "status": false, "message": "components must be a list." }
+
+Response 400 (component validation):
+{
+  "status": false,
+  "message": "Invalid structure components.",
+  "errors": [ { "amount": ["Amount is required for FIXED components."] } ]
+}
+
+Response 400 (duplicate component id):
+{ "status": false, "message": "Duplicate component ID 1 in structure." }
+
+Response 404:
+{ "status": false, "message": "Salary structure not found." }
+
+Notes:
+  - PARTIAL update for header fields (name / code / description / is_active).
+  - If "components" key is present → ALL existing components are deleted
+    and replaced with the provided list. Send the COMPLETE desired list,
+    not a diff.
+  - If "components" is OMITTED → existing components are left untouched.
+  - All validations run BEFORE any save. If anything fails, nothing is
+    saved (atomic).
+  - code upper-cased + stripped automatically.
+  - Changing code requires uniqueness check — 400 if it collides.
+
+
+--------------------------------------------------------------------------------
+4.5  POST /payroll/structures/deactivate/
+--------------------------------------------------------------------------------
+Purpose : Deactivate a salary structure (soft delete)
+Access  : Org Admin
+Request :
+{
+  "structure_id": 5
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Salary structure deactivated."
+}
+
+Response 400 (missing param):
+{ "status": false, "message": "structure_id is required." }
+
+Response 400 (already inactive):
+{ "status": false, "message": "Salary structure is already inactive." }
+
+Response 404 (not found or another org):
+{ "status": false, "message": "Salary structure not found." }
+
+Notes:
+  - Soft delete: is_active=False. Row stays in DB.
+  - Deactivated structures:
+      * disappear from /structures/list/ when is_active=true filter used
+      * cannot be assigned to new employees (see assignments/create)
+      * EXISTING assignments are NOT affected — they continue to use the
+        structure for payroll calculation
+  - Reactivation is NOT supported via this endpoint — no /reactivate/
+    endpoint exists. An inactive structure stays inactive.
+
+
+[END OF PART 2 — CONTINUE BELOW]
+
+
+================================================================================
+SECTION 5 — EMPLOYEE SALARY ASSIGNMENTS
+================================================================================
+
+--------------------------------------------------------------------------------
+5.1  POST /payroll/assignments/list/
+--------------------------------------------------------------------------------
+Purpose : List employee salary assignments for the org
+Access  : Org Admin
+Request (all optional):
+{
+  "employee_id": 25,
+  "as_of_date": "2026-11-01"
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Salary assignments fetched.",
+  "data": [
+    {
+      "id": 15,
+      "organization": 1,
+      "employee": 25,
+      "employee_code": "EMP000025",
+      "employee_name": "Rahul Patil",
+      "salary_structure": 5,
+      "salary_structure_name": "Standard Engineer",
+      "effective_from": "2026-01-01",
+      "effective_to": null,
+      "reason": "Initial assignment",
+      "assigned_by": 2,
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  ]
+}
+
+Response 400 (invalid as_of_date):
+{ "status": false, "message": "as_of_date must use YYYY-MM-DD format." }
+
+Notes:
+  - Sort: effective_from DESC (newest first).
+  - as_of_date filter: only assignments active ON that date are returned
+    (inclusive at both ends of [effective_from, effective_to]).
+  - Without filters, returns ALL assignments including historical
+    (already-closed) rows. Use as_of_date to get "current" assignments.
+  - No pagination — full filtered list.
+  - employee_name is a computed field (first + middle + last name joined).
+  - salary_structure_name is denormalized from the linked structure.
+
+
+--------------------------------------------------------------------------------
+5.2  POST /payroll/assignments/create/
+--------------------------------------------------------------------------------
+Purpose : Assign a salary structure to an employee
+Access  : Org Admin
+Request :
+{
+  "employee": 25,
+  "salary_structure": 5,
+  "effective_from": "2026-11-01",
+  "effective_to": null,
+  "reason": "Initial assignment"
+}
+
+Response 201:
+{
+  "status": true,
+  "message": "Salary assignment created.",
+  "data": { ...full assignment... }
+}
+
+Response 400 (overlap with existing):
+{
+  "status": false,
+  "message": "Invalid salary assignment.",
+  "errors": {
+    "employee": [
+      "Employee already has a salary assignment 'Standard Engineer' from 2026-01-01 to open-ended. Assignment date ranges cannot overlap."
+    ]
+  }
+}
+
+Response 400 (not on cycle boundary):
+{
+  "status": false,
+  "message": "Invalid salary assignment.",
+  "errors": {
+    "effective_from": [
+      "Salary assignment must start on a cycle boundary. The cycle containing 2026-11-15 starts on 2026-11-01. Use 2026-11-01 or a later cycle start as effective_from."
+    ]
+  }
+}
+
+Response 400 (invalid employee):
+{
+  "status": false,
+  "message": "Invalid salary assignment.",
+  "errors": {
+    "employee": ["Only active/on-leave employees can be assigned a salary structure."]
+  }
+}
+
+Response 400 (structure inactive or wrong org):
+{
+  "status": false,
+  "message": "Invalid salary assignment.",
+  "errors": {
+    "salary_structure": ["Cannot assign an inactive salary structure."]
+  }
+}
+
+Response 400 (bad date range):
+{
+  "status": false,
+  "message": "Invalid salary assignment.",
+  "errors": {
+    "effective_to": ["End date cannot be before start date."]
+  }
+}
+
+Notes:
+  - effective_from MUST be a cycle boundary — i.e. it must equal the start
+    day of the payroll cycle that contains that date (per
+    PayrollSettings.cycle_start_day). This prevents mid-cycle salary
+    revisions, which the calculation layer doesn't support.
+  - Date ranges cannot OVERLAP for the same employee. A previous assignment
+    must be closed (effective_to set) before starting a new one, OR the
+    new one must start after the previous one ends.
+  - employee must be active or ON_LEAVE in the caller's org.
+  - salary_structure must be active and in the caller's org.
+  - effective_to may be null (= open-ended).
+  - If effective_to is provided, it must be >= effective_from.
+  - assigned_by is auto-set to request.user.
+
+
+--------------------------------------------------------------------------------
+5.3  POST /payroll/assignments/update/
+--------------------------------------------------------------------------------
+Purpose : Update an existing assignment (partial)
+Access  : Org Admin
+Request (all optional; send only what you want to change):
+{
+  "assignment_id": 15,
+  "salary_structure": 6,
+  "effective_from": "2027-01-01",
+  "effective_to": "2027-12-31",
+  "reason": "Revised to new structure"
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Salary assignment updated.",
+  "data": { ...full updated assignment... }
+}
+
+Response 400 (structural edit on finalized run):
+{
+  "status": false,
+  "message": "Cannot change salary_structure or effective_from on an assignment already used in a finalized payroll run. Close this assignment (set effective_to) and create a new assignment for the revision."
+}
+
+Response 400 (missing param):
+{ "status": false, "message": "assignment_id is required." }
+
+Response 400 (validation — same as create):
+{
+  "status": false,
+  "message": "Invalid salary assignment.",
+  "errors": { "employee": ["..."] }
+}
+
+Response 404:
+{ "status": false, "message": "Salary assignment not found." }
+
+Notes:
+  - PARTIAL update — any field omitted keeps its current value.
+  - STRUCTURAL FIELDS = salary_structure, effective_from.
+    These are BLOCKED if the assignment already appears in a payroll run
+    with status FINALIZED (date-range overlap check against that run).
+    Non-structural edits (effective_to, reason, employee) always allowed.
+  - effective_from updates must still satisfy cycle-boundary rule.
+  - Overlap rules still apply after update.
+  - Update does NOT trigger payroll recalculation. If a finalized run
+    already used this assignment, its snapshot is preserved (edits only
+    affect FUTURE runs).
+
+
+--------------------------------------------------------------------------------
+5.4  POST /payroll/assignments/bulk-assign/
+--------------------------------------------------------------------------------
+Purpose : Assign ONE salary structure to MANY employees in one call
+Access  : Org Admin
+Request :
+{
+  "employee_ids": [25, 26, 27],
+  "salary_structure_id": 5,
+  "effective_from": "2026-11-01",
+  "effective_to": null,
+  "reason": "Q4 onboarding batch"
+}
+
+Response 201:
+{
+  "status": true,
+  "message": "Salary assigned to 3 employee(s).",
+  "data": {
+    "created_count": 3,
+    "assignments": [ { ...full assignment per employee... } ]
+  }
+}
+
+Response 400 (empty list):
+{ "status": false, "message": "employee_ids must be a non-empty list." }
+
+Response 400 (missing structure):
+{ "status": false, "message": "salary_structure_id is required." }
+
+Response 400 (missing date):
+{ "status": false, "message": "effective_from is required." }
+
+Response 400 (validation failure — any employee):
+{
+  "status": false,
+  "message": "<specific validation message from the first failing employee>"
+}
+
+Response 500:
+{ "status": false, "message": "Unable to bulk assign salary." }
+
+Notes:
+  - ATOMIC — if ANY employee fails validation (overlap, inactive, wrong
+    org, cycle-boundary), the entire batch rolls back. No partial assigns.
+  - All employees must satisfy the same rules as single-assign:
+      * active or ON_LEAVE
+      * in caller's org
+      * cycle-boundary effective_from
+      * no overlap with existing assignments
+  - The structure must be active and in caller's org.
+  - assigned_by is auto-set to request.user for all created assignments.
+  - The error message names only the FIRST failing employee — the UI
+    should surface it and let admin fix that one and retry. There's no
+    "partial success" mode.
+
+
+--------------------------------------------------------------------------------
+5.5  POST /payroll/assignments/bulk-close/
+--------------------------------------------------------------------------------
+Purpose : Close multiple assignments (set effective_to) in one call
+Access  : Org Admin
+Request :
+{
+  "assignment_ids": [15, 16, 17],
+  "effective_to": "2026-12-31"
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "3 salary assignment(s) closed.",
+  "data": {
+    "closed_count": 3,
+    "assignments": [ { ...closed assignment per id... } ]
+  }
+}
+
+Response 400 (empty list):
+{ "status": false, "message": "assignment_ids must be a non-empty list." }
+
+Response 400 (missing date):
+{ "status": false, "message": "effective_to is required." }
+
+Response 400 (invalid date format):
+{ "status": false, "message": "effective_to must use YYYY-MM-DD format." }
+
+Response 400 (validation from service):
+{ "status": false, "message": "<specific validation message>" }
+
+Response 500:
+{ "status": false, "message": "Unable to bulk close assignments." }
+
+Notes:
+  - ATOMIC — if any assignment fails, the entire batch rolls back.
+  - effective_to must be >= each assignment's effective_from.
+  - Closing = setting the assignment's effective_to date. This ENDS the
+    assignment as of that date. The assignment row stays in the DB
+    (historical record) and remains visible in /assignments/list/.
+  - After closing, the employee can be assigned a NEW structure starting
+    the day after effective_to (or any later date), without overlap.
+  - Closing does NOT touch payroll runs already generated for past periods.
+  - Typical workflow:
+      1. bulk-close old assignments with effective_to = 2026-12-31
+      2. bulk-assign new structure with effective_from = 2027-01-01
+    This is how a mid-year salary revision is handled cleanly.
+
+
+================================================================================
+SECTION 6 — PAYROLL RUNS
+================================================================================
+
+--------------------------------------------------------------------------------
+6.1  POST /payroll/runs/preview/
+--------------------------------------------------------------------------------
+Purpose : Dry-run payroll — compute what each employee WOULD be paid (no save)
+Access  : Org Admin
+
+Three request modes — pick ONE:
+
+  Mode A (explicit dates):
+  {
+    "period_start": "2026-11-01",
+    "period_end": "2026-11-30"
+  }
+
+  Mode B (auto-cycle from any date within target month):
+  {
+    "reference_month": "2026-11-15"
+  }
+
+  Mode C (auto-cycle for the CURRENT cycle):
+  {
+    "use_current_cycle": true
+  }
+
+Response 200:
+{
+  "status": true,
+  "message": "Payroll preview generated.",
+  "data": {
+    "period_start": "2026-11-01",
+    "period_end": "2026-11-30",
+    "total_employees": 50,
+    "employees_requiring_review": 3,
+    "total_gross": "1500000.00",
+    "total_deductions": "300000.00",
+    "total_net": "1200000.00",
+    "errors": [
+      {
+        "employee_id": 99,
+        "employee_code": "EMP000099",
+        "employee_name": "Missing Salary",
+        "message": "No salary assignment for this period."
+      }
+    ],
+    "employees": [
+      {
+        "employee_id": 25,
+        "employee_code": "EMP000025",
+        "employee_name": "Rahul Patil",
+        "present_days": "20.00",
+        "half_days": "0.00",
+        "absent_days": "2.00",
+        "paid_leave_days": "1.00",
+        "unpaid_leave_days": "0.00",
+        "holiday_days": "2.00",
+        "weekly_off_days": "4.00",
+        "overtime_hours": "0.00",
+        "gross_earnings": "30000.00",
+        "total_deductions": "6000.00",
+        "net": "24000.00",
+        "requires_review": false,
+        "line_items": [ { "component_code": "BASIC", "component_name": "Basic", "component_type": "EARNING", "amount": "30000.00", "calculation_details": {...} } ]
+      }
+    ]
+  }
+}
+
+Response 400 (only one date given):
+{
+  "status": false,
+  "message": "Provide both period_start and period_end, or neither (for auto-cycle)."
+}
+
+Response 400 (no mode specified):
+{
+  "status": false,
+  "message": "Provide period_start + period_end, or reference_month, or use_current_cycle=true."
+}
+
+Response 400 (end before start):
+{
+  "status": false,
+  "message": "period_end cannot be before period_start."
+}
+
+Response 400 (settings not configured):
+{
+  "status": false,
+  "message": "Payroll settings not configured. Set cycle_start_day before using auto-period."
+}
+
+Notes:
+  - Preview does NOT save anything — dry run only.
+  - Iterates every employee with employment_status in [ACTIVE, ON_LEAVE]
+    who is is_active=true.
+  - Employees with incomplete data (missing salary assignment, missing
+    attendance, etc.) are listed in "errors" — they DO NOT block the
+    preview. The valid employees are still computed.
+  - "employees_requiring_review" = count of employees where
+    requires_review=true. Typically driven by the
+    missing_attendance_action policy (REVIEW = hold for review).
+  - Mode B: reference_month can be ANY date within the target month;
+    the service figures out the cycle boundary from
+    PayrollSettings.cycle_start_day.
+  - Mode C: uses the cycle that CONTAINS today.
+
+Mode selection matrix:
+  period_start + period_end  → explicit range (must be both or neither)
+  reference_month only       → auto-cycle around that date
+  use_current_cycle=true     → auto-cycle around today
+  {} (empty body)            → 400, must pick one mode
+
+
+--------------------------------------------------------------------------------
+6.2  POST /payroll/runs/create/
+--------------------------------------------------------------------------------
+Purpose : Create a payroll run in DRAFT status
+Access  : Org Admin
+Request :
+{
+  "period_start": "2026-11-01",
+  "period_end": "2026-11-30"
+}
+
+Response 201:
+{
+  "status": true,
+  "message": "Payroll run created.",
+  "data": {
+    "id": 100,
+    "organization": 1,
+    "period_start": "2026-11-01",
+    "period_end": "2026-11-30",
+    "status": "DRAFT",
+    "total_employees": 0,
+    "total_gross": "0.00",
+    "total_deductions": "0.00",
+    "total_net": "0.00",
+    "created_by": 2,
+    "finalized_by": null,
+    "finalized_at": null,
+    "created_at": "...",
+    "updated_at": "..."
+  }
+}
+
+Response 400 (bad dates):
+{
+  "status": false,
+  "message": "Invalid payroll run.",
+  "errors": { "period_end": ["period_end cannot be before period_start."] }
+}
+
+Response 400 (duplicate exact period):
+{
+  "status": false,
+  "message": "Invalid payroll run.",
+  "errors": {
+    "period_start": ["A payroll run already exists for this exact period in this organization."]
+  }
+}
+
+Notes:
+  - Status always starts at DRAFT.
+  - exact (period_start, period_end) must be unique per org.
+  - OVERLAPPING (but not exact) periods ARE allowed at create time —
+    used for correction runs. The /runs/generate/ step enforces a stricter
+    rule (no employee already paid in an overlapping run).
+  - At create time: no records exist yet. total_* all zero. Employee
+    computation happens in /runs/generate/.
+  - organization is auto-set from caller — do NOT send it.
+
+
+--------------------------------------------------------------------------------
+6.3  POST /payroll/runs/list/
+--------------------------------------------------------------------------------
+Purpose : List payroll runs in the org
+Access  : Org Admin
+Request (optional):
+{
+  "status": "GENERATED"
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Payroll runs fetched.",
+  "data": [
+    {
+      "id": 100,
+      "organization": 1,
+      "period_start": "2026-11-01",
+      "period_end": "2026-11-30",
+      "status": "FINALIZED",
+      "total_employees": 50,
+      "total_gross": "1500000.00",
+      "total_deductions": "300000.00",
+      "total_net": "1200000.00",
+      "created_by": 2,
+      "finalized_by": 2,
+      "finalized_at": "2026-12-05T10:30:00Z",
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  ]
+}
+
+Notes:
+  - Sort: period_start DESC (newest first).
+  - "status" filter is optional; valid values:
+      DRAFT | GENERATED | FINALIZED
+  - No pagination — full filtered list.
+  - Records are NOT embedded here — use /runs/detail/ for that.
+
+
+--------------------------------------------------------------------------------
+6.4  POST /payroll/runs/detail/
+--------------------------------------------------------------------------------
+Purpose : Get full run detail INCLUDING all payroll records
+Access  : Org Admin
+Request :
+{
+  "payroll_run_id": 100
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Payroll run fetched.",
+  "data": {
+    "id": 100,
+    "organization": 1,
+    "period_start": "2026-11-01",
+    "period_end": "2026-11-30",
+    "status": "GENERATED",
+    "total_employees": 50,
+    "total_gross": "1500000.00",
+    "total_deductions": "300000.00",
+    "total_net": "1200000.00",
+    "created_by": 2,
+    "finalized_by": null,
+    "finalized_at": null,
+    "created_at": "...",
+    "updated_at": "...",
+    "records": [
+      {
+        "id": 500,
+        "payroll_run": 100,
+        "organization": 1,
+        "employee": 25,
+        "employee_code": "EMP000025",
+        "employee_name": "Rahul Patil",
+        "period_start": "2026-11-01",
+        "period_end": "2026-11-30",
+        "payroll_month": "November 2026",
+        "present_days": "20.00",
+        "half_days": "0.00",
+        "absent_days": "2.00",
+        "paid_leave_days": "1.00",
+        "unpaid_leave_days": "0.00",
+        "holiday_days": "2.00",
+        "weekly_off_days": "4.00",
+        "overtime_hours": "0.00",
+        "monthly_salary": "30000.00",
+        "per_day_rate": "1000.00",
+        "pf_employee": "1800.00",
+        "pf_employer": "1800.00",
+        "eps": "1000.00",
+        "edli": "50.00",
+        "esi_employee": "0.00",
+        "esi_employer": "0.00",
+        "pt": "200.00",
+        "tds": "0.00",
+        "lwf_employee": "0.00",
+        "lwf_employer": "0.00",
+        "other_deductions": "0.00",
+        "gross_earnings": "30000.00",
+        "total_deductions": "2000.00",
+        "net": "28000.00",
+        "payment_status": "UNPAID",
+        "paid_amount": "0.00",
+        "remaining": "28000.00",
+        "upi_link": "upi://pay?pa=rahul@upi&pn=Rahul%20Patil&am=28000.00&cu=INR&tn=November%202026%20salary",
+        "generation_status": "GENERATED",
+        "generation_notes": null,
+        "requires_review": false,
+        "review_notes": null,
+        "breakdown": { ...internal calculation snapshot... },
+        "line_items": [
+          {
+            "id": 1000,
+            "payroll_record": 500,
+            "component_code": "BASIC",
+            "component_name": "Basic",
+            "component_type": "EARNING",
+            "amount": "30000.00",
+            "calculation_details": { ... },
+            "created_at": "..."
+          }
+        ],
+        "created_at": "...",
+        "updated_at": "..."
+      }
+    ]
+  }
+}
+
+Response 400 (missing param):
+{ "status": false, "message": "payroll_run_id is required." }
+
+Response 400 (invalid type):
+{ "status": false, "message": "payroll_run_id must be an integer." }
+
+Response 404:
+{ "status": false, "message": "Payroll run not found." }
+
+Notes:
+  - The "records" array is added ON TOP of the standard PayrollRun shape.
+    It contains full PayrollRecordSerializer data per employee, including
+    the embedded line_items and payments arrays.
+  - Sort of records: employee_code ASC.
+  - "upi_link" is a generated UPI deep-link if the employee has a upi_id
+    and remaining > 0. Null otherwise.
+  - "remaining" = net - paid_amount.
+  - This is the heaviest endpoint — for 500-employee orgs expect a large
+    response. Filter further in UI or use /records/list/ with filters
+    for lighter queries.
+
+
+--------------------------------------------------------------------------------
+6.5  POST /payroll/runs/generate/
+--------------------------------------------------------------------------------
+Purpose : Compute payroll records for all eligible employees in a DRAFT run
+Access  : Org Admin
+Request :
+{
+  "payroll_run_id": 100
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Payroll generated. 48 generated, 1 skipped, 1 errors.",
+  "data": {
+    "payroll_run_id": 100,
+    "status": "GENERATED",
+    "generated_count": 48,
+    "skipped_count": 1,
+    "error_count": 1,
+    "errors": [
+      {
+        "employee_id": 99,
+        "message": "No salary assignment for this period."
+      }
+    ],
+    "totals": {
+      "total_employees": 48,
+      "total_gross": "1440000.00",
+      "total_deductions": "288000.00",
+      "total_net": "1152000.00"
+    }
+  }
+}
+
+Response 400 (run not DRAFT):
+{ "status": false, "message": "Only DRAFT runs can be generated." }
+
+Response 400 (overlap with finalized run):
+{
+  "status": false,
+  "message": "One or more employees were already paid in an overlapping finalized run. Cannot generate."
+}
+
+Response 400 (missing param):
+{ "status": false, "message": "payroll_run_id is required." }
+
+Response 404:
+{ "status": false, "message": "Payroll run not found." }
+
+Response 500:
+{ "status": false, "message": "Unable to generate payroll." }
+
+Notes:
+  - After success, run.status becomes GENERATED.
+  - Per employee, one PayrollRecord is created with:
+      * Attendance snapshot (present_days, absent_days, etc.)
+      * Salary snapshot (monthly_salary, per_day_rate)
+      * Statutory snapshot (pf_employee, esi_employee, pt, tds, etc.)
+      * Totals (gross_earnings, total_deductions, net)
+      * Line items per salary component
+  - Employee outcomes fall into three buckets:
+      GENERATED — full payslip computed (the normal case)
+      SKIPPED   — employee not eligible (e.g. no salary assignment for
+                  the period) — skipped_count increments
+      ERROR     — computation failed (data issues) — error_count
+                  increments, details in "errors"
+  - Notifies NO ONE at generate time. Payslip notifications fire on
+    /runs/finalize/.
+  - Atomic per run — if any single employee raises an unexpected error,
+    it's caught and the run continues for others (only catastrophic
+    failures abort).
+  - Re-running /generate/ on the same run: regenerates. Any manual
+    deduction edits from /records/update-deductions/ are LOST if you
+    generate again. Don't re-generate after manual edits.
+
+
+--------------------------------------------------------------------------------
+6.6  POST /payroll/runs/finalize/
+--------------------------------------------------------------------------------
+Purpose : Freeze a GENERATED run — locks in payslips + notifies employees
+Access  : Org Admin
+Request :
+{
+  "payroll_run_id": 100
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Payroll finalized.",
+  "data": {
+    "id": 100,
+    "organization": 1,
+    "period_start": "2026-11-01",
+    "period_end": "2026-11-30",
+    "status": "FINALIZED",
+    "total_employees": 48,
+    "total_gross": "1440000.00",
+    "total_deductions": "288000.00",
+    "total_net": "1152000.00",
+    "created_by": 2,
+    "finalized_by": 2,
+    "finalized_at": "2026-12-05T10:30:00Z",
+    "created_at": "...",
+    "updated_at": "..."
+  }
+}
+
+Response 400 (not GENERATED):
+{ "status": false, "message": "Only GENERATED runs can be finalized." }
+
+Response 400 (missing param):
+{ "status": false, "message": "payroll_run_id is required." }
+
+Response 404:
+{ "status": false, "message": "Payroll run not found." }
+
+Response 500:
+{ "status": false, "message": "Unable to finalize payroll." }
+
+Notes:
+  - Sets status=FINALIZED, finalized_by=request.user, finalized_at=now.
+  - Locks all records in the run — further edits to the records block
+    (structure assignments freeze, deduction edits blocked).
+  - SIDE EFFECT — for each GENERATED record in the run, fires a
+    PAYSLIP_FINALIZED notification to the employee's user account:
+      event_code      : PAYSLIP_FINALIZED
+      title           : "Your payslip is ready"
+      body            : "Your payslip for <Month YYYY> is available.
+                        Net pay: ₹<amount>."
+      reference_type  : "payroll_record"
+      reference_id    : <record.id>
+      priority        : HIGH
+  - SKIPPED and ERROR records do NOT trigger notifications — only
+    GENERATED (actual payslips) notify.
+  - Notifications fire via transaction.on_commit — after the finalize
+    transaction commits successfully. If finalize fails, no notifications
+    are sent.
+  - Once finalized, the run is immutable from this endpoint's
+    perspective — no "unfinalize" exists. Correction runs are the way
+    to fix mistakes (create a new run for the same period, generate,
+    finalize).
+
+Finalization checklist before calling this:
+  - All employees you expect to pay have GENERATED records
+  - Any "requires_review" records have been resolved via
+    /records/update-deductions/
+  - Deduction amounts (TDS, other_deductions) are correct
+  - You're ready for employees to SEE their payslip and get a push notif
+
+
+================================================================================
+SECTION 7 — PAYROLL RECORDS
+================================================================================
+
+--------------------------------------------------------------------------------
+7.1  POST /payroll/records/list/
+--------------------------------------------------------------------------------
+Purpose : List payroll records (org-wide) with filters
+Access  : Org Admin
+Request (all optional):
+{
+  "payroll_run_id": 100,
+  "employee_id": 25,
+  "payment_status": "UNPAID",
+  "generation_status": "GENERATED"
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Payroll records fetched.",
+  "data": [
+    {
+      "id": 500,
+      "payroll_run": 100,
+      "organization": 1,
+      "employee": 25,
+      "employee_code": "EMP000025",
+      "employee_name": "Rahul Patil",
+      "period_start": "2026-11-01",
+      "period_end": "2026-11-30",
+      "payroll_month": "November 2026",
+      "present_days": "20.00",
+      "half_days": "0.00",
+      "absent_days": "2.00",
+      "paid_leave_days": "1.00",
+      "unpaid_leave_days": "0.00",
+      "holiday_days": "2.00",
+      "weekly_off_days": "4.00",
+      "overtime_hours": "0.00",
+      "monthly_salary": "30000.00",
+      "per_day_rate": "1000.00",
+      "pf_employee": "1800.00",
+      "pf_employer": "1800.00",
+      "eps": "1000.00",
+      "edli": "50.00",
+      "esi_employee": "0.00",
+      "esi_employer": "0.00",
+      "pt": "200.00",
+      "tds": "0.00",
+      "lwf_employee": "0.00",
+      "lwf_employer": "0.00",
+      "other_deductions": "0.00",
+      "gross_earnings": "30000.00",
+      "total_deductions": "2000.00",
+      "net": "28000.00",
+      "payment_status": "UNPAID",
+      "paid_amount": "0.00",
+      "remaining": "28000.00",
+      "upi_link": "upi://pay?pa=...",
+      "generation_status": "GENERATED",
+      "generation_notes": null,
+      "requires_review": false,
+      "review_notes": null,
+      "breakdown": { ... },
+      "line_items": [ { ...full line item per component... } ],
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  ]
+}
+
+Notes:
+  - Sort: payroll_run.period_start DESC, then employee_code ASC.
+  - Filters:
+      payroll_run_id      → all records for one run
+      employee_id         → all records for one employee (history)
+      payment_status      → UNPAID | PARTIALLY_PAID | PAID
+      generation_status   → GENERATED | SKIPPED | ERROR
+  - "requires_review" is not a filter but you can spot it in the response.
+  - Full record payload per row — includes embedded line_items and payments.
+  - No pagination — full filtered list. Always filter by run_id for
+    large orgs.
+
+
+--------------------------------------------------------------------------------
+7.2  POST /payroll/records/update-deductions/
+--------------------------------------------------------------------------------
+Purpose : Manually edit TDS / other deductions on one record, or recompute
+Access  : Org Admin
+Request (all optional — at least one of tds, other_deductions, review_notes
+          or recompute=true must be provided):
+{
+  "payroll_record_id": 500,
+  "tds": "500.00",
+  "other_deductions": "100.00",
+  "review_notes": "Adjusted per manager request",
+  "recompute": false
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Payroll record updated.",
+  "data": { ...full record with recalculated net... }
+}
+
+Response 400 (no change specified):
+{
+  "status": false,
+  "message": "Provide at least one of tds, other_deductions, review_notes, or recompute=true."
+}
+
+Response 400 (missing record_id):
+{ "status": false, "message": "payroll_record_id is required." }
+
+Response 400 (invalid number):
+{ "status": false, "message": "tds must be a valid number." }
+
+Response 400 (record in finalized run):
+{
+  "status": false,
+  "message": "Cannot modify a record in a finalized payroll run."
+}
+
+Response 404:
+{ "status": false, "message": "Payroll record not found." }
+
+Response 500:
+{ "status": false, "message": "Unable to update payroll record." }
+
+Notes:
+  - Blocked on records whose payroll_run.status = FINALIZED.
+  - "recompute": true re-runs the full payslip calculation from current
+    attendance + salary assignment + statutory rates. USE WITH CARE:
+    it overrides any manual edits you made previously to TDS or
+    other_deductions on this record.
+  - "recompute": false (or omitted) just applies the overrides you send.
+  - After recompute, total_deductions and net are recalculated. The
+    record's breakdown JSON is refreshed.
+  - The record is refreshed from DB before serializing the response, so
+    the response reflects the post-update state (paid_amount, net,
+    remaining).
+  - Manual TDS override survives until:
+      * another /records/update-deductions/ with recompute=true
+      * another /runs/generate/ (regenerates the record entirely)
+  - Typical workflow:
+      1. /records/list/ filter generation_status=GENERATED, requires_review=true
+      2. For each flagged record → /records/update-deductions/ with
+         recompute=false + corrected tds/other_deductions
+      3. /runs/finalize/ once all records look right
+
+
+================================================================================
+SECTION 8 — PAYROLL PAYMENTS
+================================================================================
+
+--------------------------------------------------------------------------------
+8.1  POST /payroll/payments/record/
+--------------------------------------------------------------------------------
+Purpose : Record a single payment against one payroll record
+Access  : Org Admin
+Request :
+{
+  "payroll_record_id": 500,
+  "amount": "28000.00",
+  "payment_date": "2026-12-05",
+  "payment_mode": "BANK_TRANSFER",
+  "transaction_reference": "UTR123456",
+  "notes": "November 2026 salary"
+}
+
+Response 201:
+{
+  "status": true,
+  "message": "Payment recorded.",
+  "data": {
+    "payment": {
+      "id": 800,
+      "organization": 1,
+      "payroll_record": 500,
+      "employee_code": "EMP000025",
+      "employee_name": "Rahul Patil",
+      "amount": "28000.00",
+      "payment_date": "2026-12-05",
+      "payment_mode": "BANK_TRANSFER",
+      "transaction_reference": "UTR123456",
+      "notes": "November 2026 salary",
+      "recorded_by": 2,
+      "created_at": "..."
+    },
+    "record_status": {
+      "payroll_record_id": 500,
+      "net": "28000.00",
+      "paid_amount": "28000.00",
+      "remaining": "0.00",
+      "payment_status": "PAID"
+    }
+  }
+}
+
+Response 400 (missing param):
+{ "status": false, "message": "payroll_record_id is required." }
+{ "status": false, "message": "amount is required." }
+{ "status": false, "message": "payment_date is required." }
+
+Response 400 (invalid amount):
+{ "status": false, "message": "amount must be a valid number." }
+
+Response 400 (amount exceeds remaining — enforced by service):
+{ "status": false, "message": "<service validation message>" }
+
+Response 400 (record in non-finalized run):
+{ "status": false, "message": "Payments can only be recorded for finalized runs." }
+
+Response 404:
+{ "status": false, "message": "Payroll record not found." }
+
+Response 500:
+{ "status": false, "message": "Unable to record payment." }
+
+Notes:
+  - PARTIAL payments are supported — amount can be less than net. Payment
+    status updates to PARTIALLY_PAID on first partial, PAID when total
+    paid_amount >= net.
+  - payment_mode default = BANK_TRANSFER if omitted.
+  - SIDE EFFECT — fires a PAYMENT_RECORDED notification to the employee:
+      event_code      : PAYMENT_RECORDED
+      title           : "Payment received"
+      body            : "₹<amount> has been paid to you for <Month YYYY>
+                        via <payment mode>. Remaining balance: ₹<remaining>."
+      reference_type  : "payroll_record"
+      reference_id    : <record.id>
+      priority        : HIGH
+  - Notification only fires if the employee has a linked user account
+    (emp.user_id) and the account is active.
+  - Each payment generates a new notification — for partial payments,
+    the employee gets one notification per payment, showing updated
+    remaining balance each time.
+
+
+--------------------------------------------------------------------------------
+8.2  POST /payroll/payments/bulk-record/
+--------------------------------------------------------------------------------
+Purpose : Record payment for MANY payroll records in one run (bulk)
+Access  : Org Admin
+Request :
+{
+  "payroll_run_id": 100,
+  "payment_date": "2026-12-05",
+  "payment_mode": "BANK_TRANSFER",
+  "transaction_reference": "BULK-2026-11",
+  "notes": "November 2026 bulk payout",
+  "employee_ids": [25, 26, 27]
+}
+
+Response 201:
+{
+  "status": true,
+  "message": "N payment(s) recorded.",
+  "data": {
+    "payments_recorded": 3,
+    "payments": [ { ...full payment per employee... } ],
+    "errors": [ { "employee_id": 28, "message": "<reason>" } ]
+  }
+}
+
+Response 400 (missing run):
+{ "status": false, "message": "payroll_run_id is required." }
+
+Response 400 (missing date):
+{ "status": false, "message": "payment_date is required." }
+
+Response 400 (empty employee_ids if provided):
+{ "status": false, "message": "employee_ids must be a non-empty list when provided." }
+
+Response 404:
+{ "status": false, "message": "Payroll run not found." }
+
+Response 500:
+{ "status": false, "message": "Unable to record bulk payment." }
+
+Notes:
+  - If "employee_ids" is OMITTED → pays ALL GENERATED records in the run.
+  - If "employee_ids" is PROVIDED → pays only those employees (useful for
+    excluding employees whose payment is pending).
+  - Per record, the full net amount is paid — for PARTIAL payment,
+    use /payments/record/ individually.
+  - The run must be FINALIZED before payments can be recorded (the
+    service enforces this per-record; if the whole run isn't finalized,
+    all payments fail).
+  - SIDE EFFECT — fires a PAYMENT_RECORDED notification per paid employee
+    (same shape as 8.1). Uses the same transaction.on_commit pattern with
+    closure capture per iteration so each notification has the correct
+    amount/period/mode/remaining values.
+  - Bulk operations are atomic at the service level — if any payment
+    raises an unexpected error, the response includes it under "errors"
+    but earlier payments are NOT rolled back (per-record transaction).
+
+
+--------------------------------------------------------------------------------
+8.3  POST /payroll/payments/list/
+--------------------------------------------------------------------------------
+Purpose : List payment history (org-wide) with filters
+Access  : Org Admin
+Request (all optional):
+{
+  "payroll_record_id": 500,
+  "payroll_run_id": 100,
+  "employee_id": 25,
+  "payment_mode": "BANK_TRANSFER",
+  "from_date": "2026-12-01",
+  "to_date": "2026-12-31"
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Payments fetched.",
+  "data": [
+    {
+      "id": 800,
+      "organization": 1,
+      "payroll_record": 500,
+      "employee_code": "EMP000025",
+      "employee_name": "Rahul Patil",
+      "amount": "28000.00",
+      "payment_date": "2026-12-05",
+      "payment_mode": "BANK_TRANSFER",
+      "transaction_reference": "UTR123456",
+      "notes": "November 2026 salary",
+      "recorded_by": 2,
+      "created_at": "..."
+    }
+  ]
+}
+
+Notes:
+  - Sort: payment_date DESC, then created_at DESC.
+  - Filters:
+      payroll_record_id   → payments for one record
+      payroll_run_id      → payments in one run (indirect via record)
+      employee_id         → payments for one employee
+      payment_mode        → BANK_TRANSFER | CASH | UPI | CHEQUE
+      from_date / to_date → payment_date range (YYYY-MM-DD, inclusive)
+  - No pagination — full filtered list.
+  - ⚠️ FILTER PARAMS VERIFIED AGAINST PATTERN ONLY — the view code for
+    this endpoint was not provided in the code I reviewed. The filters
+    above match the standard pattern of /records/list/ and the model
+    indexes, but the actual implementation may differ. If you get a
+    "this filter has no effect" bug, check the view's actual filter reads.
+
+
+================================================================================
+QUICK REFERENCE — ADMIN ENDPOINTS
+================================================================================
+
+SETTINGS (2)
+  POST /payroll/settings/
+  POST /payroll/statutory-settings/
+
+SALARY COMPONENTS (2)
+  POST /payroll/components/list/
+  POST /payroll/components/create/
+
+SALARY STRUCTURES (5)
+  POST /payroll/structures/list/
+  POST /payroll/structures/create/
+  POST /payroll/structures/detail/
+  POST /payroll/structures/update/
+  POST /payroll/structures/deactivate/
+
+SALARY ASSIGNMENTS (5)
+  POST /payroll/assignments/list/
+  POST /payroll/assignments/create/
+  POST /payroll/assignments/update/
+  POST /payroll/assignments/bulk-assign/
+  POST /payroll/assignments/bulk-close/
+
+PAYROLL RUNS (6)
+  POST /payroll/runs/preview/
+  POST /payroll/runs/create/
+  POST /payroll/runs/list/
+  POST /payroll/runs/detail/
+  POST /payroll/runs/generate/
+  POST /payroll/runs/finalize/
+
+PAYROLL RECORDS (2)
+  POST /payroll/records/list/
+  POST /payroll/records/update-deductions/
+
+PAYROLL PAYMENTS (3)
+  POST /payroll/payments/record/
+  POST /payroll/payments/bulk-record/
+  POST /payroll/payments/list/
+
+TOTAL ADMIN ENDPOINTS: 25
+
+
+
+
+
+POST /payroll/payslips/download/
+
+Request body for both:
+
+{
+    "payroll_record_id": 125
+}
+payroll_record_id: ID of the employee's payroll record.
+organization_id: Not required when the logged-in admin has an active organization resolved automatically. Include it only if your existing organization-selection flow requires it.
+Do not send employee_id; the backend gets the employee from the payroll record.
+
+Success response headers:
+
+Content-Type: application/pdf
+Content-Disposition: attachment; filename="Rahul_Patil_October_2026_Payslip.pdf"
+
+The response body will contain the actual PDF bytes, not JSON.
+
+Common error response examples
+Invalid or unavailable payslip:
+
+{
+    "status": false,
+    "message": "Payslip not found.",
+    "data": null
+}
+
+
+================================================================================
+ENUMS — FOR UI MAPPING
+================================================================================
+
+PAYROLL SETTINGS
+  salary_basis              : CALENDAR_DAYS | FIXED_30 | WORKING_DAYS
+  missing_attendance_action : REVIEW | ABSENT | SKIP
+  payslip_mode              : SIMPLE | FULL
+
+STATUTORY SETTINGS
+  pf_contribution_type      : STATUTORY | VPF | COMPANY_SPECIFIC
+
+SALARY COMPONENTS
+  component_type            : EARNING | DEDUCTION
+  calculation_type          : FIXED | PERCENTAGE
+  component_role            : BASIC | DA | HRA | ALLOWANCE | BONUS | OT |
+                              PF_EMPLOYEE | PF_EMPLOYER | ESI_EMPLOYEE |
+                              ESI_EMPLOYER | PT | TDS | LWF | OTHER
+
+PAYROLL RUN
+  status                    : DRAFT | GENERATED | FINALIZED
+
+PAYROLL RECORD
+  generation_status         : GENERATED | SKIPPED | ERROR
+  payment_status            : UNPAID | PARTIALLY_PAID | PAID
+
+PAYROLL PAYMENT
+  payment_mode              : BANK_TRANSFER | CASH | UPI | CHEQUE
+
+PAYSLIP LINE ITEM
+  component_type            : EARNING | DEDUCTION | LOP
+
+
+================================================================================
+COMMON ERROR SHAPES
+================================================================================
+
+Validation / business error (400):
+{
+  "status": false,
+  "message": "Human-readable message.",
+  "errors": { "field": ["..."] }     // only when validation-level
+}
+
+Not found (404):
+{ "status": false, "message": "Payroll run not found." }
+
+Server error (500):
+{ "status": false, "message": "Unable to <action>." }
+
+Forbidden (403) — super admin endpoints only (not in this doc):
+{ "status": false, "message": "Only super administrators can access this resource." }
+
+
+================================================================================
+KEY NOTES FOR FRONTEND / UI DESIGNER
+================================================================================
+
+1. THIS APP IS ORG-ADMIN ONLY.
+   The super-admin endpoints (statutory rate configs + slabs) are in a
+   separate SUPERADMIN doc. Employee self-service is in a separate
+   EMPLOYEE doc. This doc is only the 25 payroll lifecycle endpoints
+   that the admin panel calls.
+
+2. THE PAYROLL LIFECYCLE IS STATE-MACHINED.
+   Run states: DRAFT → GENERATED → FINALIZED.
+     - DRAFT: created, no records yet. Can be re-generated anytime.
+     - GENERATED: records computed. Can edit deductions, then finalize.
+     - FINALIZED: immutable. Payslips sent to employees. Only payments
+       can be recorded after this.
+   UI must gate buttons by state:
+     - DRAFT run: show "Generate" button only
+     - GENERATED run: show "Finalize" button, edit deductions, delete
+     - FINALIZED run: show "Record Payment" / "Bulk Record" only
+
+3. CYCLE BOUNDARY IS A HARD CONSTRAINT.
+   Salary assignments MUST start on the org's cycle_start_day. If the
+   org's cycle starts on the 1st and admin tries to assign starting on
+   the 15th, it 400s. The error message tells you exactly which cycle
+   start date to use instead.
+
+4. NO OVERLAPPING ASSIGNMENTS.
+   An employee can have MULTIPLE sequential assignments (e.g. old one
+   ends Dec 31, new one starts Jan 1), but two assignments on the same
+   employee cannot overlap in date range. To revise a salary:
+     1. /assignments/bulk-close/ (or update) the old assignment with
+        effective_to = day before the new one starts
+     2. /assignments/create/ the new assignment with effective_from =
+        the new cycle start
+   The UI should offer this two-step flow as a single "Revise Salary"
+   action.
+
+5. STRUCTURAL EDIT BLOCK ON FINALIZED RUNS.
+   If an assignment appears in a FINALIZED run:
+     - salary_structure and effective_from CANNOT be changed
+     - other fields (effective_to, reason) still editable
+   This protects historical payroll from retroactive mutation.
+
+6. RECOMPUTE IS DESTRUCTIVE.
+   /records/update-deductions/ with recompute=true wipes manual TDS /
+   other_deductions overrides and recalculates from scratch. This is
+   the "reset to system-computed value" button — warn the admin before
+   they click it.
+
+7. FINALIZE SENDS NOTIFICATIONS.
+   Calling /runs/finalize/ triggers a PAYSLIP_FINALIZED push + bell row
+   per GENERATED record. You cannot un-send. Make sure the run is
+   correct BEFORE finalizing. There is no "unfinalize" endpoint — a
+   correction requires a new run.
+
+8. PAYMENT RECORDING SENDS NOTIFICATIONS.
+   Both /payments/record/ and /payments/bulk-record/ trigger
+   PAYMENT_RECORDED notifications. For partial payments, employees get
+   one notification per payment with the updated remaining balance.
+
+9. PAYMENT ONLY AFTER FINALIZE.
+   Recording a payment on a DRAFT or GENERATED run 400s. The UI should
+   only show payment buttons when run.status = FINALIZED.
+
+10. BULK OPERATIONS ARE ATOMIC.
+    /assignments/bulk-assign/ and /assignments/bulk-close/ roll back
+    the ENTIRE batch on any single failure. Show the error clearly and
+    let admin fix the offending employee, then retry.
+    /payments/bulk-record/ is per-record atomic (earlier payments stick
+    even if later ones fail) — errors come back in the "errors" array.
+
+11. NO PAGINATION ANYWHERE.
+    All list endpoints return the full filtered list. For large orgs:
+      - Always filter /records/list/ by payroll_run_id
+      - Always filter /payments/list/ by payroll_run_id or date range
+      - The /runs/detail/ response is the heaviest (embeds all records)
+        — for 500+ employees this can be megabytes. Consider using
+        /records/list/?payroll_run_id=X for list views instead of
+        the full detail.
+
+12. UPI LINK IN RECORDS.
+    Each PayrollRecord includes a "upi_link" field (if the employee has
+    a upi_id and remaining > 0). This is a upi:// deep-link the UI can
+    surface as a "Pay via UPI" QR/button for one-off manual payment.
+    Format:
+      upi://pay?pa=<upi_id>&pn=<name>&am=<remaining>&cu=INR&tn=<note>
+    Only relevant if the admin chooses to pay individually — bulk
+    payments go through /payments/bulk-record/ and don't use this link.
+
+13. ITEMS TO VERIFY IN CODE BEFORE SHIPPING.
+    - /payments/list/ view code not seen in the reviewed files — the
+      filter params documented here are inferred. Confirm against the
+      actual view if filters behave unexpectedly.
+    - The default value for "recompute" in /records/update-deductions/
+      is false. If the UI sends "recompute": "true" (string), the
+      backend handles it via parse_bool — but nulls and empty strings
+      default to false. Send a real JSON boolean for reliability.
+
+
+================================================================================
+END OF PAYROLL ADMIN REFERENCE
+================================================================================
+
+
+
+
+
+Payroll Calculator API
+
+Read-only what-if calculator. It works out a payslip from day counts typed by the admin, using the same rules as a real payroll run. Nothing is saved: no payroll run, record, payment, attendance or audit entry is created or changed, and the saved payroll settings are never modified.
+
+Endpoint
+POST /api/payroll/calculator/
+Auth: same as the other payroll endpoints (logged-in user, organization resolved from the user; organization_id is not needed).
+Content-Type: application/json
+Response envelope: { "status": bool, "message": str, "data": object | null, "errors"?: ... }
+Request body
+Field	Type	Required	Notes
+period_start	date YYYY-MM-DD	yes	Start of the pay period
+period_end	date YYYY-MM-DD	yes	Not before period_start
+employee_id	integer	FULL mode: yes	Needed for PF / ESI / PT / LWF. In SIMPLE mode it can be left out if salary_structure_id is given
+salary_structure_id	integer	no	If missing, the employee's salary assignment for the period is used
+payslip_mode	SIMPLE or FULL	no	What-if override. Default: the saved payroll setting
+salary_basis	CALENDAR_DAYS, FIXED_30 or WORKING_DAYS	no	What-if override. Default: the saved payroll setting
+present_days	number	no, default 0	
+half_days	number	no, default 0	
+absent_days	number	no, default 0	
+paid_leave_days	number	no, default 0	
+unpaid_leave_days	number	no, default 0	
+holiday_days	number	no, default 0	Paid, not deducted
+weekly_off_days	number	no, default 0	Paid, not deducted
+not_employed_days	number	no, default 0	Days before joining / after exit; unpaid
+working_days	number	no	Default: present + half + absent + paid leave + unpaid leave. Used as the divisor when salary_basis is WORKING_DAYS
+overtime_hours	number	no, default 0	Paid only if overtime is enabled in the payroll settings
+
+Overrides (payslip_mode, salary_basis) apply to this calculation only.
+
+Example request
+json
+{
+    "period_start": "2026-09-01",
+    "period_end": "2026-09-30",
+    "employee_id": 7,
+    "payslip_mode": "SIMPLE",
+    "salary_basis": "WORKING_DAYS",
+    "present_days": 19,
+    "half_days": 1,
+    "absent_days": 5,
+    "holiday_days": 1,
+    "weekly_off_days": 4,
+    "overtime_hours": 0
+}
+Success response (200)
+
+Example: monthly gross 30,000, 25 working days, 19 present, 1 half day, 5 absent, 4 weekly offs, 1 holiday, SIMPLE mode, WORKING_DAYS basis.
+
+json
+{
+    "status": true,
+    "message": "Calculation complete.",
+    "data": {
+        "present_days": "19",
+        "half_days": "1",
+        "absent_days": "5",
+        "paid_leave_days": "0",
+        "unpaid_leave_days": "0",
+        "holiday_days": "1",
+        "weekly_off_days": "4",
+        "overtime_hours": "0.00",
+        "monthly_salary": "30000.00",
+        "per_day_rate": "1200.00",
+        "pf_employee": "0.00",
+        "pf_employer": "0.00",
+        "eps": "0.00",
+        "edli": "0.00",
+        "esi_employee": "0.00",
+        "esi_employer": "0.00",
+        "pt": "0.00",
+        "tds": "0.00",
+        "lwf_employee": "0.00",
+        "lwf_employer": "0.00",
+        "other_deductions": "0.00",
+        "gross_earnings": "30000.00",
+        "total_deductions": "6600.00",
+        "net": "23400.00",
+        "line_items": [
+            {
+                "component_code": "GROSS",
+                "component_name": "Gross Salary",
+                "component_type": "EARNING",
+                "amount": "30000.00",
+                "calculation_details": { "source": "salary_structure_total" }
+            },
+            {
+                "component_code": "LOP",
+                "component_name": "Loss of Pay",
+                "component_type": "LOP",
+                "amount": "6600.00",
+                "calculation_details": {
+                    "absent_days": "5",
+                    "half_days": "1",
+                    "unpaid_leave_days": "0",
+                    "not_employed_days": "0",
+                    "per_day_rate": "1200.00"
+                }
+            }
+        ],
+        "warnings": [],
+        "breakdown": {
+            "payslip_mode": "SIMPLE",
+            "salary_basis": "WORKING_DAYS",
+            "base_days": "25",
+            "per_day_rate": "1200.00",
+            "full_gross": "30000.00",
+            "earned_ratio": "0.78",
+            "effective_absent_equivalent": "5.50",
+            "not_employed_days": "0",
+            "payable_days": "19.50",
+            "working_days": "25",
+            "attendance_notes": [],
+            "component_amounts": { "BASIC": "30000.00" },
+            "attendance_sources": {},
+            "employer_costs": {
+                "pf_employer": "0.00",
+                "eps": "0.00",
+                "edli": "0.00",
+                "esi_employer": "0.00",
+                "lwf_employer": "0.00"
+            },
+            "warnings": []
+        },
+        "settings_used": {
+            "payslip_mode": "SIMPLE",
+            "salary_basis": "WORKING_DAYS",
+            "absent_deduction_multiplier": "1.00",
+            "half_day_deduction_multiplier": "0.50",
+            "unpaid_leave_multiplier": "1.00",
+            "overtime_enabled": true,
+            "overtime_rate_multiplier": "1.50",
+            "standard_work_hours_per_day": "8.00"
+        },
+        "period": {
+            "period_start": "2026-09-01",
+            "period_end": "2026-09-30",
+            "period_days": "30"
+        },
+        "structure": { "id": 7, "name": "Jr Developer" }
+    }
+}
+Key fields for the UI
+Field	Meaning
+net	Pay after loss of pay and deductions
+gross_earnings	Earnings including overtime
+total_deductions	Loss of pay plus deductions
+per_day_rate	Monthly gross divided by the base days for the chosen basis
+breakdown.base_days	The divisor used for the per-day rate
+breakdown.payable_days	Days paid (base days minus absence equivalent)
+breakdown.effective_absent_equivalent	Absent + half days x multiplier + unpaid leave, in days
+line_items	Earnings, loss of pay and (FULL only) deductions
+warnings	Messages to show to the admin as they are
+settings_used	Which settings produced this result
+SIMPLE and FULL
+SIMPLE: one GROSS earning, LOP, and overtime if any. PF, ESI, PT and LWF are 0.00.
+FULL: one earning line per salary component, LOP, non-statutory deductions, and the statutory lines (PF, ESI, PT, LWF) when they apply. pf_employee, esi_employee, pt, lwf_employee and breakdown.employer_costs carry the amounts. Needs employee_id.
+Warnings
+If the day counts do not add up to the number of days in the period, warnings contains a message such as "The days entered add up to 28, but the period has 30 days. Check the counts." The calculation still runs.
+In FULL mode, if the organization has no statutory settings, warnings says PF, ESI, PT and LWF are 0.
+Error responses
+
+Failure body:
+
+json
+{ "status": false, "message": "Select an employee for FULL mode: statutory deductions depend on the employee." }
+HTTP	Message
+400	period_start and period_end are required.
+400	period_start must use YYYY-MM-DD format.
+400	period_end cannot be before period_start.
+400	present_days must be a valid number. (any day field)
+400	Present days cannot be negative. (any day field or overtime)
+400	payslip_mode must be SIMPLE or FULL.
+400	salary_basis must be CALENDAR_DAYS, FIXED_30 or WORKING_DAYS.
+400	Select an employee or a salary structure.
+400	Select an employee for FULL mode: statutory deductions depend on the employee.
+400	No salary assignment found for EMP-000007 covering 2026-09-01 to 2026-09-30.
+400	Payroll settings are not configured for this organization.
+404	Employee not found.
+404	Salary structure not found.
+
+Statutory configuration problems in FULL mode (for example a missing PF rate) come back as a 400 with the same message a real payroll run would show.
+
+
+

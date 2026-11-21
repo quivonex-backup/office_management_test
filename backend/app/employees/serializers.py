@@ -242,3 +242,79 @@ class EmployeeUpdateSerializer(serializers.ModelSerializer):
             'first_name': {'required': False},
             'last_name': {'required': False},
         }
+
+
+
+# =========================================================
+# EMPLOYEE SELF-SERVICE PROFILE SERIALIZER
+# =========================================================
+class MyEmployeeProfileSerializer(serializers.ModelSerializer):
+    full_name = serializers.SerializerMethodField()
+    work_state_name = serializers.CharField(
+        source="work_state.state_name",
+        read_only=True,
+        allow_null=True,
+    )
+    documents = EmployeeDocumentSerializer(many=True, read_only=True)
+    organization_name = serializers.CharField(
+        source="organization.organization_name",
+        read_only=True,
+        allow_null=True,
+    )
+    has_user_account = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Employee
+        fields = [
+            "id",
+            "employee_code",
+            "full_name",
+            "first_name",
+            "middle_name",
+            "last_name",
+            "date_of_birth",
+            "gender",
+            "mobile",
+            "alternate_mobile",
+            "personal_email",
+            "address",
+            "state",
+            "district",
+            "taluka",
+            "pincode",
+            "designation",
+            "department",
+            "joining_date",
+            "employment_status",
+            "resignation_date",
+            "emergency_contact_name",
+            "emergency_contact_number",
+            "emergency_contact_relation",
+            "profile_photo",
+            "pf_uan",
+            "esi_ip_number",
+            "pan_number",
+            "work_state",
+            "work_state_name",
+            "tax_regime",
+            "bank_account_number",
+            "bank_ifsc",
+            "bank_name",
+            "bank_branch",
+            "upi_id",
+            "documents",
+            "organization",
+            "organization_name",
+            "has_user_account",
+            "is_active",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields   # everything is read-only here
+
+    def get_full_name(self, obj):
+        parts = [obj.first_name, obj.middle_name, obj.last_name]
+        return " ".join(part.strip() for part in parts if part)
+
+    def get_has_user_account(self, obj):
+        return obj.user_id is not None

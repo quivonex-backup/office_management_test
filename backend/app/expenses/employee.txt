@@ -1,0 +1,282 @@
+================================================================================
+EXPENSES APP — EMPLOYEE API REFERENCE
+================================================================================
+
+Base URL   : /
+Method     : All endpoints are POST
+Auth       : Bearer token (IsAuthenticated)
+Envelope   : { "status": true|false, "message": "...", "data": {...}?, "errors": {...}? }
+
+Who uses this document:
+  - Any user with an active Employee profile
+  - The employee app's "Reimbursements" screen
+
+CRITICAL IDENTITY RULE:
+  The client NEVER sends employee_id.
+  The backend derives identity from request.user.employee_profile.
+
+Nothing in the existing Expense / RecurringExpense endpoints is
+employee-facing. Only the 4 endpoints below are self-service.
+
+
+================================================================================
+CONTENT TYPE PER ENDPOINT
+================================================================================
+
+Endpoint                                            Content-Type
+-------------------------------------------------   ------------------
+POST /expenses/reimbursements/create/               multipart/form-data
+POST /expenses/reimbursements/my/                   application/json
+POST /expenses/reimbursements/detail/               application/json
+POST /expenses/reimbursements/cancel/               application/json
+
+
+================================================================================
+CHOICE ENUMS — FOR UI DROPDOWNS, FILTERS, BADGES
+================================================================================
+
+EXPENSE TYPE (same enum as Expense — 13 values):
+  food | travel | utilities | rent | software | cloud | equipment | office
+  maintenance | telephone | marketing | professional_services | other
+
+REIMBURSEMENT STATUS:
+  PENDING   — waiting for admin review
+  APPROVED  — approved; admin can now pay
+  REJECTED  — declined by admin (see rejection_reason)
+  PAID      — money has been transferred
+  CANCELLED — employee cancelled before review
+
+PAYMENT METHOD (display only on employee side, once PAID):
+  cash | bank_transfer | upi | card | cheque | other
+
+
+================================================================================
+SECTION 1 — MY REIMBURSEMENTS (EMPLOYEE)
+================================================================================
+
+--------------------------------------------------------------------------------
+1.1  POST /expenses/reimbursements/create/
+--------------------------------------------------------------------------------
+Purpose : Submit a new reimbursement claim for money you paid out-of-pocket
+Access  : Any authenticated employee (self only)
+Content-Type : multipart/form-data (accepts receipt uploads)
+
+Request fields:
+  title             string, required
+  description       string, optional
+  expense_type      enum (13 values), required
+  amount            decimal, required, > 0
+  expense_date      date (YYYY-MM-DD), required
+  project           integer, optional (must belong to your org)
+  payee_upi_id      string, optional — defaults to your Employee.upi_id
+  documents         file(s), optional — receipts, invoices
+
+Request example (FormData):
+  title             = "Client visit taxi"
+  description       = "Cab to client site for demo"
+  expense_type      = "travel"
+  amount            = "450.00"
+  expense_date      = "2026-11-14"
+  project           = 12
+  payee_upi_id      = "rahul@okhdfcbank"        (or leave empty to use profile UPI)
+  documents         = <taxi-receipt.jpg>
+
+Response 201:
+{
+  "status": true,
+  "message": "Reimbursement claim submitted successfully.",
+  "data": {
+    "id": 45,
+    "reimbursement_number": "REIMB-261115-00412",
+    "organization": 5,
+    "title": "Client visit taxi",
+    "description": "Cab to client site for demo",
+    "expense_type": "travel",
+    "expense_type_display": "Travel",
+    "amount": "450.00",
+    "expense_date": "2026-11-14",
+    "employee": 25,
+    "employee_code": "EMP-000025",
+    "employee_name": "Rahul Patil",
+    "project": 12,
+    "project_name": "Website Revamp",
+    "project_code": "PRJ-000012",
+    "payee_upi_id": "rahul@okhdfcbank",
+    "payee_name": "Rahul Patil",
+    "upi_link": null,
+    "status": "PENDING",
+    "reviewed_by_details": null,
+    "reviewed_at": null,
+    "review_notes": null,
+    "rejection_reason": null,
+    "payment_date": null,
+    "payment_method": null,
+    "payment_method_display": null,
+    "payment_reference": null,
+    "paid_by_details": null,
+    "documents": [
+      {
+        "id": 301,
+        "title": "taxi-receipt.jpg",
+        "file": "https://employee-attendance-media.s3.amazonaws.com/expenses/reimbursements/documents/taxi-receipt.jpg",
+        "description": null,
+        "created_at": "2026-11-14T18:30:00Z"
+      }
+    ],
+    "is_active": true,
+    "created_at": "2026-11-14T18:30:00Z",
+    "updated_at": "2026-11-14T18:30:00Z"
+  }
+}
+
+Response 400 (validation):
+{
+  "status": false,
+  "message": "Validation failed.",
+  "errors": { "amount": ["Amount must be greater than 0."] }
+}
+
+Response 404 (no employee profile):
+{ "status": false, "message": "No employee profile linked to your account." }
+
+
+--------------------------------------------------------------------------------
+1.2  POST /expenses/reimbursements/my/
+--------------------------------------------------------------------------------
+Purpose : List my reimbursement claims
+Access  : Employee (own claims only)
+Content-Type : application/json
+
+Request (all optional):
+{
+  "status": "PENDING",           // PENDING | APPROVED | REJECTED | PAID | CANCELLED
+  "expense_type": "travel",
+  "search": "taxi"
+}
+
+Response 200:
+{
+  "status": true,
+  "message": "Reimbursements fetched successfully.",
+  "data": [
+    {
+      "id": 45,
+      "reimbursement_number": "REIMB-261115-00412",
+      "title": "Client visit taxi",
+      "description": "Cab to client site for demo",
+      "expense_type": "travel",
+      "expense_type_display": "Travel",
+      "amount": "450.00",
+      "expense_date": "2026-11-14",
+      "employee": 25,
+      "employee_code": "EMP-000025",
+      "employee_name": "Rahul Patil",
+      "project": 12,
+      "project_name": "Website Revamp",
+      "project_code": "PRJ-000012",
+      "payee_upi_id": "rahul@okhdfcbank",
+      "payee_name": "Rahul Patil",
+      "upi_link": null,
+      "status": "PENDING",
+      "payment_date": null,
+      "payment_method": null,
+      "payment_method_display": null,
+      "payment_reference": null,
+      "created_at": "2026-11-14T18:30:00Z"
+    }
+  ]
+}
+
+Response 200 (empty):
+{ "status": true, "message": "Reimbursements fetched successfully.", "data": [] }
+
+
+--------------------------------------------------------------------------------
+1.3  POST /expenses/reimbursements/detail/
+--------------------------------------------------------------------------------
+Purpose : View one of my claims in full detail
+Access  : Employee (own claims) + Admin (any in org)
+Content-Type : application/json
+
+Request : { "reimbursement_id": 45 }
+
+Response 200: Same shape as 1.1's `data` — full detail.
+
+Response 404 (not mine / not found):
+{ "status": false, "message": "Reimbursement not found." }
+
+Response 404 (no employee profile):
+{ "status": false, "message": "No active employee profile linked to your account." }
+
+NOTE:
+  This is the same endpoint the admin uses.
+  - If you pass your own reimbursement_id → you get it.
+  - If you pass someone else's → 404 (not 403, to avoid leaking existence).
+  - Admin can pass any reimbursement_id in the org → gets it.
+
+
+--------------------------------------------------------------------------------
+1.4  POST /expenses/reimbursements/cancel/
+--------------------------------------------------------------------------------
+Purpose : Cancel my own claim (only while PENDING)
+Access  : Employee (own claims only)
+Content-Type : application/json
+
+Request : { "reimbursement_id": 45 }
+
+Response 200:
+{
+  "status": true,
+  "message": "Reimbursement cancelled successfully.",
+  "data": { ...full detail with status: "CANCELLED"... }
+}
+
+Response 400 (not PENDING):
+{
+  "status": false,
+  "message": "Only PENDING reimbursements can be cancelled. Current status: APPROVED."
+}
+
+Response 404 (not mine / not found):
+{ "status": false, "message": "Reimbursement not found." }
+
+
+================================================================================
+QUICK REFERENCE — EMPLOYEE ENDPOINTS
+================================================================================
+
+REIMBURSEMENTS (4)
+  POST /expenses/reimbursements/create/         multipart
+  POST /expenses/reimbursements/my/             JSON
+  POST /expenses/reimbursements/detail/         JSON (shared with admin)
+  POST /expenses/reimbursements/cancel/         JSON
+
+TOTAL EMPLOYEE ENDPOINTS: 4
+
+
+================================================================================
+KEY NOTES FOR FRONTEND — EMPLOYEE SIDE
+================================================================================
+
+1. IDENTITY IS DERIVED SERVER-SIDE.
+   No employee_id anywhere. The backend finds your Employee from the token.
+   If you have no employee profile → 404 on all 4 endpoints.
+
+2. ATTACHMENTS ARE S3 URLS.
+   The response gives you a full https:// URL. Render it directly in the
+   receipt viewer / download link. No URL building on the client.
+
+3. UPI LINK IS THE PAYOUT INSTRUMENT.
+   When your claim is APPROVED, the response includes:
+     "upi_link": "upi://pay?pa=...&pn=...&am=450.00&cu=INR&tn=..."
+   This is a UPI deep link that opens on the ADMIN's phone (not yours).
+   The admin uses it to send you the money. From the employee app, you
+   only DISPLAY the value if the UI needs it (e.g. for support / audit);
+   you do not launch it yourself.
+   The `upi_link` is null in every other status.
+
+4. PAYEE UPI RESOLUTION.
+   On create, you can pass `payee_upi_id` to override the default.
+   If you leave it empty, the backend falls back to `Employee.upi_id`
+   from your profile.
+   If neither exists, `upi_link` stays null even when APPROVED, and the

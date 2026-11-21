@@ -1,0 +1,251 @@
+================================================================================
+EMPLOYEE APP — EMPLOYEE SELF-SERVICE API REFERENCE
+================================================================================
+
+Base URL   : /
+Method     : POST
+Auth       : Bearer token (IsAuthenticated)
+Envelope   : { "status": true|false, "message": "...", "data": {...}?, "errors": {...}? }
+
+Who uses this document:
+  - Any user with an active Employee profile
+  - Frontend employee-facing screens ("My Details" / "Profile" / dashboard)
+
+CRITICAL IDENTITY RULE:
+  The client NEVER sends employee_id.
+  The backend derives the employee from request.user.employee_profile.
+  If the user has no employee_profile → 404.
+  If the profile exists but is inactive → 403.
+
+CURRENT ENDPOINTS:
+  - POST /employees/my-profile/         (read-only, self)
+
+If you need write/update self-service later, it will be documented here
+when added. Today it is read-only by design.
+
+
+================================================================================
+SECTION 1 — MY PROFILE
+================================================================================
+
+--------------------------------------------------------------------------------
+1.1  POST /employees/my-profile/
+--------------------------------------------------------------------------------
+Purpose : Get the logged-in employee's own profile
+Access  : Employee (self only)
+Request : {}
+Response 200:
+{
+  "status": true,
+  "message": "Your profile fetched successfully.",
+  "data": {
+    "id": 15,
+    "employee_code": "EMP-000015",
+    "full_name": "Rahul Patil",
+    "first_name": "Rahul",
+    "middle_name": null,
+    "last_name": "Patil",
+    "date_of_birth": "1995-03-12",
+    "gender": "MALE",
+    "mobile": "9876543210",
+    "alternate_mobile": null,
+    "personal_email": "rahul@example.com",
+    "address": "12, MG Road",
+    "state": "Karnataka",
+    "district": "Bangalore",
+    "taluka": "Whitefield",
+    "pincode": "560066",
+    "designation": "Software Engineer",
+    "department": "Engineering",
+    "joining_date": "2024-06-01",
+    "employment_status": "ACTIVE",
+    "resignation_date": null,
+    "emergency_contact_name": "Priya Patil",
+    "emergency_contact_number": "9876543211",
+    "emergency_contact_relation": "Spouse",
+    "profile_photo": "employees/profile/rahul.jpg",
+    "pf_uan": "123456789012",
+    "esi_ip_number": null,
+    "pan_number": "ABCDE1234F",
+    "work_state": 12,
+    "work_state_name": "Karnataka",
+    "tax_regime": "NEW",
+    "bank_account_number": "1234567890",
+    "bank_ifsc": "HDFC0001234",
+    "bank_name": "HDFC Bank",
+    "bank_branch": "MG Road",
+    "upi_id": "rahul@okhdfcbank",
+    "documents": [
+      {
+        "id": 301,
+        "title": "offer_letter.pdf",
+        "file": "employees/documents/offer_letter.pdf",
+        "description": null,
+        "created_at": "2024-06-01T10:00:00Z"
+      }
+    ],
+    "organization": 5,
+    "organization_name": "Acme Pvt Ltd",
+    "has_user_account": true,
+    "is_active": true,
+    "created_at": "2024-06-01T10:00:00Z",
+    "updated_at": "2026-04-15T08:30:00Z"
+  }
+}
+
+Response 404 (no employee profile linked):
+{ "status": false, "message": "No employee profile linked to your account." }
+
+Response 403 (employee profile inactive):
+{ "status": false, "message": "Your employee profile is inactive." }
+
+Response 404 (profile became inactive between auth and query):
+{ "status": false, "message": "Your employee profile is no longer active." }
+
+
+================================================================================
+FIELD NOTES — WHAT'S RETURNED AND WHY
+================================================================================
+
+Personal:
+  full_name       — concatenated from first/middle/last, spaces trimmed
+  employee_code   — the canonical ID used across payslips, projects, etc.
+  date_of_birth   — may be null if HR never filled it
+  gender          — MALE | FEMALE | OTHER | null
+  mobile          — primary contact, may be locked from editing later
+  personal_email  — also used as the login email for the linked User
+
+Address:
+  Address is a free-form "address" line PLUS structured state/district/
+  taluka/pincode fields. Older employees may have only the free-form line
+  populated; newer ones have both. Display the free-form line if present,
+  and compose the structured fields below it if any are non-empty.
+
+Employment:
+  designation, department      — read-only, admin-managed
+  joining_date                 — read-only, admin-managed
+  employment_status            — ACTIVE | INACTIVE | ON_LEAVE |
+                                 RESIGNED | TERMINATED
+  resignation_date             — only set when employment_status is RESIGNED
+
+Emergency Contact:
+  emergency_contact_name / _number / _relation
+  All three are individually nullable. If _name is empty, treat the
+  emergency contact as "not configured".
+
+Statutory & Financial:
+  pf_uan, esi_ip_number, pan_number — statutory identifiers
+  tax_regime                        — OLD | NEW (affects payslip TDS)
+  bank_account_number, bank_ifsc,
+  bank_name, bank_branch,
+  upi_id                            — payment details
+  All are individually nullable. All are visible to the employee
+  because they own this data — but the frontend should still mask them
+  in the UI (show last 4 digits of bank/UPI by default, with a "Show"
+  toggle).
+
+Documents:
+  Any files admin uploaded for the employee (offer letter, ID proof,
+  certificates). Each has id, title, file (S3 path), description,
+  created_at. The frontend should render a file field using its own
+  download helper if file is a URL or pre-signed path.
+
+Organization:
+  organization       — the org id
+  organization_name  — human-readable org name for display in the header
+
+Account:
+  has_user_account   — true if this employee has a login. Always true
+                       for users calling this endpoint (otherwise they
+                       couldn't be calling it). Useful mainly as a
+                       sanity-check for corner cases.
+
+
+================================================================================
+QUICK REFERENCE — EMPLOYEE ENDPOINTS
+================================================================================
+
+  POST /employees/my-profile/
+
+TOTAL: 1 endpoint
+
+
+================================================================================
+KEY NOTES FOR FRONTEND — EMPLOYEE SIDE
+================================================================================
+
+1. IDENTITY IS DERIVED SERVER-SIDE.
+   No employee_id in the request. The backend uses request.user.employee_profile.
+   This endpoint is the ONLY way an employee should fetch their own profile.
+
+2. CACHE ON APP LOAD.
+   This is a stable resource. Call it once after login and cache it in
+   global state (e.g. Redux, Zustand, React Query with a long staleTime).
+   Most employee screens need at least one of {full_name, designation,
+   department, employee_code} — cache the whole response, read from cache.
+
+3. INVALIDATE CACHE ON:
+   - Logout
+   - When the (future) self-update endpoint is called
+   - On manual "refresh profile" action from the profile screen
+   Do not invalidate on every screen navigation — it's a static resource.
+
+4. MASK SENSITIVE FIELDS IN THE UI.
+   The API returns the full bank/PAN/UPI/PF details (it's the employee's
+   own data), but the frontend should still mask in the default view:
+     - pan_number       → "XXXXX1234F" (last 4 visible)
+     - bank_account_number → "XXXXXXXX7890" (last 4 visible)
+     - upi_id           → "r****@okhdfcbank"
+     - pf_uan           → "XXXXXXXX9012" (last 4 visible)
+   Add "Show" / "Reveal" buttons for each. This is a UI-level hardening —
+   the API deliberately exposes full values because eventually we'll add
+   a self-update endpoint that needs to send/confirm them.
+
+5. NULL HANDLING.
+   Nearly every non-core field is nullable:
+     - date_of_birth, gender, alternate_mobile, personal_email,
+       address, state, district, taluka, pincode, designation,
+       department, joining_date, resignation_date,
+       emergency_contact_*, pf_uan, esi_ip_number, pan_number,
+       work_state, work_state_name, bank_account_number, bank_ifsc,
+       bank_name, bank_branch, upi_id, profile_photo
+   The UI should show "Not provided" / "—" in the view layer, not
+   crash or show "None". Only these fields are guaranteed non-null:
+     - id, employee_code, full_name, first_name, last_name,
+       mobile, employment_status, is_active, has_user_account,
+       organization, organization_name, created_at, updated_at,
+       documents (always an array, possibly empty)
+
+6. NO WRITE ENDPOINTS YET.
+   This endpoint is read-only. Employees cannot update any field on
+   their own profile via the API today.
+   The update-self endpoint (with a whitelist of fields:
+   mobile, alternate_mobile, personal_email, address, state, district,
+   taluka, pincode, emergency_contact_*, upi_id, profile_photo) is
+   planned but not yet implemented.
+   Until then, if the employee spots incorrect data, they must escalate
+   to HR / admin, who updates it via /employees/update/.
+
+7. DOCUMENTS ARE READ-ONLY FOR EMPLOYEE.
+   The employee can view documents uploaded by admin, but cannot
+   upload their own yet. A "self-upload with pending admin review"
+   workflow is planned separately.
+
+8. PROFILE PHOTO IS A FILE PATH, NOT A URL.
+   The response's profile_photo and documents[].file are the S3 path
+   as stored in the DB. The frontend is expected to:
+     - If your backend serves pre-signed URLs elsewhere, ask for a
+       URL variant of this endpoint
+     - Otherwise construct the URL client-side per your S3/CDN config
+
+9. NO PAGINATION.
+   There is only one object returned. No pagination concerns.
+
+10. DO NOT CALL ADMIN EMPLOYEE ENDPOINTS.
+    /employees/detail/, /employees/list/, /employees/update/, etc. are
+    admin-scoped. Calling them as an employee (even though the token is
+    valid) will succeed for the employee's OWN row only in some setups,
+    but will 404 on other employees' rows — that mixed behavior is
+    fragile. Always use /employees/my-profile/ for the employee's own
+    data. If your frontend ever needs to look up a colleague by id,
+    that's an admin feature, not an employee feature.
