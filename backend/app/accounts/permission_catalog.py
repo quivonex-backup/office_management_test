@@ -42,6 +42,13 @@ PERMISSIONS = [
     ("payroll.finalize", "Payroll", "Finalize payroll"),
     ("salary.assign", "Payroll", "Assign / revise salary"),
 
+    ("client.manage", "Business", "Manage clients"),
+    ("vendor.manage", "Business", "Manage vendors"),
+    ("project.manage", "Business", "Manage projects, teams and project heads"),
+    ("payment.manage", "Business", "Manage project payments and invoices"),
+    ("expense.manage", "Business", "Manage company and recurring expenses"),
+    ("calendar.manage", "Administration", "Manage holidays and weekly offs"),
+
     ("org.manage", "Administration", "Manage branches, departments, designations"),
     ("access.manage", "Administration", "Manage access roles and assign them"),
     ("settings.manage", "Administration", "Manage settings"),
@@ -68,6 +75,7 @@ DEFAULT_ACCESS_ROLES = {
             "attendance.view_self", "attendance.view_all", "attendance.correct",
             "attendance.approve_correction", "leave.apply", "leave.view_all", "leave.approve",
             "reimbursement.review", "payroll.view_self", "salary.assign",
+            "calendar.manage",
         ],
     },
     "HR Executive": {
@@ -92,6 +100,7 @@ DEFAULT_ACCESS_ROLES = {
             "dashboard.view", "employee.view_all", "attendance.view_self", "attendance.view_all",
             "leave.apply", "leave.view_all", "reimbursement.pay", "payroll.view_self",
             "payroll.view_all", "payroll.generate", "payroll.finalize", "salary.assign",
+            "expense.manage", "vendor.manage",
         ],
     },
 }

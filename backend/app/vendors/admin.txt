@@ -435,3 +435,12 @@ KEY NOTES FOR FRONTEND / UI DESIGNER
     Every create/update/deactivate/view is logged to the audit trail,
     but no notification is fired. Admin sees the action in the audit log
     if they look — no bell, no push, no email.
+
+
+================================================================================
+SECTION — VENDOR ACCESS (batch 4)
+================================================================================
+Missing code -> 403 {"status": false, "message": "You do not have permission to perform this action."}
+The organization owner has every code. Codes come from the caller's access role.
+  create|update|deactivate/      vendor.manage
+  list|detail/                   vendor.manage | expense.manage

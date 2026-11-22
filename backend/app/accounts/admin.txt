@@ -583,3 +583,20 @@ C. Assigning an access role to an employee
 --------------------------------------------------------------------------------
   Use /employees/update/ with "access_role_id" (needs access.manage).
   See employees/admin.txt, section ORGANIZATION LINKS.
+
+
+================================================================================
+SECTION — NEW PERMISSION CODES (batch 4)
+================================================================================
+
+  client.manage    Manage clients                        (clients app)
+  vendor.manage    Manage vendors                        (vendors app)
+  project.manage   Manage projects, teams, project heads (projects app; ADMIN on all tasks)
+  payment.manage   Manage project payments and invoices  (payments app)
+  expense.manage   Manage company and recurring expenses (expenses app)
+  calendar.manage  Manage holidays and weekly offs       (calendar app)
+Default roles: HR Manager + calendar.manage; Payroll Manager + expense.manage, vendor.manage.
+No default role gets client / project / payment: create a role (e.g. "Accounts"
+or "Project Lead") with access-role/create and assign it.
+Existing organizations: run  python manage.py seed_org_access --update-defaults
+to add the new default codes to the roles with the default names.

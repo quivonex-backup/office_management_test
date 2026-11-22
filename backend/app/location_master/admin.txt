@@ -263,3 +263,11 @@ KEY NOTES FOR FRONTEND
    Those are super-admin backend seeding operations. The admin UI never
    calls them and never needs buttons for them. If a super-admin
    reference doc is needed separately, ask for it.
+
+
+================================================================================
+SECTION — MASTER DATA ACCESS (batch 4)
+================================================================================
+  states|districts|talukas  create/ deactivate/   super admin only
+     403 {"status": false, "message": "Only the super admin can change master data."}
+  list endpoints   unchanged (any signed-in user)

@@ -9,6 +9,7 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from common.permissions import RequiredPermsMixin
 
 from common.services import get_user_organization
 from app.audit.services import log_activity
@@ -30,7 +31,8 @@ from .services import get_employee_calendar
 # WEEKLY OFF RULE LIST
 # =========================================================
 
-class WeeklyOffRuleListAPIView(APIView):
+class WeeklyOffRuleListAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("calendar.manage", "settings.manage", "attendance.view_all", "attendance.view_team")
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -74,7 +76,8 @@ class WeeklyOffRuleListAPIView(APIView):
 # WEEKLY OFF RULE CREATE
 # =========================================================
 
-class WeeklyOffRuleCreateAPIView(APIView):
+class WeeklyOffRuleCreateAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("calendar.manage",)
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
@@ -145,7 +148,8 @@ class WeeklyOffRuleCreateAPIView(APIView):
 # CREATE THE SAME WEEKLY-OFF RULE FOR ALL ACTIVE SHIFTS
 # =========================================================
 
-class WeeklyOffRuleBulkCreateAPIView(APIView):
+class WeeklyOffRuleBulkCreateAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("calendar.manage",)
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
@@ -236,7 +240,8 @@ class WeeklyOffRuleBulkCreateAPIView(APIView):
 # WEEKLY OFF RULE UPDATE
 # =========================================================
 
-class WeeklyOffRuleUpdateAPIView(APIView):
+class WeeklyOffRuleUpdateAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("calendar.manage",)
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
@@ -347,7 +352,8 @@ class WeeklyOffRuleUpdateAPIView(APIView):
 # WEEKLY OFF RULE DEACTIVATE
 # =========================================================
 
-class WeeklyOffRuleDeactivateAPIView(APIView):
+class WeeklyOffRuleDeactivateAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("calendar.manage",)
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
@@ -551,7 +557,8 @@ class CalendarHolidayListAPIView(APIView):
 # HOLIDAY CREATE
 # =========================================================
 
-class CalendarHolidayCreateAPIView(APIView):
+class CalendarHolidayCreateAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("calendar.manage",)
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
@@ -615,7 +622,8 @@ class CalendarHolidayCreateAPIView(APIView):
 # HOLIDAY UPDATE
 # =========================================================
 
-class CalendarHolidayUpdateAPIView(APIView):
+class CalendarHolidayUpdateAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("calendar.manage",)
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
@@ -717,7 +725,8 @@ class CalendarHolidayUpdateAPIView(APIView):
 # HOLIDAY DEACTIVATE
 # =========================================================
 
-class CalendarHolidayDeactivateAPIView(APIView):
+class CalendarHolidayDeactivateAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("calendar.manage",)
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
@@ -785,7 +794,8 @@ class CalendarHolidayDeactivateAPIView(APIView):
 # HOLIDAY BULK IMPORT FROM EXCEL
 # =========================================================
 
-class CalendarHolidayBulkImportAPIView(APIView):
+class CalendarHolidayBulkImportAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("calendar.manage",)
     permission_classes = [IsAuthenticated]
 
     MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB

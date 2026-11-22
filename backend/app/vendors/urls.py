@@ -18,9 +18,9 @@ from .views import (
 # ---------------------------------------------------------------------------
 urlpatterns = [
     # Vendor CRUD
-    path("create/", VendorCreateAPIView.as_view(), name="vendor-create"),                #A
-    path("list/", VendorListAPIView.as_view(), name="vendor-list"),                      #A
-    path("detail/", VendorDetailAPIView.as_view(), name="vendor-detail"),                #A
-    path("update/", VendorUpdateAPIView.as_view(), name="vendor-update"),                #A
-    path("deactivate/", VendorDeactivateAPIView.as_view(), name="vendor-deactivate"),    #A
+    path("create/", VendorCreateAPIView.as_view(), name="vendor-create"),                #A  perm: vendor.manage
+    path("list/", VendorListAPIView.as_view(), name="vendor-list"),                      #A  perm: vendor.manage, expense.manage (any)
+    path("detail/", VendorDetailAPIView.as_view(), name="vendor-detail"),                #A  perm: vendor.manage, expense.manage (any)
+    path("update/", VendorUpdateAPIView.as_view(), name="vendor-update"),                #A  perm: vendor.manage
+    path("deactivate/", VendorDeactivateAPIView.as_view(), name="vendor-deactivate"),    #A  perm: vendor.manage
 ]

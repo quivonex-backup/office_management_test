@@ -14,4 +14,4 @@ USE
   Cache the state list per session.
 MAINTENANCE (super admin)
   states/create|deactivate, districts/create|deactivate, talukas/create|deactivate.
-  Note: these are not restricted in code yet; keep them out of the org panel.
+  Super admin only (batch 4); keep them out of the org panel.

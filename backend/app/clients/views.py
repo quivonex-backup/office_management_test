@@ -5,6 +5,7 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from common.permissions import RequiredPermsMixin
 
 from .models import Client, ClientDocument
 from .serializers import (
@@ -23,7 +24,8 @@ from app.audit.services import log_activity
 # =========================================================
 # CREATE CLIENT
 # =========================================================
-class ClientCreateAPIView(APIView):
+class ClientCreateAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("client.manage",)
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
@@ -120,7 +122,8 @@ class ClientCreateAPIView(APIView):
 # =========================================================
 # CLIENT LIST
 # =========================================================
-class ClientListAPIView(APIView):
+class ClientListAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("client.manage", "project.manage", "payment.manage")
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -163,7 +166,8 @@ class ClientListAPIView(APIView):
 # =========================================================
 # CLIENT DETAIL
 # =========================================================
-class ClientDetailAPIView(APIView):
+class ClientDetailAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("client.manage", "project.manage", "payment.manage")
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -209,7 +213,8 @@ class ClientDetailAPIView(APIView):
 # =========================================================
 # UPDATE CLIENT
 # =========================================================
-class ClientUpdateAPIView(APIView):
+class ClientUpdateAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("client.manage",)
     permission_classes = [IsAuthenticated]
 
 
@@ -363,7 +368,8 @@ class ClientUpdateAPIView(APIView):
 # =========================================================
 # DEACTIVATE CLIENT / SOFT DELETE
 # =========================================================
-class ClientDeactivateAPIView(APIView):
+class ClientDeactivateAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("client.manage",)
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic

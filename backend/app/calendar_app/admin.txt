@@ -378,3 +378,15 @@ KEY NOTES FOR FRONTEND — ADMIN SIDE
    2026-10-20, the create will fail with "A holiday already exists
    for this date" — because the soft-deleted row is still there.
    Workaround: use UPDATE to reactivate the existing holiday.
+
+
+================================================================================
+SECTION — CALENDAR ACCESS (batch 4)
+================================================================================
+Missing code -> 403 {"status": false, "message": "You do not have permission to perform this action."}
+The organization owner has every code. Codes come from the caller's access role.
+  weekly-offs/create|update|deactivate|bulk-create/   calendar.manage
+  holidays/create|update|deactivate|bulk-import/      calendar.manage
+  weekly-offs/list/     calendar.manage | settings.manage | attendance.view_all | attendance.view_team
+  holidays/list/, employee/   unchanged (any member)
+Default roles: HR Manager has calendar.manage.

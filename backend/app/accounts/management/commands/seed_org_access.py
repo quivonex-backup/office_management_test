@@ -11,6 +11,10 @@ One-time / repeatable setup after the batch 1 migrations:
 Usage:
     python manage.py seed_org_access            # apply
     python manage.py seed_org_access --dry-run  # show what would happen, change nothing
+    python manage.py seed_org_access --update-defaults
+        also ADD codes that newer versions put in the default roles
+        (HR Manager, HR Executive, Department Manager, Payroll Manager) to
+        the roles with those names. Nothing is ever removed.
 
 Safe to run more than once.
 """
@@ -55,11 +59,31 @@ def _link_text(organization, text_field, ref_field, model):
     return created, linked
 
 
+def _add_missing_default_codes(organization):
+    from app.accounts.models import AccessRole, AccessRolePermission, Permission
+    from app.accounts.permission_catalog import DEFAULT_ACCESS_ROLES
+
+    by_code = {p.code: p for p in Permission.objects.all()}
+    added = 0
+    for name, spec in DEFAULT_ACCESS_ROLES.items():
+        role = AccessRole.objects.filter(organization=organization, name=name).first()
+        if role is None:
+            continue
+        have = set(role.permissions.values_list("code", flat=True))
+        for code in spec["codes"]:
+            if code not in have:
+                AccessRolePermission.objects.create(access_role=role, permission=by_code[code])
+                added += 1
+    return added
+
+
 class Command(BaseCommand):
     help = "Seed permissions, default access roles and department/designation masters."
 
     def add_arguments(self, parser):
         parser.add_argument("--dry-run", action="store_true", help="Roll back at the end.")
+        parser.add_argument("--update-defaults", action="store_true",
+                            help="Add missing default codes to roles with the default names.")
 
     def handle(self, *args, **options):
         dry = options["dry_run"]
@@ -69,12 +93,14 @@ class Command(BaseCommand):
                 self.stdout.write("Permissions synced.")
                 for organization in Organization.objects.order_by("id"):
                     roles = seed_organization_defaults(organization)
+                    added = _add_missing_default_codes(organization) if options["update_defaults"] else 0
                     d_new, d_link = _link_text(organization, "department", "department_ref", Department)
                     g_new, g_link = _link_text(organization, "designation", "designation_ref", Designation)
                     self.stdout.write(
                         f"[{organization.id}] {organization.organization_name}: "
                         f"access roles +{len(roles)}, departments +{d_new} (linked {d_link}), "
                         f"designations +{g_new} (linked {g_link})"
+                        + (f", default codes added {added}" if options["update_defaults"] else "")
                     )
                 if dry:
                     raise _DryRun()

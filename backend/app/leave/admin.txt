@@ -776,3 +776,11 @@ Review / cancel errors (403):
   "This record is outside your team."
 A Department Manager (leave.view_team + leave.approve) approves only the
 people who report to them, directly or indirectly.
+
+
+================================================================================
+SECTION — AUDIT (batch 4)
+================================================================================
+
+Successful type create/update/deactivate, balance initialize/adjust,
+application create/review/cancel are written to the activity log (module LEAVE).

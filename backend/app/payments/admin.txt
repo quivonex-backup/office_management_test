@@ -822,3 +822,12 @@ KEY NOTES FOR FRONTEND / UI DESIGNER
         status            (PAID / PARTIALLY_PAID / OVERDUE / PENDING)
         paid_date         (latest SUCCESS transaction date, or null)
     The UI should NOT recompute these — always trust the response.
+
+
+================================================================================
+SECTION — PAYMENT ACCESS (batch 4)
+================================================================================
+Missing code -> 403 {"status": false, "message": "You do not have permission to perform this action."}
+The organization owner has every code. Codes come from the caller's access role.
+  every endpoint in this document  payment.manage
+  Project dropdown: projects/list|detail accept payment.manage.

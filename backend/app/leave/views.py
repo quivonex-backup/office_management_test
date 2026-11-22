@@ -41,6 +41,7 @@ from .services import (
 )
 
 from app.communications.notification_service import notify
+from app.audit.services import log_activity
 
 
 # =========================================================
@@ -51,6 +52,34 @@ class LeaveBaseAPIView(RequiredPermsMixin, APIView):
 
     permission_classes = [IsAuthenticated]
     parser_classes = [JSONParser]
+
+    # Batch 4: (action, object_type). Successful calls are written to the
+    # activity log with the response message as the description.
+    audit_action = None
+
+    def finalize_response(self, request, response, *args, **kwargs):
+        response = super().finalize_response(request, response, *args, **kwargs)
+        if (
+            self.audit_action
+            and 200 <= response.status_code < 300
+            and isinstance(response.data, dict)
+            and response.data.get("status")
+        ):
+            action, object_type = self.audit_action
+            data = response.data.get("data")
+            try:
+                log_activity(
+                    request=request,
+                    action=action,
+                    module="LEAVE",
+                    object_type=object_type,
+                    object_id=data.get("id") if isinstance(data, dict) else None,
+                    description=response.data.get("message"),
+                    new_data=data if isinstance(data, dict) else None,
+                )
+            except Exception:
+                pass
+        return response
 
     def get_organization(self, request):
         organization, error_response = get_user_organization(request)
@@ -171,6 +200,7 @@ class LeaveTypeListAPIView(LeaveBaseAPIView):
 # =========================================================
 
 class LeaveTypeCreateAPIView(LeaveBaseAPIView):
+    audit_action = ("CREATE", "LeaveType")
     required_perms = ("settings.manage",)
 
     def post(self, request):
@@ -209,6 +239,7 @@ class LeaveTypeCreateAPIView(LeaveBaseAPIView):
 # =========================================================
 
 class LeaveTypeUpdateAPIView(LeaveBaseAPIView):
+    audit_action = ("UPDATE", "LeaveType")
     required_perms = ("settings.manage",)
 
     def post(self, request):
@@ -259,6 +290,7 @@ class LeaveTypeUpdateAPIView(LeaveBaseAPIView):
 # =========================================================
 
 class LeaveTypeDeactivateAPIView(LeaveBaseAPIView):
+    audit_action = ("DELETE", "LeaveType")
     required_perms = ("settings.manage",)
 
     def post(self, request):
@@ -410,6 +442,7 @@ class OrganizationLeaveBalanceListAPIView(LeaveBaseAPIView):
 # =========================================================
 
 class LeaveBalanceInitializeAPIView(LeaveBaseAPIView):
+    audit_action = ("CREATE", "EmployeeLeaveBalance")
     required_perms = ("settings.manage",)
 
     def post(self, request):
@@ -477,6 +510,7 @@ class LeaveBalanceInitializeAPIView(LeaveBaseAPIView):
 # =========================================================
 
 class LeaveBalanceAdjustAPIView(LeaveBaseAPIView):
+    audit_action = ("UPDATE", "EmployeeLeaveBalance")
     required_perms = ("settings.manage",)
 
     def post(self, request):
@@ -532,6 +566,7 @@ class LeaveBalanceAdjustAPIView(LeaveBaseAPIView):
 # =========================================================
 
 class LeaveApplicationCreateAPIView(LeaveBaseAPIView):
+    audit_action = ("CREATE", "LeaveApplication")
 
     def post(self, request):
 
@@ -762,6 +797,7 @@ class OrganizationLeaveApplicationListAPIView(LeaveBaseAPIView):
 # =========================================================
 
 class LeaveApplicationReviewAPIView(LeaveBaseAPIView):
+    audit_action = ("UPDATE", "LeaveApplication")
     required_perms = ("leave.approve",)
 
     def post(self, request):
@@ -856,6 +892,7 @@ class LeaveApplicationReviewAPIView(LeaveBaseAPIView):
 # =========================================================
 
 class MyLeaveApplicationCancelAPIView(LeaveBaseAPIView):
+    audit_action = ("UPDATE", "LeaveApplication")
 
     def post(self, request):
 
@@ -903,6 +940,7 @@ class MyLeaveApplicationCancelAPIView(LeaveBaseAPIView):
 # =========================================================
 
 class OrganizationLeaveApplicationCancelAPIView(LeaveBaseAPIView):
+    audit_action = ("UPDATE", "LeaveApplication")
     required_perms = ("leave.approve",)
 
     def post(self, request):

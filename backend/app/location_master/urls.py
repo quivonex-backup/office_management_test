@@ -14,17 +14,17 @@ from .views import (
 # ---------------------------------------------------------------------------
 urlpatterns = [
     # State
-    path('states/create/', StateCreateAPIView.as_view(), name='state-create'),                         #SU  (not enforced in code yet)
-    path('states/deactivate/', StateDeactivateAPIView.as_view(), name='state-deactivate'),             #SU  (not enforced in code yet)
+    path('states/create/', StateCreateAPIView.as_view(), name='state-create'),                         #SU  perm: super admin only
+    path('states/deactivate/', StateDeactivateAPIView.as_view(), name='state-deactivate'),             #SU  perm: super admin only
     path('states/list/', StateListAPIView.as_view(), name='state-list'),                               #E #A #SU
 
     # District
-    path('districts/create/', DistrictCreateAPIView.as_view(), name='district-create'),                #SU  (not enforced in code yet)
-    path('districts/deactivate/', DistrictDeactivateAPIView.as_view(), name='district-deactivate'),    #SU  (not enforced in code yet)
+    path('districts/create/', DistrictCreateAPIView.as_view(), name='district-create'),                #SU  perm: super admin only
+    path('districts/deactivate/', DistrictDeactivateAPIView.as_view(), name='district-deactivate'),    #SU  perm: super admin only
     path('districts/list/', DistrictListAPIView.as_view(), name='district-list'),                      #E #A #SU
 
     # Taluka
-    path('talukas/create/', TalukaCreateAPIView.as_view(), name='taluka-create'),                      #SU  (not enforced in code yet)
-    path('talukas/deactivate/', TalukaDeactivateAPIView.as_view(), name='taluka-deactivate'),          #SU  (not enforced in code yet)
+    path('talukas/create/', TalukaCreateAPIView.as_view(), name='taluka-create'),                      #SU  perm: super admin only
+    path('talukas/deactivate/', TalukaDeactivateAPIView.as_view(), name='taluka-deactivate'),          #SU  perm: super admin only
     path('talukas/list/', TalukaListAPIView.as_view(), name='taluka-list'),                            #E #A #SU
 ]

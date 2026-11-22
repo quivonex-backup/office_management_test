@@ -22,3 +22,7 @@ SCREENS (employee / project head)
 PROCESS
   Client (clients app) -> project -> allocate team -> assign head -> tasks ->
   payments (payments app) and expenses linked to the project.
+
+ACCESS (batch 4)
+  - Projects admin menu: project.manage. Members keep using My projects / My tasks.
+  - A project.manage user manages tasks on every project (ADMIN).

@@ -757,5 +757,16 @@ Endpoints
   reimbursements/mark-paid/  reimbursement.pay + not own
 
 Own claim -> 403 "You cannot review your own request."
-Company expenses / recurring expenses (create, list, ...) are NOT permission
-checked yet (any organization member). Planned with finance codes later.
+Company expenses / recurring expenses: see SECTION — COMPANY EXPENSE ACCESS (batch 4).
+
+
+================================================================================
+SECTION — COMPANY EXPENSE ACCESS (batch 4)
+================================================================================
+Missing code -> 403 {"status": false, "message": "You do not have permission to perform this action."}
+The organization owner has every code. Codes come from the caller's access role.
+
+  create|list|detail|update|deactivate/          expense.manage
+  recurring/* and recurring/entries/*            expense.manage
+  Vendor dropdown: vendors/list/ accepts expense.manage too.
+Default roles: Payroll Manager has expense.manage (and vendor.manage).

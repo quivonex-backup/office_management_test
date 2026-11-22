@@ -6,6 +6,7 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from common.permissions import RequiredPermsMixin
 
 from .models import Project, ProjectDocument, ProjectTeamAllocation, Task
 from .serializers import (
@@ -67,7 +68,8 @@ def _get_project_notification_recipients(project, organization):
 # =========================================================
 # CREATE PROJECT
 # =========================================================
-class ProjectCreateAPIView(APIView):
+class ProjectCreateAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("project.manage",)
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
@@ -179,7 +181,8 @@ class ProjectCreateAPIView(APIView):
 # =========================================================
 # PROJECT LIST
 # =========================================================
-class ProjectListAPIView(APIView):
+class ProjectListAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("project.manage", "payment.manage")
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -241,7 +244,8 @@ class ProjectListAPIView(APIView):
 # =========================================================
 # PROJECT DETAIL
 # =========================================================
-class ProjectDetailAPIView(APIView):
+class ProjectDetailAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("project.manage", "payment.manage")
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -299,7 +303,8 @@ class ProjectDetailAPIView(APIView):
 # =========================================================
 # UPDATE PROJECT
 # =========================================================
-class ProjectUpdateAPIView(APIView):
+class ProjectUpdateAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("project.manage",)
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
@@ -472,7 +477,8 @@ class ProjectUpdateAPIView(APIView):
 # =========================================================
 # DEACTIVATE PROJECT / SOFT DELETE
 # =========================================================
-class ProjectDeactivateAPIView(APIView):
+class ProjectDeactivateAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("project.manage",)
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
@@ -547,7 +553,8 @@ class ProjectDeactivateAPIView(APIView):
 # =========================================================
 # CREATE PROJECT TEAM ALLOCATION
 # =========================================================
-class ProjectTeamAllocationCreateAPIView(APIView):
+class ProjectTeamAllocationCreateAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("project.manage",)
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
@@ -677,7 +684,8 @@ class ProjectTeamAllocationCreateAPIView(APIView):
 # =========================================================
 # PROJECT TEAM ALLOCATION LIST
 # =========================================================
-class ProjectTeamAllocationListAPIView(APIView):
+class ProjectTeamAllocationListAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("project.manage",)
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -769,7 +777,8 @@ class ProjectTeamAllocationListAPIView(APIView):
 # =========================================================
 # PROJECT TEAM ALLOCATION DETAIL
 # =========================================================
-class ProjectTeamAllocationDetailAPIView(APIView):
+class ProjectTeamAllocationDetailAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("project.manage",)
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -848,7 +857,8 @@ class ProjectTeamAllocationDetailAPIView(APIView):
 # =========================================================
 # UPDATE PROJECT TEAM ALLOCATION
 # =========================================================
-class ProjectTeamAllocationUpdateAPIView(APIView):
+class ProjectTeamAllocationUpdateAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("project.manage",)
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
@@ -971,7 +981,8 @@ class ProjectTeamAllocationUpdateAPIView(APIView):
 # =========================================================
 # DEACTIVATE PROJECT TEAM ALLOCATION
 # =========================================================
-class ProjectTeamAllocationDeactivateAPIView(APIView):
+class ProjectTeamAllocationDeactivateAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("project.manage",)
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
@@ -1078,7 +1089,8 @@ class ProjectTeamAllocationDeactivateAPIView(APIView):
 # =========================================================
 # PROJECT TEAM
 # =========================================================
-class ProjectTeamAPIView(APIView):
+class ProjectTeamAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("project.manage",)
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -1198,7 +1210,8 @@ class ProjectTeamAPIView(APIView):
 # =========================================================
 # EMPLOYEE PROJECTS
 # =========================================================
-class EmployeeProjectsAPIView(APIView):
+class EmployeeProjectsAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("project.manage",)
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -1300,7 +1313,8 @@ class EmployeeProjectsAPIView(APIView):
 # =========================================================
 # ASSIGN PROJECT HEAD
 # =========================================================
-class ProjectHeadAssignAPIView(APIView):
+class ProjectHeadAssignAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("project.manage",)
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic

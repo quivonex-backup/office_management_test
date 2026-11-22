@@ -137,6 +137,12 @@ def get_project_permission(request, project_id):
     if project.organization_id and project.organization.owner_id == user.id:
         return "ADMIN", project, None, None
 
+    # Access role with project.manage — ADMIN on the organization's projects.
+    from common.permissions import get_permission_codes
+
+    if project.organization_id and "project.manage" in get_permission_codes(user, project.organization):
+        return "ADMIN", project, None, None
+
     employee = getattr(user, "employee_profile", None)
     if employee and employee.organization_id == project.organization_id:
         allocation = ProjectTeamAllocation.objects.filter(
@@ -202,6 +208,14 @@ def get_accessible_projects(request):
         .exclude(organization__owner_id=user.id)
         .values_list("organization_id", flat=True)
     )
+
+    # Members whose access role has project.manage are ADMIN there too.
+    from common.permissions import get_permission_codes
+
+    for membership in memberships.exclude(organization__owner_id=user.id):
+        if "project.manage" in get_permission_codes(user, membership.organization):
+            owned_org_ids.append(membership.organization_id)
+            member_org_ids.remove(membership.organization_id)
 
     project_ids = set()
     permission_map = {}

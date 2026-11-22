@@ -33,7 +33,7 @@ urlpatterns = [
     path("list/", EmployeeListAPIView.as_view(), name="employee-list"),                                        #A  scope: self|team|all (employee.view_*)
     path("detail/", EmployeeDetailAPIView.as_view(), name="employee-detail"),                                  #A  own, or in team/all scope
     path("update/", EmployeeUpdateAPIView.as_view(), name="employee-update"),                                  #A  perm: employee.update (access_role_id needs access.manage)
-    path("deactivate/", EmployeeDeactivateAPIView.as_view(), name="employee-deactivate"),                      #A  perm: employee.update
+    path("deactivate/", EmployeeDeactivateAPIView.as_view(), name="employee-deactivate"),                      #A  perm: employee.update  closes running shift / salary assignments (last_working_day)
 
     # =====================================================
     # EMPLOYEE DOCUMENTS

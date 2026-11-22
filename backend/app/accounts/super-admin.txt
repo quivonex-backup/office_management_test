@@ -784,6 +784,9 @@ SECTION — ORGANIZATION ACCESS SETUP (batch 1)
   After deploying batch 1 (once, and safe to repeat):
       python manage.py migrate
       python manage.py seed_org_access          # or --dry-run first
+      python manage.py seed_org_access --update-defaults
+                                                # after an upgrade that adds codes
+                                                # to the default roles (batch 4)
   It syncs the permission catalog, creates the 4 default access roles in
   every organization that lacks them, and builds Department / Designation
   lists from existing employee text (text is not changed).

@@ -8,6 +8,7 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from common.permissions import RequiredPermsMixin
 
 from .models import (
     ProjectPayment,
@@ -40,7 +41,8 @@ from .services import send_project_payment_reminder_emails, generate_project_inv
 # CREATE PROJECT PAYMENT
 # =========================================================
 
-class ProjectPaymentCreateAPIView(APIView):
+class ProjectPaymentCreateAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("payment.manage",)
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
@@ -213,7 +215,8 @@ class ProjectPaymentCreateAPIView(APIView):
 # LIST PROJECT PAYMENTS
 # =========================================================
 
-class ProjectPaymentListAPIView(APIView):
+class ProjectPaymentListAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("payment.manage",)
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -294,7 +297,8 @@ class ProjectPaymentListAPIView(APIView):
 # =========================================================
 # PROJECT PAYMENT DETAIL
 # =========================================================
-class ProjectPaymentDetailAPIView(APIView):
+class ProjectPaymentDetailAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("payment.manage",)
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -348,7 +352,8 @@ class ProjectPaymentDetailAPIView(APIView):
 # =========================================================
 # UPDATE PROJECT PAYMENT
 # =========================================================
-class ProjectPaymentUpdateAPIView(APIView):
+class ProjectPaymentUpdateAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("payment.manage",)
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
@@ -511,7 +516,8 @@ class ProjectPaymentUpdateAPIView(APIView):
 # =========================================================
 # CREATE PAYMENT TRANSACTION
 # =========================================================
-class ProjectPaymentTransactionCreateAPIView(APIView):
+class ProjectPaymentTransactionCreateAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("payment.manage",)
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
@@ -618,7 +624,8 @@ class ProjectPaymentTransactionCreateAPIView(APIView):
 # =========================================================
 # UPDATE PAYMENT TRANSACTION
 # =========================================================
-class ProjectPaymentTransactionUpdateAPIView(APIView):
+class ProjectPaymentTransactionUpdateAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("payment.manage",)
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
@@ -752,7 +759,8 @@ class ProjectPaymentTransactionUpdateAPIView(APIView):
 # =========================================================
 # CANCEL PROJECT PAYMENT
 # =========================================================
-class ProjectPaymentDeactivateAPIView(APIView):
+class ProjectPaymentDeactivateAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("payment.manage",)
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
@@ -854,7 +862,8 @@ class ProjectPaymentDeactivateAPIView(APIView):
 # =========================================================
 # PROJECT PAYMENTS WITH TRANSACTIONS
 # =========================================================
-class ProjectPaymentsByProjectAPIView(APIView):
+class ProjectPaymentsByProjectAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("payment.manage",)
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -941,7 +950,8 @@ class ProjectPaymentsByProjectAPIView(APIView):
 # SEND PROJECT PAYMENT REMINDER EMAIL
 # =========================================================
 
-class ProjectPaymentReminderAPIView(APIView):
+class ProjectPaymentReminderAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("payment.manage",)
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -1064,7 +1074,8 @@ class ProjectPaymentReminderAPIView(APIView):
 # =========================================================
 # GENERATE PROJECT INVOICE PDF
 # =========================================================
-class ProjectInvoicePDFAPIView(APIView):
+class ProjectInvoicePDFAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("payment.manage",)
     permission_classes = [IsAuthenticated]
 
     def post(self, request):

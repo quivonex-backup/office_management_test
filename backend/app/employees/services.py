@@ -294,3 +294,30 @@ def apply_org_assignments(employee, changes, text_sent=None):
         fields = sorted(set(fields)) + ["updated_at"]
         employee.save(update_fields=fields)
     return fields
+
+
+
+# =========================================================
+# EXIT (batch 4)
+# =========================================================
+def close_open_assignments(employee, last_working_day):
+    """
+    End shift and salary assignments that are still running after the last
+    working day. Assignments starting after that day are left untouched and
+    only counted (delete them yourself if they were planned by mistake).
+    """
+    from django.db.models import Q
+
+    from app.attendance.models import EmployeeShiftAssignment
+    from app.payroll.models import EmployeeSalaryAssignment
+
+    result = {}
+    for key, model in (("shift", EmployeeShiftAssignment), ("salary", EmployeeSalaryAssignment)):
+        running = model.objects.filter(
+            employee=employee, effective_from__lte=last_working_day,
+        ).filter(Q(effective_to__isnull=True) | Q(effective_to__gt=last_working_day))
+        result[f"closed_{key}_assignments"] = running.update(effective_to=last_working_day)
+        result[f"future_{key}_assignments"] = model.objects.filter(
+            employee=employee, effective_from__gt=last_working_day,
+        ).count()
+    return result

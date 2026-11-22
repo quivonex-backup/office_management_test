@@ -18,3 +18,6 @@ SCREENS
 5. Actions                        payment-reminder/ (email), project-invoice/pdf-download/
 STATUS
   PENDING -> PARTIALLY_PAID / PAID / OVERDUE (server computes).
+
+ACCESS (batch 4)
+  - Payments menu: payment.manage.

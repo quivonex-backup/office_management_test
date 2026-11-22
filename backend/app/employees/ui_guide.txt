@@ -50,3 +50,7 @@ ACCESS (batch 2)
     "scope"; read "scope_applied".
   - Detail outside the caller's scope -> 403 with a message.
   - Documents upload / delete: employee.update.
+
+EXIT (batch 4)
+  - Deactivate dialog: last working day (default resignation date / today).
+    Show the returned counts ("1 shift and 1 salary assignment closed").

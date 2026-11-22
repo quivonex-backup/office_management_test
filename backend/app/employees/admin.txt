@@ -490,3 +490,19 @@ Endpoints
   detail/                                      own, or in scope (else 403 "You do not have permission to view this employee.")
   document/upload/, document/delete/           employee.update
   create/, create-user/, update/, deactivate/  unchanged from batch 1
+
+
+================================================================================
+SECTION — EXIT (batch 4)
+================================================================================
+
+POST /employees/deactivate/  { "employee_id": 12, "last_working_day"?: "2026-12-15" }
+  last_working_day default: resignation_date, else today.
+  Shift and salary assignments still running after that day get
+  effective_to = last_working_day. Assignments starting later are not touched.
+  200 data: { "last_working_day": "2026-12-15",
+              "closed_shift_assignments": 1, "future_shift_assignments": 0,
+              "closed_salary_assignments": 1, "future_salary_assignments": 0 }
+  The final payroll run then flags the record (assignment does not cover the
+  whole period) so the final settlement is reviewed.
+POST /employees/update/  remove_document_ids now also works with a JSON body (list).

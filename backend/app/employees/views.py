@@ -26,7 +26,7 @@ from .serializers import (
 from common.services import get_user_organization, get_current_employee
 from common.s3_utils import upload_to_s3, delete_from_s3
 from app.audit.services import log_activity
-from .services import create_employee_user, resolve_org_assignments, apply_org_assignments
+from .services import create_employee_user, resolve_org_assignments, apply_org_assignments, close_open_assignments
 from common.permissions import OrgAPIView, require_perm, has_perm, resolve_scope
 
 
@@ -895,9 +895,13 @@ class EmployeeUpdateAPIView(APIView):
         # REMOVE OLD DOCUMENTS
         # -------------------------------------------------
 
-        remove_document_ids = request.data.getlist(
-            "remove_document_ids"
-        )
+        # Works for multipart (repeated keys) and JSON (a list).
+        if hasattr(request.data, "getlist"):
+            remove_document_ids = request.data.getlist("remove_document_ids")
+        else:
+            remove_document_ids = request.data.get("remove_document_ids") or []
+            if not isinstance(remove_document_ids, list):
+                remove_document_ids = [remove_document_ids]
 
         removed_documents = []
 
@@ -1101,6 +1105,23 @@ class EmployeeDeactivateAPIView(APIView):
         # SOFT DELETE
         # -------------------------------------------------
 
+        # Batch 4: last working day closes open shift / salary assignments.
+        from datetime import date as _date
+        from django.utils import timezone as _tz
+
+        raw_lwd = request.data.get("last_working_day")
+        try:
+            last_working_day = (
+                _date.fromisoformat(str(raw_lwd)) if raw_lwd
+                else (employee.resignation_date or _tz.localdate())
+            )
+        except ValueError:
+            return Response(
+                {"status": False, "message": "last_working_day must use YYYY-MM-DD format."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        closed = close_open_assignments(employee, last_working_day)
+
         employee.is_active = False
         employee.employment_status = "INACTIVE"
         employee.updated_by = request.user
@@ -1129,6 +1150,8 @@ class EmployeeDeactivateAPIView(APIView):
             new_data={
                 "is_active": False,
                 "employment_status": "INACTIVE",
+                "last_working_day": str(last_working_day),
+                **closed,
             },
         )
 
@@ -1140,6 +1163,7 @@ class EmployeeDeactivateAPIView(APIView):
             {
                 "status": True,
                 "message": "Employee deactivated successfully.",
+                "data": {"last_working_day": str(last_working_day), **closed},
             },
             status=status.HTTP_200_OK,
         )

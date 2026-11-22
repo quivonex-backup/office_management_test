@@ -43,7 +43,7 @@ urlpatterns = [
     path("my-attendance/", MyAttendanceListAPIView.as_view()),                                          #E
     path("my-shifts/", MyShiftAssignmentListAPIView.as_view()),                                         #E
     path("detail/", AttendanceDetailAPIView.as_view()),                                                 #E #A  own record, or in team/all scope
-    path("bulk-mark-absent/", AttendanceBulkMarkAbsentAPIView.as_view()),                               #A  perm: attendance.correct
+    path("bulk-mark-absent/", AttendanceBulkMarkAbsentAPIView.as_view()),                               #A  perm: attendance.correct  dates up to yesterday
 
     # Corrections
     path("corrections/create/", AttendanceCorrectionCreateAPIView.as_view()),                           #E  own record (attendance.correct for others)

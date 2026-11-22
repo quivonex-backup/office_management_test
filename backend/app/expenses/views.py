@@ -40,7 +40,8 @@ from app.audit.services import log_activity
 # =========================================================
 # CREATE EXPENSE
 # =========================================================
-class ExpenseCreateAPIView(APIView):
+class ExpenseCreateAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("expense.manage",)
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
@@ -162,7 +163,8 @@ class ExpenseCreateAPIView(APIView):
 # =========================================================
 # EXPENSE LIST
 # =========================================================
-class ExpenseListAPIView(APIView):
+class ExpenseListAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("expense.manage",)
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -246,7 +248,8 @@ class ExpenseListAPIView(APIView):
 # =========================================================
 # EXPENSE DETAIL
 # =========================================================
-class ExpenseDetailAPIView(APIView):
+class ExpenseDetailAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("expense.manage",)
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -296,7 +299,8 @@ class ExpenseDetailAPIView(APIView):
 # =========================================================
 # UPDATE EXPENSE
 # =========================================================
-class ExpenseUpdateAPIView(APIView):
+class ExpenseUpdateAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("expense.manage",)
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
@@ -412,7 +416,8 @@ class ExpenseUpdateAPIView(APIView):
 # =========================================================
 # DEACTIVATE EXPENSE
 # =========================================================
-class ExpenseDeactivateAPIView(APIView):
+class ExpenseDeactivateAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("expense.manage",)
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
@@ -461,7 +466,8 @@ class ExpenseDeactivateAPIView(APIView):
 # =========================================================
 # CREATE RECURRING EXPENSE
 # =========================================================
-class RecurringExpenseCreateAPIView(APIView):
+class RecurringExpenseCreateAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("expense.manage",)
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
@@ -552,7 +558,8 @@ class RecurringExpenseCreateAPIView(APIView):
 # =========================================================
 # RECURRING EXPENSE LIST
 # =========================================================
-class RecurringExpenseListAPIView(APIView):
+class RecurringExpenseListAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("expense.manage",)
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -626,7 +633,8 @@ class RecurringExpenseListAPIView(APIView):
 # =========================================================
 # RECURRING EXPENSE DETAIL
 # =========================================================
-class RecurringExpenseDetailAPIView(APIView):
+class RecurringExpenseDetailAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("expense.manage",)
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -678,7 +686,8 @@ class RecurringExpenseDetailAPIView(APIView):
 # =========================================================
 # UPDATE RECURRING EXPENSE
 # =========================================================
-class RecurringExpenseUpdateAPIView(APIView):
+class RecurringExpenseUpdateAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("expense.manage",)
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
@@ -763,7 +772,8 @@ class RecurringExpenseUpdateAPIView(APIView):
 # =========================================================
 # DEACTIVATE RECURRING EXPENSE
 # =========================================================
-class RecurringExpenseDeactivateAPIView(APIView):
+class RecurringExpenseDeactivateAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("expense.manage",)
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
@@ -813,7 +823,8 @@ class RecurringExpenseDeactivateAPIView(APIView):
 # =========================================================
 # CREATE RECURRING EXPENSE ENTRY
 # =========================================================
-class RecurringExpenseEntryCreateAPIView(APIView):
+class RecurringExpenseEntryCreateAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("expense.manage",)
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
@@ -901,7 +912,8 @@ class RecurringExpenseEntryCreateAPIView(APIView):
 # =========================================================
 # UPDATE RECURRING EXPENSE ENTRY
 # =========================================================
-class RecurringExpenseEntryUpdateAPIView(APIView):
+class RecurringExpenseEntryUpdateAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("expense.manage",)
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
@@ -1023,7 +1035,8 @@ class RecurringExpenseEntryUpdateAPIView(APIView):
 # =========================================================
 # DEACTIVATE / DELETE RECURRING EXPENSE ENTRY
 # =========================================================
-class RecurringExpenseEntryDeactivateAPIView(APIView):
+class RecurringExpenseEntryDeactivateAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("expense.manage",)
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic

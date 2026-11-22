@@ -5,6 +5,7 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from common.permissions import RequiredPermsMixin
 
 from .models import Vendor
 from .serializers import (
@@ -22,7 +23,8 @@ from app.audit.services import log_activity
 # =========================================================
 # CREATE VENDOR
 # =========================================================
-class VendorCreateAPIView(APIView):
+class VendorCreateAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("vendor.manage",)
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
@@ -97,7 +99,8 @@ class VendorCreateAPIView(APIView):
 # =========================================================
 # VENDOR LIST
 # =========================================================
-class VendorListAPIView(APIView):
+class VendorListAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("vendor.manage", "expense.manage")
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -161,7 +164,8 @@ class VendorListAPIView(APIView):
 # =========================================================
 # VENDOR DETAIL
 # =========================================================
-class VendorDetailAPIView(APIView):
+class VendorDetailAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("vendor.manage", "expense.manage")
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -225,7 +229,8 @@ class VendorDetailAPIView(APIView):
 # =========================================================
 # UPDATE VENDOR
 # =========================================================
-class VendorUpdateAPIView(APIView):
+class VendorUpdateAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("vendor.manage",)
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
@@ -342,7 +347,8 @@ class VendorUpdateAPIView(APIView):
 # =========================================================
 # DEACTIVATE VENDOR / SOFT DELETE
 # =========================================================
-class VendorDeactivateAPIView(APIView):
+class VendorDeactivateAPIView(RequiredPermsMixin, APIView):
+    required_perms = ("vendor.manage",)
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic

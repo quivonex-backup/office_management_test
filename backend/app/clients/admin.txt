@@ -441,3 +441,13 @@ KEY NOTES FOR FRONTEND / UI DESIGNER
     to create a project with a client from another org, the project
     endpoint returns "Selected client does not belong to this organization."
     (See /projects/ admin doc.)
+
+
+================================================================================
+SECTION — CLIENT ACCESS (batch 4)
+================================================================================
+Missing code -> 403 {"status": false, "message": "You do not have permission to perform this action."}
+The organization owner has every code. Codes come from the caller's access role.
+  create|update|deactivate/      client.manage
+  list|detail/                   client.manage | project.manage | payment.manage
+                                 (project and payment forms need the client dropdown)

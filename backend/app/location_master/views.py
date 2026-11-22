@@ -4,6 +4,7 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from common.permissions import SuperAdminOnlyMixin
 
 from .models import StateMaster, DistrictMaster, TalukaMaster
 from .serializers import (
@@ -20,7 +21,7 @@ from app.audit.services import log_activity
 # =========================================================
 # STATE CREATE
 # =========================================================
-class StateCreateAPIView(APIView):
+class StateCreateAPIView(SuperAdminOnlyMixin, APIView):
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
@@ -56,7 +57,7 @@ class StateCreateAPIView(APIView):
 # =========================================================
 # STATE DEACTIVATE
 # =========================================================
-class StateDeactivateAPIView(APIView):
+class StateDeactivateAPIView(SuperAdminOnlyMixin, APIView):
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
@@ -123,7 +124,7 @@ class StateListAPIView(APIView):
 # =========================================================
 # DISTRICT CREATE
 # =========================================================
-class DistrictCreateAPIView(APIView):
+class DistrictCreateAPIView(SuperAdminOnlyMixin, APIView):
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
@@ -158,7 +159,7 @@ class DistrictCreateAPIView(APIView):
 # =========================================================
 # DISTRICT DEACTIVATE
 # =========================================================
-class DistrictDeactivateAPIView(APIView):
+class DistrictDeactivateAPIView(SuperAdminOnlyMixin, APIView):
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
@@ -225,7 +226,7 @@ class DistrictListAPIView(APIView):
 # =========================================================
 # TALUKA CREATE
 # =========================================================
-class TalukaCreateAPIView(APIView):
+class TalukaCreateAPIView(SuperAdminOnlyMixin, APIView):
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
@@ -260,7 +261,7 @@ class TalukaCreateAPIView(APIView):
 # =========================================================
 # TALUKA DEACTIVATE
 # =========================================================
-class TalukaDeactivateAPIView(APIView):
+class TalukaDeactivateAPIView(SuperAdminOnlyMixin, APIView):
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic

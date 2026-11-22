@@ -38,22 +38,22 @@ from .views import (
 # ---------------------------------------------------------------------------
 urlpatterns = [
     # Project CRUD
-    path("create/", ProjectCreateAPIView.as_view(), name="project-create"),                                                              #A
-    path("list/", ProjectListAPIView.as_view(), name="project-list"),                                                                    #A
-    path("detail/", ProjectDetailAPIView.as_view(), name="project-detail"),                                                              #A
-    path("update/", ProjectUpdateAPIView.as_view(), name="project-update"),                                                              #A
-    path("deactivate/", ProjectDeactivateAPIView.as_view(), name="project-deactivate"),                                                  #A
+    path("create/", ProjectCreateAPIView.as_view(), name="project-create"),                                                              #A  perm: project.manage
+    path("list/", ProjectListAPIView.as_view(), name="project-list"),                                                                    #A  perm: project.manage, payment.manage (any)
+    path("detail/", ProjectDetailAPIView.as_view(), name="project-detail"),                                                              #A  perm: project.manage, payment.manage (any)
+    path("update/", ProjectUpdateAPIView.as_view(), name="project-update"),                                                              #A  perm: project.manage
+    path("deactivate/", ProjectDeactivateAPIView.as_view(), name="project-deactivate"),                                                  #A  perm: project.manage
 
     # Team Allocation
-    path("team-allocation/create/", ProjectTeamAllocationCreateAPIView.as_view(), name="project-team-allocation-create"),                #A
-    path("team-allocation/list/", ProjectTeamAllocationListAPIView.as_view(), name="project-team-allocation-list"),                      #A
-    path("team-allocation/detail/", ProjectTeamAllocationDetailAPIView.as_view(), name="project-team-allocation-detail"),                #A
-    path("team-allocation/update/", ProjectTeamAllocationUpdateAPIView.as_view(), name="project-team-allocation-update"),                #A
-    path("team-allocation/deactivate/", ProjectTeamAllocationDeactivateAPIView.as_view(), name="project-team-allocation-deactivate"),    #A
-    path("team-allocation/project-team/", ProjectTeamAPIView.as_view(), name="project-team"),                                            #A
-    path("team-allocation/employee-projects/", EmployeeProjectsAPIView.as_view(), name="employee-projects"),                             #A
+    path("team-allocation/create/", ProjectTeamAllocationCreateAPIView.as_view(), name="project-team-allocation-create"),                #A  perm: project.manage
+    path("team-allocation/list/", ProjectTeamAllocationListAPIView.as_view(), name="project-team-allocation-list"),                      #A  perm: project.manage
+    path("team-allocation/detail/", ProjectTeamAllocationDetailAPIView.as_view(), name="project-team-allocation-detail"),                #A  perm: project.manage
+    path("team-allocation/update/", ProjectTeamAllocationUpdateAPIView.as_view(), name="project-team-allocation-update"),                #A  perm: project.manage
+    path("team-allocation/deactivate/", ProjectTeamAllocationDeactivateAPIView.as_view(), name="project-team-allocation-deactivate"),    #A  perm: project.manage
+    path("team-allocation/project-team/", ProjectTeamAPIView.as_view(), name="project-team"),                                            #A  perm: project.manage
+    path("team-allocation/employee-projects/", EmployeeProjectsAPIView.as_view(), name="employee-projects"),                             #A  perm: project.manage
 
-    path("team-allocation/assign-head/", ProjectHeadAssignAPIView.as_view(), name="project-head-assign"),                                #A
+    path("team-allocation/assign-head/", ProjectHeadAssignAPIView.as_view(), name="project-head-assign"),                                #A  perm: project.manage
 
     # Employee self-service
     path("my-projects/", MyProjectsAPIView.as_view(), name="project-my-projects"),                                                       #E

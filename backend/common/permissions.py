@@ -235,3 +235,21 @@ def out_of_scope_denied():
         {"status": False, "message": "This record is outside your team."},
         status=status.HTTP_403_FORBIDDEN,
     )
+
+
+class SuperAdminOnlyMixin:
+    """Platform master data (location lists): super admin only (batch 4)."""
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        user = request.user
+        if not (user and user.is_authenticated and user.is_active and user.is_superuser):
+            raise _EarlyResponse(Response(
+                {"status": False, "message": "Only the super admin can change master data."},
+                status=status.HTTP_403_FORBIDDEN,
+            ))
+
+    def handle_exception(self, exc):
+        if isinstance(exc, _EarlyResponse):
+            return exc.response
+        return super().handle_exception(exc)

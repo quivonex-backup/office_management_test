@@ -1269,6 +1269,10 @@ def bulk_mark_absent(
     if from_date > to_date:
         raise ValueError("from_date cannot be after to_date.")
 
+    # Batch 4: today is still running (late check-ins, auto-absent task).
+    if to_date >= timezone.localdate():
+        raise ValueError("to_date must be yesterday or earlier.")
+
     if (to_date - from_date).days > MAX_DAYS:
         raise ValueError(
             f"Date range cannot exceed {MAX_DAYS} days."

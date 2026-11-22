@@ -1318,3 +1318,16 @@ KEY NOTES FOR FRONTEND / UI DESIGNER
     - Deactivate project → all list endpoints skip it
     - Deactivate allocation → removed from project-team response
     - Deactivate task → removed from /my-tasks/ for the employee
+
+
+================================================================================
+SECTION — PROJECT ACCESS (batch 4)
+================================================================================
+Missing code -> 403 {"status": false, "message": "You do not have permission to perform this action."}
+The organization owner has every code. Codes come from the caller's access role.
+  create|update|deactivate/                      project.manage
+  list|detail/                                   project.manage | payment.manage
+  team-allocation/* (incl. project-team, employee-projects, assign-head)  project.manage
+  task/*            unchanged: project head / admin. A user with project.manage
+                    is ADMIN on every project of the organization (like the owner).
+  my-projects/, my-projects-as-head/, my-project-detail/, task/my-tasks/  unchanged (employees)

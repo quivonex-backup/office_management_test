@@ -15,3 +15,6 @@ SCREENS
 3. Vendor detail             detail/, deactivate/
 USED BY
   expenses (vendor dropdown) and recurring expenses.
+
+ACCESS (batch 4)
+  - Menu: vendor.manage. Vendor dropdown in expense forms: expense.manage.
