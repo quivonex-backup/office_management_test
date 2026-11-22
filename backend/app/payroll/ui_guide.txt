@@ -36,5 +36,10 @@ ACCESS (batch 2)
   - Runs: generate / recompute = payroll.generate; finalize and salary
     payments = payroll.finalize; view = payroll.view_all.
   - Never team-scoped. Employees use the my/* endpoints.
-COMING
-  Batch 3: annual CTC / monthly gross on assignments and offers.
+CTC (batch 3)
+  - Structure form: tick one earning as "Balancing (takes the rest)".
+    Use "% of gross" (percentage with no base) for Basic.
+  - Salary assignment form: Annual CTC or Monthly gross (one input + a
+    toggle). Show the live breakup from calculator/ (ctc_breakup) before saving.
+  - Settings: "CTC includes employer PF / ESI" switch.
+  - Revision = close old assignment, create a new one with the new package.

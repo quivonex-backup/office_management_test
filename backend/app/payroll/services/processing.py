@@ -639,9 +639,13 @@ def bulk_assign_salary(
     effective_to=None,
     reason=None,
     assigned_by=None,
+    annual_ctc=None,
+    monthly_gross=None,
 ):
     """
     Assign one salary structure to multiple employees, effective-dated.
+    Batch 3: optional agreed package (annual_ctc and/or monthly_gross); the
+    missing half is worked out from the structure.
 
     Validates:
       - employees belong to organization
@@ -728,6 +732,21 @@ def bulk_assign_salary(
                 f"Assignment date ranges cannot overlap."
             )
 
+    if annual_ctc is not None or monthly_gross is not None:
+        from .calculator import compute_ctc_breakup, monthly_gross_from_annual_ctc
+
+        for name, value in (("annual_ctc", annual_ctc), ("monthly_gross", monthly_gross)):
+            if value is not None and value <= 0:
+                raise ValueError(f"{name} must be greater than zero.")
+        if monthly_gross is None:
+            monthly_gross = monthly_gross_from_annual_ctc(
+                organization, structure, annual_ctc, as_of=effective_from,
+            )["monthly_gross"]
+        elif annual_ctc is None:
+            annual_ctc = compute_ctc_breakup(
+                organization, structure, monthly_gross, as_of=effective_from,
+            )["annual_ctc"]
+
     assignments = [
         EmployeeSalaryAssignment(
             organization=organization,
@@ -735,6 +754,8 @@ def bulk_assign_salary(
             salary_structure=structure,
             effective_from=effective_from,
             effective_to=effective_to,
+            annual_ctc=annual_ctc,
+            monthly_gross=monthly_gross,
             reason=reason or None,
             assigned_by=assigned_by,
         )

@@ -1,0 +1,207 @@
+================================================================================
+RECRUITMENT APP — ADMIN / HR API REFERENCE
+================================================================================
+
+Base URL   : /recruitment/
+Method     : All endpoints are POST
+Auth       : Bearer token
+Envelope   : { "status": true|false, "message": "...", "data": {...}?, "errors": {...}? }
+Org        : single-org users omit organization_id; multi-org users send it.
+Body type  : JSON. create/ and update/ also accept multipart (files); then send
+             lists / objects (education, experience, interviews) as JSON strings.
+
+WORKFLOW (one applicant row, three stages)
+  stage   APPLICANT -> VERIFICATION -> ONBOARDING -> COMPLETED      (CLOSED = rejected / withdrawn)
+  status  PENDING | SHORTLISTED | SELECTED | REJECTED | WITHDRAWN
+
+  APPLICANT     PENDING <-> SHORTLISTED ; -> SELECTED (moves to VERIFICATION)
+                -> REJECTED / WITHDRAWN (moves to CLOSED)
+  VERIFICATION  checklist + offer. Offer accepted + checklist done -> complete -> ONBOARDING
+  ONBOARDING    joining details + checklist -> convert -> COMPLETED (employee created)
+  CLOSED        can be reopened to PENDING (back to APPLICANT). Never convertible.
+  REJECTED / WITHDRAWN from VERIFICATION or ONBOARDING also revokes open offers.
+
+PERMISSIONS (access role codes; the organization owner has all)
+  applicant.view            list, detail
+  applicant.create          create
+  applicant.update          update
+  applicant.status_update   status-update
+  verification.update       verification (checks, offer, complete)
+  onboarding.complete       onboarding, convert
+  access.manage             needed to set access_role_id in onboarding
+  employee.create_user      needed for the login created on convert
+  Users with ONLY applicant.view (default: Department Manager) see applicants
+  assigned to them or where they are an interviewer, and can only record
+  result / rating / feedback on their own interviews.
+
+DETAIL OBJECT (returned by create, detail, update, status-update,
+verification, onboarding and convert)
+{
+  "applicant": {
+    "id": 7, "applicant_code": "APL-261122-04211", "full_name": "Rahul Patil",
+    "first_name": "Rahul", "middle_name": null, "last_name": "Patil",
+    "email": "rahul.patil@x.com", "mobile": "9876500001", "alternate_mobile": null,
+    "date_of_birth": null, "gender": null, "address": null, "city": null,
+    "state": {"id": 21, "name": "Maharashtra"} | null, "pincode": null,
+    "designation": {"id": 3, "name": "Python Developer"} | null, "position_title": null,
+    "department": {"id": 2, "name": "Engineering"} | null,
+    "branch": {"id": 1, "name": "Pune"} | null,
+    "source": "REFERRAL", "referred_by": {"id", "employee_code", "full_name"} | null,
+    "applied_on": "2026-11-22", "total_experience_years": "3.5",
+    "current_company": null, "current_designation": null, "current_ctc": null,
+    "expected_ctc": "700000.00", "notice_period_days": null, "skills": null,
+    "education":  [{"degree": "B.E.", "institution": "COEP", "year": 2021, "score": ""}],
+    "experience": [{"company": "Acme", "designation": "Dev", "from_date": "2021-07-01",
+                    "to_date": "2024-06-30", "ctc": null, "reason_for_leaving": ""}],
+    "remarks": null,
+    "stage": "VERIFICATION", "status": "SELECTED",
+    "assigned_to": {"id": 4, "name": "Neha K"} | null,
+    "joining_date": "2026-12-10" | null,
+    "reports_to": {...} | null, "access_role": {"id", "name"} | null,
+    "onboarding_data": {"pan_number": "ABCDE1234F", ...},
+    "employee": 15 | null, "converted_at": null, "created_at": "...", "updated_at": "..."
+  },
+  "documents":   [{"id", "document_type", "title", "file", "created_at"}],
+  "interviews":  [{"id", "round_name", "scheduled_at", "mode", "interviewer": {...} | null,
+                   "result", "rating", "feedback", "updated_at"}],
+  "current_offer": {offer} | null,
+  "offers":      [{offer}, ...]            newest first, includes superseded versions
+  "verification_checks": [{"key", "label", "status", "is_system", "note", "updated_at"}],
+  "onboarding_checks":   [ same shape ],
+  "history":     [{"id", "action", "from_stage", "to_stage", "from_status", "to_status",
+                   "note", "changed_by": {"id", "name"}, "created_at"}],
+  "employee":    {"id", "employee_code"} | null,
+  "primary_action": "verification",        one main button for the current stage
+  "allowed_actions": ["update", "status_update", "verification", "offer"]
+}
+offer = {"id", "version", "status", "designation", "department", "branch",
+         "joining_date", "salary_structure": {"id", "name"}, "annual_ctc",
+         "monthly_gross", "breakup": {ctc_breakup, see payroll/admin.txt},
+         "notes", "created_at", "sent_at", "responded_at"}
+
+primary_action by stage: APPLICANT status_update | VERIFICATION verification |
+ONBOARDING convert | COMPLETED view_employee | CLOSED status_update
+(falls back to the first allowed action when the user lacks the code).
+
+--------------------------------------------------------------------------------
+1. POST /recruitment/applicant/create/            applicant.create
+--------------------------------------------------------------------------------
+Required: first_name, last_name, email, mobile
+Optional: middle_name, alternate_mobile, date_of_birth, gender (MALE|FEMALE|OTHER),
+  address, city, state_id, pincode,
+  designation_id, position_title (free text), department_id, branch_id,
+  source (JOB_PORTAL|REFERRAL|WEBSITE|WALK_IN|CAMPUS|AGENCY|SOCIAL|OTHER),
+  referred_by_id (employee), assigned_to_id (organization user), applied_on (default today),
+  total_experience_years, current_company, current_designation, current_ctc,
+  expected_ctc, notice_period_days, skills, remarks,
+  education [ {degree, institution?, year?, score?} ],
+  experience [ {company, designation?, from_date?, to_date?, ctc?, reason_for_leaving?} ]
+Files (multipart): resume (stored as RESUME), documents[] + document_types[]
+  (RESUME|ID_PROOF|ADDRESS_PROOF|EDUCATION|EXPERIENCE|PAYSLIP|PHOTO|OFFER_LETTER|OTHER)
+201 -> detail object. 400 duplicate: "An open applicant with this email or mobile
+already exists (APL-...)." or "An active employee with this email or mobile already exists (EMP-...)."
+
+--------------------------------------------------------------------------------
+2. POST /recruitment/applicant/list/              applicant.view
+--------------------------------------------------------------------------------
+Filters (all optional): search (code, name, email, mobile, position, skills),
+  stage, status, source, designation_id, department_id, branch_id,
+  assigned_to_id, assigned_to_me (true), applied_from, applied_to (YYYY-MM-DD)
+200 { "data": [ {id, applicant_code, full_name, email, mobile, designation, position_title,
+                 department, branch, source, applied_on, total_experience_years,
+                 expected_ctc, stage, status, assigned_to, joining_date, employee, created_at} ],
+      "summary": {"total": 42,
+                  "by_stage":  {"APPLICANT": 25, "VERIFICATION": 5, "ONBOARDING": 2, "COMPLETED": 8, "CLOSED": 2},
+                  "by_status": {"PENDING": 12, "SHORTLISTED": 10, "SELECTED": 15, "REJECTED": 4, "WITHDRAWN": 1}} }
+summary counts follow "search" but not the other filters (tiles stay stable).
+
+--------------------------------------------------------------------------------
+3. POST /recruitment/applicant/detail/            applicant.view
+--------------------------------------------------------------------------------
+{ "applicant_id": 7 }  -> detail object. 404 when not visible to the caller.
+
+--------------------------------------------------------------------------------
+4. POST /recruitment/applicant/update/            applicant.update
+--------------------------------------------------------------------------------
+{ "applicant_id": 7, ...only the fields that change (same names as create),
+  "interviews": [ {"id"?: 3, "round_name", "scheduled_at", "mode": IN_PERSON|PHONE|VIDEO,
+                   "interviewer_id", "result": SCHEDULED|PASSED|FAILED|ON_HOLD|NO_SHOW|CANCELLED,
+                   "rating": 1-5, "feedback"} ],     id = update, no id = add
+  "remove_interview_ids": [..], "remove_document_ids": [..] }  + files as in create
+Interviewer with only applicant.view: send just
+  { "applicant_id", "interviews": [ {"id", "result", "rating", "feedback"} ] }
+  (other fields ignored; another person's interview -> 403).
+Converted (COMPLETED) applicants cannot be edited -> 400.
+
+--------------------------------------------------------------------------------
+5. POST /recruitment/applicant/status-update/     applicant.status_update
+--------------------------------------------------------------------------------
+{ "applicant_id": 7, "status": "SHORTLISTED" | "SELECTED" | "REJECTED" | "WITHDRAWN" | "PENDING", "note"? }
+SELECTED creates the verification checklist. Not allowed move -> 400
+"Cannot change status from X to Y while the applicant is in STAGE."
+
+--------------------------------------------------------------------------------
+6. POST /recruitment/applicant/verification/      verification.update
+--------------------------------------------------------------------------------
+Every part is optional; they run in this order: offer, offer_action, checks, complete.
+{
+  "applicant_id": 7,
+  "offer": { "salary_structure_id": 2, "joining_date": "2026-12-10",
+             "annual_ctc": "700000" | "monthly_gross": "52000",
+             "designation_id"?, "department_id"?, "branch_id"?, "notes"? },
+  "offer_action": "SEND" | "ACCEPT" | "DECLINE" | "REVOKE", "offer_note"?,
+  "checks": [ {"key": "IDENTITY", "status": "DONE"|"PENDING"|"REJECTED"|"WAIVED", "note"?},
+              {"key": "POLICE", "label": "Police verification", "status": "DONE"} ],   new key + label = extra line
+  "complete": true
+}
+Checklist: PERSONAL_DETAILS, IDENTITY, EDUCATION, EXPERIENCE (manual),
+           SALARY_OFFER, OFFER_ACCEPTANCE (automatic: is_system = true, cannot be set by hand).
+Offer rules:
+  - offer terms never change; sending "offer" again creates version n+1 and marks
+    the open one SUPERSEDED. The breakup snapshot is taken from the payroll calculator.
+  - send annual_ctc or monthly_gross; the other is worked out (payroll/admin.txt CTC).
+  - DRAFT -> SENT -> ACCEPTED | DECLINED ; DRAFT/SENT -> REVOKED.
+complete: needs the current offer ACCEPTED and every check DONE or WAIVED; moves to
+ONBOARDING, copies joining date / designation / department / branch from the offer and
+creates the onboarding checklist. Otherwise 400 "Verification is not complete: Identity documents, ..."
+
+--------------------------------------------------------------------------------
+7. POST /recruitment/applicant/onboarding/        onboarding.complete
+--------------------------------------------------------------------------------
+{
+  "applicant_id": 7,
+  "joining_date"?: "2026-12-10",
+  "designation_id"?, "department_id"?, "branch_id"?, "reports_to_id"?,
+  "access_role_id"?        (needs access.manage),
+  "onboarding_data"?: { "work_state_id", "district", "taluka", "pan_number", "pf_uan",
+                        "esi_ip_number", "tax_regime", "bank_account_number", "bank_ifsc",
+                        "bank_name", "bank_branch", "upi_id", "emergency_contact_name",
+                        "emergency_contact_number", "emergency_contact_relation" }   merged, unknown keys -> 400
+  "checks"?: [ {"key": "JOINING_CONFIRMED"|"EMPLOYEE_DETAILS"|"DOCUMENTS", "status", "note"} ]
+}
+Checklist: JOINING_CONFIRMED, EMPLOYEE_DETAILS, DOCUMENTS (manual),
+           SALARY_ASSIGNMENT, ACCOUNT_CREATION (set by convert).
+
+--------------------------------------------------------------------------------
+8. POST /recruitment/applicant/convert/           onboarding.complete
+--------------------------------------------------------------------------------
+{ "applicant_id": 7, "create_user"?: true|false }
+create_user default: true when the caller has employee.create_user, else false.
+One transaction:
+  1. Employee (EMP-xxxxxx) from the applicant + onboarding details, ACTIVE,
+     joining_date, branch / department / designation / manager / access role;
+     documents copied to employee documents.
+  2. Salary assignment from the ACCEPTED offer (structure, annual_ctc, monthly_gross),
+     effective_from = start of the payroll cycle that contains the joining date.
+     Days before joining are unpaid through attendance (not_employed_days).
+  3. Login (username = employee code, role Employee, membership); credentials email
+     is sent after commit.
+  4. Leave balances for the joining year (every active leave type, full allocation).
+  5. Applicant -> COMPLETED, history CONVERTED.
+Needs: stage ONBOARDING + status SELECTED, accepted offer, joining date, manual
+onboarding checks DONE/WAIVED, payroll settings configured.
+201 data = detail object + "salary_assignment": {id, effective_from, annual_ctc,
+monthly_gross, salary_structure_id} + "user_account": {user_id, username, email} | null
+Errors 400: "Onboarding is not complete: ...", "The applicant has no accepted offer.",
+"This applicant is already an employee.", "Payroll settings are not configured; ...",
+user errors (email / mobile already used) under errors.

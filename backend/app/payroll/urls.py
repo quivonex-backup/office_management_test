@@ -110,9 +110,9 @@ urlpatterns = [
     # ORG ADMIN — SALARY ASSIGNMENTS
     # =========================================================
     path("assignments/list/", SalaryAssignmentListAPIView.as_view()),                      #A  perm: salary.assign, payroll.view_all (any)
-    path("assignments/create/", SalaryAssignmentCreateAPIView.as_view()),                  #A  perm: salary.assign
-    path("assignments/update/", SalaryAssignmentUpdateAPIView.as_view()),                  #A  perm: salary.assign
-    path("assignments/bulk-assign/", SalaryAssignmentBulkAssignAPIView.as_view()),         #A  perm: salary.assign
+    path("assignments/create/", SalaryAssignmentCreateAPIView.as_view()),                  #A  perm: salary.assign  + annual_ctc / monthly_gross
+    path("assignments/update/", SalaryAssignmentUpdateAPIView.as_view()),                  #A  perm: salary.assign  + annual_ctc / monthly_gross
+    path("assignments/bulk-assign/", SalaryAssignmentBulkAssignAPIView.as_view()),         #A  perm: salary.assign  + annual_ctc / monthly_gross
     path("assignments/bulk-close/", SalaryAssignmentBulkCloseAPIView.as_view()),           #A  perm: salary.assign
 
     # =========================================================
@@ -146,7 +146,7 @@ urlpatterns = [
     # =========================================================
     # ORG ADMIN — Payroll Calculator
     # =========================================================
-    path("calculator/", PayrollCalculatorAPIView.as_view()),                               #A  perm: salary.assign, payroll.generate (any)
+    path("calculator/", PayrollCalculatorAPIView.as_view()),                               #A  perm: salary.assign, payroll.generate (any)  + monthly_gross / annual_ctc -> ctc_breakup
 
     # =========================================================
     # EMPLOYEE

@@ -1,0 +1,52 @@
+================================================================================
+RECRUITMENT (applicants, verification, onboarding) — UI GUIDE (for the UI designer / frontend)
+================================================================================
+Who      : HR Manager / HR Executive (full flow), Department Manager (assigned
+           applicants + own interview feedback), owner (everything)
+Apps     : Web panel
+Details  : request/response fields are in admin.txt
+Tags     : urls.py marks each endpoint  #A admin side, perm: <code> = permission the caller needs.
+           Show the Applicants menu when my-profile data.permissions has applicant.view.
+
+SCREENS
+1. Applicants list           applicant/list/
+   - Tiles from "summary": Total, Selected, Pending, In verification, Onboarding.
+   - Search box + filters: stage, status, position, department, branch, "Assigned to me".
+   - Row: name, position, applied date, stage chip, status chip. "Add applicant"
+     button only with applicant.create.
+2. Add / edit applicant      applicant/create/, applicant/update/   (one form)
+   - Sections: Personal | Position (designation, department, branch, source,
+     referred by, assigned HR) | Experience & education (repeatable rows) |
+     Documents (resume + other files with a type).
+   - Send only changed fields on update.
+3. Applicant detail          applicant/detail/   ONE call fills the page
+   Header: name, code, position, stage stepper (Applicant > Verification > Onboarding),
+   status chip, ONE main button = primary_action; other allowed_actions in a three-dot menu.
+   Tabs:
+   a) Applicant      profile, documents, interviews (add / edit rows; interviewers
+                     see a "Record feedback" form on their own rows), history.
+                     Main button: Update status (status-update/).
+   b) Verification   checklist (system rows are read-only), offer card:
+                     structure + Annual CTC or Monthly gross + joining date ->
+                     "Create offer" (shows breakup), then Send / Accepted / Declined /
+                     Revoke; older versions listed as superseded.
+                     Main button: Complete verification (verification/ complete=true).
+   c) Onboarding     joining date, department, designation, branch, reports to,
+                     access role (only with access.manage), PAN / UAN / bank fields,
+                     checklist. Main button: Confirm joining (convert/).
+   After convert the main button is "View employee" (data.employee.id).
+
+PROCESS
+  Add applicant -> interviews -> Shortlisted -> Selected
+  -> Verification: tick documents, create offer, send, mark accepted, complete
+  -> Onboarding: confirm joining details, tick checklist, Confirm joining
+  -> Employee + salary assignment + login + leave balances are created together.
+
+RULES TO SHOW IN UI
+  - Show the server message on 400 (it names the missing checks).
+  - Rejected / withdrawn applicants stay in the list (stage CLOSED); offer
+    "Reopen" (status PENDING) in the three-dot menu.
+  - Offers cannot be edited: "Revise offer" creates a new version.
+  - The salary assignment starts on the payroll cycle start; days before the
+    joining date are unpaid automatically. Explain this next to the joining date.
+  - Duplicate email / mobile is refused with the existing applicant / employee code.

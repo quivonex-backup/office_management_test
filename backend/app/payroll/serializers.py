@@ -73,6 +73,7 @@ class PayrollSettingsSerializer(serializers.ModelSerializer):
             "missing_attendance_action",
             "payslip_mode",
             "payroll_enabled",
+            "ctc_includes_employer_contributions",
             "created_by",
             "updated_by",
             "created_at",
@@ -362,6 +363,7 @@ class SalaryStructureComponentSerializer(serializers.ModelSerializer):
             "component_role",
             "amount",
             "percentage",
+            "is_balancing",
             "created_at",
             "updated_at",
         ]
@@ -499,6 +501,9 @@ class SalaryStructureComponentInputSerializer(serializers.Serializer):
         required=False,
         allow_null=True,
     )
+    # Batch 3: the earning that takes "monthly gross minus the rest" when an
+    # assignment has an agreed gross. At most one per structure.
+    is_balancing = serializers.BooleanField(required=False, default=False)
 
     def validate(self, attrs):
         org = self.context.get("organization")
@@ -526,6 +531,22 @@ class SalaryStructureComponentInputSerializer(serializers.Serializer):
             raise serializers.ValidationError({
                 "salary_component": f"Component {comp_id} is inactive."
             })
+
+        if attrs.get("is_balancing"):
+            from .services.common import STATUTORY_COMPONENT_ROLES
+
+            if (
+                component.component_type != "EARNING"
+                or component.component_role in STATUTORY_COMPONENT_ROLES
+            ):
+                raise serializers.ValidationError({
+                    "is_balancing": (
+                        "Only a non-statutory earning can be the balancing component."
+                    )
+                })
+            # Amount / percentage are optional: used only when the
+            # assignment has no agreed gross.
+            return attrs
 
         if component.calculation_type == "FIXED":
             if attrs.get("amount") is None:
@@ -581,6 +602,8 @@ class EmployeeSalaryAssignmentSerializer(serializers.ModelSerializer):
             "salary_structure_name",
             "effective_from",
             "effective_to",
+            "annual_ctc",
+            "monthly_gross",
             "reason",
             "assigned_by",
             "created_at",
@@ -714,7 +737,47 @@ class EmployeeSalaryAssignmentSerializer(serializers.ModelSerializer):
                         )
                     })
 
+        # Batch 3: agreed package. Send annual_ctc or monthly_gross (or both);
+        # the missing one is worked out from the structure.
+        attrs.update(_complete_package(
+            org, structure, effective_from,
+            attrs.get("annual_ctc", serializers.empty),
+            attrs.get("monthly_gross", serializers.empty),
+            self.instance,
+        ))
+
         return attrs
+
+
+def _complete_package(org, structure, as_of, annual_ctc, monthly_gross, instance=None):
+    """
+    Fill the missing half of (annual_ctc, monthly_gross). serializers.empty =
+    not sent. Returns only the keys to set. Raises ValidationError.
+    """
+    from .services import compute_ctc_breakup, monthly_gross_from_annual_ctc
+
+    sent_ctc = annual_ctc is not serializers.empty
+    sent_gross = monthly_gross is not serializers.empty
+    if not sent_ctc and not sent_gross:
+        return {}
+    for name, value in (("annual_ctc", annual_ctc), ("monthly_gross", monthly_gross)):
+        if value not in (serializers.empty, None) and value <= 0:
+            raise serializers.ValidationError({name: "Must be greater than zero."})
+
+    ctc = None if annual_ctc is serializers.empty else annual_ctc
+    gross = None if monthly_gross is serializers.empty else monthly_gross
+    if ctc is None and gross is None:  # both cleared
+        return {"annual_ctc": None, "monthly_gross": None}
+    if structure is None:
+        raise serializers.ValidationError({"salary_structure": "Required to work out the package."})
+    try:
+        if gross is None:
+            gross = monthly_gross_from_annual_ctc(org, structure, ctc, as_of=as_of)["monthly_gross"]
+        elif ctc is None:
+            ctc = compute_ctc_breakup(org, structure, gross, as_of=as_of)["annual_ctc"]
+    except ValueError as exc:
+        raise serializers.ValidationError({"annual_ctc": str(exc)})
+    return {"annual_ctc": ctc, "monthly_gross": gross}
 
 
 # =========================================================

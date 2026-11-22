@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     'app.leave',
     'app.payroll',
     'app.communications',
+    'app.recruitment',
 ]
 
 # Middleware

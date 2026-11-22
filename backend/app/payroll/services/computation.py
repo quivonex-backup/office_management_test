@@ -184,7 +184,20 @@ def _compute_lwf(statutory_settings, pf_eligible_earned, as_of_date):
 # COMPONENT RESOLUTION
 # =========================================================
 
-def _resolve_component_amounts(structure):
+def _load_structure_entries(structure):
+    return list(
+        structure.components.select_related(
+            "salary_component",
+            "salary_component__percentage_of_component",
+        ).all()
+    )
+
+
+def _is_gross_earning(comp):
+    return comp.component_type == "EARNING" and comp.component_role not in STATUTORY_COMPONENT_ROLES
+
+
+def _resolve_component_amounts(structure, monthly_gross=None, entries=None):
     """
     Return (resolved_dict, entries_list) for a salary structure.
 
@@ -193,51 +206,101 @@ def _resolve_component_amounts(structure):
     the referenced component's resolved amount. Multi-pass so chained
     percentage references resolve in a single call. Any unresolved
     percentage ends at zero (defensive; misconfig, not crash).
+
+    Batch 3, only when monthly_gross is given (assignment / offer package):
+      - a PERCENTAGE component without a base component is a % of monthly_gross;
+      - the entry marked is_balancing gets monthly_gross minus every other
+        gross earning (never below zero).
+    Without monthly_gross the result is exactly as before.
     """
-    entries = list(
-        structure.components.select_related(
-            "salary_component",
-            "salary_component__percentage_of_component",
-        ).all()
-    )
+    if entries is None:
+        entries = _load_structure_entries(structure)
+
+    use_gross = monthly_gross is not None
+    gross = q2(Decimal(str(monthly_gross))) if use_gross else None
+    balancing = [e for e in entries if use_gross and getattr(e, "is_balancing", False)]
+    balancing_codes = {e.salary_component.code for e in balancing}
 
     resolved = {}
 
     # Pass 1: fixed
     for entry in entries:
         comp = entry.salary_component
+        if comp.code in balancing_codes:
+            continue
         if comp.calculation_type == "FIXED":
             resolved[comp.code] = q2(entry.amount or ZERO)
 
-    # Passes 2..N: percentage (bounded by entries count)
-    for _ in range(len(entries)):
-        progress = False
-        for entry in entries:
-            comp = entry.salary_component
-            if comp.calculation_type != "PERCENTAGE":
-                continue
-            if comp.code in resolved:
-                continue
-            base_comp = comp.percentage_of_component
-            if base_comp is None:
-                resolved[comp.code] = ZERO
+    def percentage_passes():
+        for _ in range(len(entries)):
+            progress = False
+            for entry in entries:
+                comp = entry.salary_component
+                if comp.calculation_type != "PERCENTAGE":
+                    continue
+                if comp.code in resolved or comp.code in balancing_codes:
+                    continue
+                base_comp = comp.percentage_of_component
+                if base_comp is None:
+                    base_amount = gross if use_gross else None
+                    if base_amount is None:
+                        resolved[comp.code] = ZERO
+                        progress = True
+                        continue
+                else:
+                    base_amount = resolved.get(base_comp.code)
+                    if base_amount is None:
+                        continue
+                resolved[comp.code] = q2(
+                    base_amount * (entry.percentage or ZERO) / HUNDRED
+                )
                 progress = True
-                continue
-            base_amount = resolved.get(base_comp.code)
-            if base_amount is None:
-                continue
-            resolved[comp.code] = q2(
-                base_amount * (entry.percentage or ZERO) / HUNDRED
-            )
-            progress = True
-        if not progress:
-            break
+            if not progress:
+                break
+
+    # Passes 2..N: percentage (bounded by entries count)
+    percentage_passes()
+
+    # Balancing earning: monthly gross minus every other gross earning.
+    for entry in balancing:
+        comp = entry.salary_component
+        others = sum(
+            (resolved.get(e.salary_component.code, ZERO) for e in entries
+             if _is_gross_earning(e.salary_component) and e.salary_component.code not in balancing_codes),
+            ZERO,
+        )
+        resolved[comp.code] = q2(max(gross - others, ZERO))
+    if balancing:
+        percentage_passes()  # components based on the balancing one (unusual)
 
     for entry in entries:
         comp = entry.salary_component
         resolved.setdefault(comp.code, ZERO)
 
     return resolved, entries
+
+
+def gross_package_warning(structure, monthly_gross, component_amounts, entries):
+    """
+    Batch 3: warning text when the structure cannot reproduce the agreed
+    monthly gross (no balancing earning, or fixed parts larger than the gross).
+    None when it matches (to the rupee) or when no gross was agreed.
+    """
+    if monthly_gross is None:
+        return None
+    total = q2(sum(
+        (component_amounts.get(e.salary_component.code, ZERO) for e in entries
+         if _is_gross_earning(e.salary_component)),
+        ZERO,
+    ))
+    agreed = q2(Decimal(str(monthly_gross)))
+    if abs(total - agreed) <= ONE:
+        return None
+    return (
+        f"Salary structure '{structure.name}' gives a monthly gross of {total} "
+        f"but the agreed monthly gross is {agreed}. Mark one earning as the "
+        f"balancing component, or adjust the fixed amounts."
+    )
 
 
 # =========================================================
@@ -345,7 +408,15 @@ def compute_payslip_data(employee, organization, period_start, period_end):
         not_employed_equiv = ZERO
 
     # ---- Component amounts ----
-    component_amounts, entries = _resolve_component_amounts(structure)
+    # Batch 3: an assignment with an agreed monthly gross drives the amounts.
+    component_amounts, entries = _resolve_component_amounts(
+        structure, monthly_gross=assignment.monthly_gross,
+    )
+    package_warning = gross_package_warning(
+        structure, assignment.monthly_gross, component_amounts, entries,
+    )
+    if package_warning:
+        warnings.append(package_warning)
 
     # ---- Full gross (non-statutory earnings only) ----
     full_gross = ZERO

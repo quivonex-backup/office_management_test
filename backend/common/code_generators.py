@@ -94,3 +94,17 @@ def generate_reimbursement_code():
         ).exists():
             return code
 
+
+
+# Used for applicant_code generation (recruitment)
+def generate_applicant_code():
+    from app.recruitment.models import Applicant
+
+    date_part = timezone.now().strftime("%y%m%d")
+
+    while True:
+        random_part = f"{random.randint(0, 99999):05d}"
+        code = f"APL-{date_part}-{random_part}"
+
+        if not Applicant.objects.filter(applicant_code=code).exists():
+            return code

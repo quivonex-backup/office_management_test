@@ -2218,3 +2218,60 @@ Endpoints (caller needs ANY of the listed codes)
 
 Default roles: Payroll Manager has every payroll code; HR Manager has
 salary.assign only (structures, assignments, calculator; no runs).
+
+
+================================================================================
+SECTION — CTC / AGREED PACKAGE (batch 3)
+================================================================================
+
+Pay is never tied to designation / department. Each salary assignment (and
+each offer) can carry the agreed package; the structure is then a template.
+
+New fields
+  PayrollSettings.ctc_includes_employer_contributions   bool, default true
+      true : annual CTC = 12 x (monthly gross + employer PF + EDLI + ESI employer + LWF employer)
+      false: annual CTC = 12 x monthly gross
+      Employer PF is the PF_EMPLOYER rate (12 %, it already contains the EPS
+      split, so EPS is not added again). Employer costs count only in FULL
+      payslip mode with the scheme enabled in statutory settings.
+  SalaryStructureComponent.is_balancing                 bool (one per structure)
+      This earning receives "monthly gross minus every other earning".
+  EmployeeSalaryAssignment.annual_ctc, monthly_gross    decimals, optional
+
+How a structure works with a monthly gross
+  - PERCENTAGE component with no base component  -> % of monthly gross
+  - PERCENTAGE of another component              -> as before
+  - FIXED                                        -> as before
+  - balancing earning                            -> the rest
+  Example "Developer": Basic 50 % (of gross), HRA 40 % of Basic,
+  Conveyance 1600 fixed, Special = balancing.
+  Gross 50,000 -> Basic 25,000, HRA 10,000, Conveyance 1,600, Special 13,400.
+  Assignments WITHOUT annual_ctc / monthly_gross work exactly as before.
+  If the structure cannot reach the agreed gross (no balancing earning,
+  fixed parts too large) the payroll record gets a review warning.
+
+--------------------------------------------------------------------------------
+Changed endpoints (fields added only)
+--------------------------------------------------------------------------------
+POST /payroll/settings/                 + "ctc_includes_employer_contributions"
+POST /payroll/structures/create|update/ components[] items + "is_balancing": true|false
+     - only a non-statutory EARNING can be balancing; amount / percentage optional for it
+     - more than one balancing -> 400 "Only one component can be the balancing component."
+     structure detail rows return "is_balancing".
+POST /payroll/assignments/create|update/ + "annual_ctc" and/or "monthly_gross"
+     Send one; the other is worked out from the structure (as of effective_from).
+     Send both to store both as given. Response rows include both.
+POST /payroll/assignments/bulk-assign/  + optional "annual_ctc" / "monthly_gross"
+     (same package for every selected employee)
+POST /payroll/calculator/               + optional "monthly_gross" or "annual_ctc"
+     data + "ctc_breakup":
+     {
+       "monthly_gross": "50000.00", "annual_gross": "600000.00",
+       "earnings": [{"code": "BASIC", "name": "Basic", "monthly": "25000.00", "annual": "300000.00"}, ...],
+       "employer_contributions": {"pf_employer": "1800.00", "edli": "75.00",
+                                  "esi_employer": "0.00", "lwf_employer": "0.00", "total": "1875.00"},
+       "ctc_includes_employer_contributions": true,
+       "monthly_ctc": "51875.00", "annual_ctc": "622500.00"
+     }
+     With annual_ctc the gross is solved back (to the paisa). Near the ESI
+     ceiling an exact match can be impossible; the offer stores the closest.

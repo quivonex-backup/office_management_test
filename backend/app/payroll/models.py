@@ -67,6 +67,10 @@ class PayrollSettings(models.Model):
 
     payroll_enabled = models.BooleanField(default=True)
 
+    # CTC rule (batch 3): annual CTC = 12 x (monthly gross + employer PF,
+    # EDLI, ESI, LWF) when True; 12 x monthly gross when False.
+    ctc_includes_employer_contributions = models.BooleanField(default=True)
+
     # Audit
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="payroll_settings_created")
     updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="payroll_settings_updated")
@@ -247,6 +251,10 @@ class SalaryStructureComponent(models.Model):
     amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     percentage = models.DecimalField(max_digits=6, decimal_places=4, null=True, blank=True)
 
+    # Batch 3: when the assignment carries a monthly gross, this earning
+    # receives "monthly gross minus every other earning" (one per structure).
+    is_balancing = models.BooleanField(default=False)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -270,6 +278,10 @@ class EmployeeSalaryAssignment(models.Model):
 
     effective_from = models.DateField()
     effective_to = models.DateField(null=True, blank=True)
+
+    # Batch 3: agreed package. Empty = amounts come from the structure as before.
+    annual_ctc = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    monthly_gross = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
 
     reason = models.TextField(blank=True, null=True)
 

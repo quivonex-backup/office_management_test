@@ -699,6 +699,9 @@ class SalaryStructureCreateAPIView(PayrollBaseAPIView):
                 )
             seen.add(cid)
 
+        if sum(1 for e in comp_serializer.validated_data if e.get("is_balancing")) > 1:
+            return self.failure("Only one component can be the balancing component.")
+
         structure = struct_serializer.save(
             organization=organization,
             created_by=request.user,
@@ -711,6 +714,7 @@ class SalaryStructureCreateAPIView(PayrollBaseAPIView):
                 salary_component_id=comp_data["salary_component"],
                 amount=comp_data.get("amount"),
                 percentage=comp_data.get("percentage"),
+                is_balancing=comp_data.get("is_balancing", False),
             )
 
         self.audit(
@@ -837,6 +841,9 @@ class SalaryStructureUpdateAPIView(PayrollBaseAPIView):
                     )
                 seen.add(cid)
 
+            if sum(1 for e in comp_serializer.validated_data if e.get("is_balancing")) > 1:
+                return self.failure("Only one component can be the balancing component.")
+
         # ---- STEP 3: all validations passed — NOW save ----
         old_data = SalaryStructureSerializer(structure).data
 
@@ -850,6 +857,7 @@ class SalaryStructureUpdateAPIView(PayrollBaseAPIView):
                     salary_component_id=comp_data["salary_component"],
                     amount=comp_data.get("amount"),
                     percentage=comp_data.get("percentage"),
+                    is_balancing=comp_data.get("is_balancing", False),
                 )
 
         self.audit(
@@ -1128,11 +1136,19 @@ class SalaryAssignmentBulkAssignAPIView(PayrollBaseAPIView):
                 self.parse_date(effective_to_raw, "effective_to")
                 if effective_to_raw else None
             )
+
+            # Batch 3: one agreed package for every selected employee (optional).
+            raw_ctc = request.data.get("annual_ctc")
+            raw_gross = request.data.get("monthly_gross")
+            annual_ctc = self.parse_decimal(raw_ctc, "annual_ctc") if raw_ctc not in (None, "") else None
+            monthly_gross = self.parse_decimal(raw_gross, "monthly_gross") if raw_gross not in (None, "") else None
         except ValueError as exc:
             return self.failure(str(exc))
 
         try:
             created = bulk_assign_salary(
+                annual_ctc=annual_ctc,
+                monthly_gross=monthly_gross,
                 organization=organization,
                 employee_ids=employee_ids,
                 salary_structure_id=structure_id,
@@ -2254,7 +2270,6 @@ class MyPayslipDownloadAPIView(PayrollBaseAPIView):
 # =========================================================
 
 class PayrollCalculatorAPIView(PayrollBaseAPIView):
-    required_perms = ("salary.assign", "payroll.generate")
     """
     POST /api/payroll/calculator/
 
@@ -2275,7 +2290,12 @@ class PayrollCalculatorAPIView(PayrollBaseAPIView):
       working_days                      optional; default = present + half +
                                         absent + paid leave + unpaid leave
       overtime_hours                    optional number, default 0
+      monthly_gross | annual_ctc        optional (batch 3): use the structure
+                                        as a template for this package
+    Response data also has "ctc_breakup".
     """
+
+    required_perms = ("salary.assign", "payroll.generate")
 
     COUNT_KEYS = (
         "present_days",
@@ -2339,6 +2359,11 @@ class PayrollCalculatorAPIView(PayrollBaseAPIView):
 
             payslip_mode = str(data.get("payslip_mode") or "").strip().upper() or None
             salary_basis = str(data.get("salary_basis") or "").strip().upper() or None
+
+            raw_gross = data.get("monthly_gross")
+            raw_ctc = data.get("annual_ctc")
+            monthly_gross = self.parse_decimal(raw_gross, "monthly_gross") if raw_gross not in (None, "") else None
+            annual_ctc = self.parse_decimal(raw_ctc, "annual_ctc") if raw_ctc not in (None, "") else None
         except ValueError as exc:
             return self.failure(str(exc))
 
@@ -2353,6 +2378,8 @@ class PayrollCalculatorAPIView(PayrollBaseAPIView):
                 salary_structure=structure,
                 payslip_mode=payslip_mode,
                 salary_basis=salary_basis,
+                monthly_gross=monthly_gross,
+                annual_ctc=annual_ctc,
             )
         except ValueError as exc:
             return self.failure(str(exc))

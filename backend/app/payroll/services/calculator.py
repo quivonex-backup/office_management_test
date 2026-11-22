@@ -31,7 +31,9 @@ from .common import (
     validate_employee_for_payroll,
 )
 from .computation import (
+    _load_structure_entries,
     _resolve_component_amounts,
+    gross_package_warning,
     _compute_pf,
     _compute_esi,
     _compute_pt,
@@ -74,10 +76,17 @@ def simulate_payslip(
     salary_structure=None,
     payslip_mode=None,
     salary_basis=None,
+    monthly_gross=None,
+    annual_ctc=None,
 ):
     """
     counts_in: dict with any of COUNT_FIELDS (missing = 0) and optionally
     working_days (default: present + half + absent + paid leave + unpaid leave).
+
+    Batch 3: monthly_gross or annual_ctc (optional) drives the structure as a
+    template; without them the employee's assignment package is used when it
+    has one, otherwise the structure amounts as before. The result also has
+    "ctc_breakup".
 
     Raises ValueError with a readable message for bad input / configuration.
     """
@@ -121,6 +130,13 @@ def simulate_payslip(
                 f"covering {period_start} to {period_end}."
             )
         structure = assignment.salary_structure
+        if monthly_gross is None and annual_ctc is None:
+            monthly_gross = assignment.monthly_gross
+
+    if annual_ctc is not None and monthly_gross is None:
+        monthly_gross = monthly_gross_from_annual_ctc(
+            organization, structure, annual_ctc, as_of=period_end, settings=settings,
+        )["monthly_gross"]
 
     if settings.payslip_mode == "FULL" and employee is None:
         raise ValueError(
@@ -177,6 +193,7 @@ def simulate_payslip(
 
     result = _build_payslip(
         stand_in, organization, settings, structure, period_start, period_end,
+        monthly_gross=monthly_gross,
         counts=counts,
         overtime_minutes=overtime_minutes,
         warnings=warnings,
@@ -203,6 +220,9 @@ def simulate_payslip(
         "period_days": str(period_days),
     }
     data["structure"] = {"id": getattr(structure, "id", None), "name": getattr(structure, "name", "")}
+    data["ctc_breakup"] = _jsonable(compute_ctc_breakup(
+        organization, structure, monthly_gross, as_of=period_end, settings=settings,
+    ))
     return data
 
 
@@ -213,6 +233,7 @@ def simulate_payslip(
 def _build_payslip(
     employee, organization, settings, structure, period_start, period_end,
     *, counts, overtime_minutes, warnings, requires_review, sources, notes,
+    monthly_gross=None,
 ):
     """
     Everything after attendance is known: base days, loss of pay, overtime,
@@ -244,7 +265,10 @@ def _build_payslip(
         not_employed_equiv = ZERO
 
     # ---- Component amounts ----
-    component_amounts, entries = _resolve_component_amounts(structure)
+    component_amounts, entries = _resolve_component_amounts(structure, monthly_gross=monthly_gross)
+    package_warning = gross_package_warning(structure, monthly_gross, component_amounts, entries)
+    if package_warning:
+        warnings.append(package_warning)
 
     # ---- Full gross (non-statutory earnings only) ----
     full_gross = ZERO
@@ -595,3 +619,103 @@ def _build_payslip(
         "warnings": warnings,
         "breakdown": breakdown,
     }
+
+
+# =========================================================
+# CTC (batch 3)
+# =========================================================
+# Employer cost per month = PF employer (its 12 % already contains the EPS
+# split, so EPS is not added again) + EDLI + ESI employer + LWF employer,
+# computed on a full month (no loss of pay) and only in FULL payslip mode
+# with the schemes enabled in statutory settings.
+# annual CTC = 12 x (monthly gross + employer cost) when
+# PayrollSettings.ctc_includes_employer_contributions is True, else 12 x gross.
+
+def compute_ctc_breakup(organization, structure, monthly_gross=None, as_of=None, settings=None, entries=None):
+    """Monthly / annual package for a structure (optionally at a given gross)."""
+    from django.utils import timezone
+
+    if settings is None:
+        settings = PayrollSettings.objects.filter(organization=organization).first()
+        if settings is None:
+            raise ValueError("Payroll settings are not configured for this organization.")
+    as_of = as_of or timezone.localdate()
+    if entries is None:
+        entries = _load_structure_entries(structure)
+
+    amounts, entries = _resolve_component_amounts(structure, monthly_gross=monthly_gross, entries=entries)
+
+    earnings, pf_base, esi_base = [], ZERO, ZERO
+    for entry in entries:
+        comp = entry.salary_component
+        if comp.component_type != "EARNING" or comp.component_role in STATUTORY_COMPONENT_ROLES:
+            continue
+        amount = amounts.get(comp.code, ZERO)
+        earnings.append({"code": comp.code, "name": comp.name, "monthly": amount, "annual": q2(amount * 12)})
+        if comp.is_pf_eligible:
+            pf_base += amount
+        if comp.is_esi_eligible:
+            esi_base += amount
+    gross = q2(sum((e["monthly"] for e in earnings), ZERO))
+
+    employer = {"pf_employer": ZERO, "edli": ZERO, "esi_employer": ZERO, "lwf_employer": ZERO}
+    statutory = CompanyStatutorySettings.objects.filter(organization=organization).first()
+    if settings.payslip_mode == "FULL" and statutory is not None:
+        pf = _compute_pf(statutory, q2(pf_base), as_of)
+        esi = _compute_esi(statutory, q2(esi_base), as_of)
+        lwf = _compute_lwf(statutory, q2(pf_base), as_of)
+        employer = {
+            "pf_employer": pf["pf_employer"],
+            "edli": pf["edli"],
+            "esi_employer": esi["esi_employer"],
+            "lwf_employer": lwf["lwf_employer"],
+        }
+    employer_total = q2(sum(employer.values(), ZERO))
+    include = bool(getattr(settings, "ctc_includes_employer_contributions", True))
+    monthly_ctc = q2(gross + (employer_total if include else ZERO))
+
+    return {
+        "monthly_gross": gross,
+        "annual_gross": q2(gross * 12),
+        "earnings": earnings,
+        "employer_contributions": {**employer, "total": employer_total},
+        "ctc_includes_employer_contributions": include,
+        "monthly_ctc": monthly_ctc,
+        "annual_ctc": q2(monthly_ctc * 12),
+    }
+
+
+def monthly_gross_from_annual_ctc(organization, structure, annual_ctc, as_of=None, settings=None):
+    """
+    Monthly gross that gives `annual_ctc` with this structure (binary search
+    to the paisa; employer cost depends on the gross through PF/ESI bases).
+    Returns the breakup at that gross plus "difference" (annual) when an
+    exact match is impossible (e.g. around the ESI ceiling).
+    """
+    target = q2(Decimal(str(annual_ctc)))
+    if target <= ZERO:
+        raise ValueError("annual_ctc must be greater than zero.")
+    entries = _load_structure_entries(structure)
+
+    def ctc_at(gross):
+        return compute_ctc_breakup(organization, structure, gross, as_of=as_of, settings=settings, entries=entries)
+
+    low, high = ZERO, q2(target / 12)
+    best = ctc_at(high)
+    for _ in range(60):
+        mid = q2((low + high) / 2)
+        if mid in (low, high):
+            break
+        result = ctc_at(mid)
+        if result["annual_ctc"] > target:
+            high = mid
+        else:
+            low, best = mid, result
+    for candidate in (low, high):
+        result = ctc_at(candidate)
+        if abs(result["annual_ctc"] - target) < abs(best["annual_ctc"] - target):
+            best = result
+    best = dict(best)
+    best["requested_annual_ctc"] = target
+    best["difference"] = q2(best["annual_ctc"] - target)
+    return best

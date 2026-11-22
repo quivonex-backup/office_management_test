@@ -27,7 +27,7 @@ from .common import (
 
 from .computation import compute_payslip_data
 
-from .calculator import simulate_payslip
+from .calculator import simulate_payslip, compute_ctc_breakup, monthly_gross_from_annual_ctc
 
 from .processing import (
     generate_payroll,
@@ -69,6 +69,8 @@ __all__ = [
     # Payslip
     "compute_payslip_data",
     "simulate_payslip",
+    "compute_ctc_breakup",
+    "monthly_gross_from_annual_ctc",
     "generate_payslip_pdf",
     "download_payslip_response",
 
