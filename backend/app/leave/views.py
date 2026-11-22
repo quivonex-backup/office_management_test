@@ -14,6 +14,7 @@ from rest_framework.views import APIView
 from common.services import get_user_organization
 from common.permissions import (
     RequiredPermsMixin, resolve_scope, own_request_denied, out_of_scope_denied,
+    get_approver_users,
 )
 
 from app.employees.models import Employee
@@ -631,14 +632,18 @@ class LeaveApplicationCreateAPIView(LeaveBaseAPIView):
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-        # ---- Notify admin of leave application ----
-        admin_user = None
-        if organization.owner_id:
-            admin_user = organization.owner
+        # ---- Notify the people who can approve it (batch 4.2) ----
+        # Managers above the employee with leave.approve + leave.view_team,
+        # anyone with leave.approve + leave.view_all; the owner only when
+        # nobody else can approve.
+        approvers = get_approver_users(
+            organization, employee, "leave.approve",
+            team_code="leave.view_team", all_code="leave.view_all",
+        )
 
-        if admin_user:
+        if approvers:
             transaction.on_commit(lambda: notify(
-                users=admin_user,
+                users=approvers,
                 event_code="LEAVE_APPLICATION_SUBMITTED",
                 title="Leave application received",
                 body=(

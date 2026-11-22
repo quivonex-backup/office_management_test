@@ -25,6 +25,7 @@ from .serializers import (
 from common.services import get_user_organization, get_current_employee
 from common.permissions import (
     RequiredPermsMixin, has_any_perm, get_user_employee, permission_denied, own_request_denied,
+    get_approver_users,
 )
 
 REIMBURSEMENT_ADMIN_PERMS = ("reimbursement.review", "reimbursement.pay")
@@ -1210,14 +1211,12 @@ class EmployeeReimbursementCreateAPIView(APIView):
             },
         )
 
-        # ---- Notify admin of reimbursement submission ----
-        admin_user = None
-        if organization.owner_id:
-            admin_user = organization.owner
+        # ---- Notify the people who can approve it (batch 4.2) ----
+        approvers = get_approver_users(organization, employee, "reimbursement.review")
 
-        if admin_user:
+        if approvers:
             transaction.on_commit(lambda: notify(
-                users=admin_user,
+                users=approvers,
                 event_code="REIMBURSEMENT_SUBMITTED",
                 title="Reimbursement claim submitted",
                 body=(

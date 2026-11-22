@@ -145,10 +145,12 @@ def run():
     check("HR Manager (calendar.manage) passes on holidays/create", s != 403, s)
     s, _ = post(C["hr"], "calendar/weekly-offs/list/")
     check("HR Manager weekly-offs/list", s == 200, s)
-    s, b = post(C["owner"], "location_master/states/create/", {"state_name": "Test State"})
+    s, b = post(C["owner"], "location_master/states/create/", {"state_code": "ZQ", "state_name": "Batch4 Test State"})
     check("owner (not super admin) -> 403 on location_master/states/create", s == 403 and "super admin" in b.get("message", ""), (s, b))
-    s, _ = post(C["su"], "location_master/states/create/", {"state_name": "Test State"})
-    check("super admin passes on location_master/states/create", s != 403, s)
+    s, b = post(C["su"], "location_master/states/create/", {"state_code": "ZQ", "state_name": "Batch4 Test State"})
+    check("super admin can create a state", s in (200, 201), (s, b))
+    s, b = post(C["su"], "location_master/states/create/", {"state_name": "Batch4 No Code"})
+    check("state without state_code -> 400 (not 500)", s == 400, (s, b))
 
     # ================= bulk-mark-absent date rule
     AttendanceSettings.objects.update_or_create(organization=org, defaults={"auto_mark_absent": True})
@@ -206,6 +208,36 @@ def run():
         check("owner announcements/list", s == 200, s)
         s, _ = post(C["su"], "communications/announcements/list/", {"organization_id": org.id})
         check("super admin has no access to an organization's announcements", s in (403, 404), s)
+
+    # ================= notifications go to the people who can approve
+    from django.test import TestCase
+    from app.attendance.models import AttendanceRecord as _AR
+    from common.permissions import get_approver_users
+
+    mgr = employee("mgr", roles["Department Manager"])
+    mgr2 = employee("mgr2", roles["Department Manager"])
+    staff = employee("staff", reports_to=mgr)
+    C_staff = client_for(staff.user)
+    got = {u.id for u in get_approver_users(org, staff, "leave.approve", "leave.view_team", "leave.view_all")}
+    check("leave approvers = own manager + HR Manager (not other managers, not owner)",
+          got == {mgr.user_id, hr.user_id}, got)
+    got = {u.id for u in get_approver_users(org, staff, "reimbursement.review")}
+    check("reimbursement approvers = reimbursement.review holders", got == {hr.user_id}, got)
+    got = {u.id for u in get_approver_users(org, hr, "leave.approve", "leave.view_team", "leave.view_all")}
+    check("HR Manager's own leave never notifies HR themself (falls back to owner)", got == {owner.id}, got)
+    lonely_org = Organization.objects.create(organization_name="B4 Lonely", owner=user("lonely_owner", admin_role))
+    lonely = Employee.objects.create(organization=lonely_org, first_name="L", last_name="T", employee_code="B4-L")
+    got = [u.id for u in get_approver_users(lonely_org, lonely, "leave.approve", "leave.view_team", "leave.view_all")]
+    check("nobody can approve -> organization owner", got == [lonely_org.owner_id], got)
+
+    rec = _AR.objects.create(organization=org, employee=staff, work_date=today - timedelta(days=1), status="ABSENT")
+    with mock.patch("app.attendance.views.notify") as fake_notify:
+        with TestCase.captureOnCommitCallbacks(execute=True):
+            s, b = post(C_staff, "attendance/corrections/create/", {
+                "attendance": rec.id, "field_name": "STATUS", "new_value": "PRESENT", "reason": "Was at client site"})
+    sent = fake_notify.call_args.kwargs.get("users") if fake_notify.called else None
+    check("correction request notifies manager + HR, not the owner",
+          s == 201 and sent is not None and {u.id for u in sent} == {mgr.user_id, hr.user_id}, (s, b, sent))
 
     # ================= celery tasks (run inline)
     from app.attendance.tasks import auto_mark_absent_task, flag_stale_attendance_task

@@ -6,9 +6,25 @@ from .models import StateMaster, DistrictMaster, TalukaMaster
 # STATE CREATE SERIALIZER
 # =========================================================
 class StateCreateSerializer(serializers.ModelSerializer):
+    # The live database has state_code NOT NULL + UNIQUE (the model says
+    # optional). Require it here so a missing code is a 400, not a 500.
+    state_code = serializers.CharField(max_length=5)
+
     class Meta:
         model = StateMaster
         fields = ['state_code', 'state_name']
+
+    def validate_state_code(self, value):
+        value = value.strip().upper()
+        if StateMaster.objects.filter(state_code__iexact=value).exists():
+            raise serializers.ValidationError("A state with this code already exists.")
+        return value
+
+    def validate_state_name(self, value):
+        value = value.strip()
+        if StateMaster.objects.filter(state_name__iexact=value).exists():
+            raise serializers.ValidationError("A state with this name already exists.")
+        return value
 
 
 # =========================================================

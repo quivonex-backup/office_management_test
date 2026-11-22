@@ -633,3 +633,12 @@ SECTION — BATCH 4 CHANGES
                              checks in on an auto-absent day.
   flag_stale_attendance_task open sessions past scheduled end + 4 h (or check-in
                              + 18 h) -> PENDING_REVIEW, overtime cleared.
+
+================================================================================
+SECTION — WHO IS NOTIFIED (batch 4.2)
+================================================================================
+New requests notify the people who can act on them, not only the owner:
+  correction requests: attendance.approve_correction holders whose scope includes
+  the employee (managers above them with attendance.view_team, attendance.view_all holders).
+The requester is never notified about their own request. If nobody qualifies,
+the organization owner is notified.

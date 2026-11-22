@@ -253,3 +253,56 @@ class SuperAdminOnlyMixin:
         if isinstance(exc, _EarlyResponse):
             return exc.response
         return super().handle_exception(exc)
+
+
+# =========================================================
+# APPROVER RECIPIENTS (notifications)
+# =========================================================
+def get_approver_users(organization, employee, approve_code, team_code=None, all_code=None):
+    """
+    Users who can act on `employee`'s request (same rule as the review
+    endpoints), for notifications:
+      - access role has approve_code, and
+      - all_code is None (no scope, e.g. reimbursements), or the role has
+        all_code, or the role has team_code and the person is above
+        `employee` on the reporting line (any level).
+    The employee themself is never included. If nobody qualifies, the
+    organization owner is returned so a request never goes unnoticed.
+    """
+    from app.employees.models import Employee
+
+    managers, current, hops = set(), employee.reports_to, 0
+    while current is not None and hops < 1000 and current.id not in managers:
+        managers.add(current.id)
+        current = current.reports_to
+        hops += 1
+
+    candidates = (
+        Employee.objects.filter(
+            organization=organization,
+            is_active=True,
+            user__isnull=False,
+            user__is_active=True,
+            access_role__is_active=True,
+            access_role__organization=organization,
+            access_role__permissions__code=approve_code,
+        )
+        .exclude(pk=employee.pk)
+        .select_related("user", "access_role")
+        .prefetch_related("access_role__permissions")
+        .distinct()
+    )
+
+    users = []
+    for candidate in candidates:
+        codes = {p.code for p in candidate.access_role.permissions.all()}
+        if (
+            all_code is None
+            or all_code in codes
+            or (team_code and team_code in codes and candidate.id in managers)
+        ):
+            users.append(candidate.user)
+
+    if not users and organization.owner_id and organization.owner_id != employee.user_id:
+        users.append(organization.owner)
+    return users

@@ -18,6 +18,7 @@ from rest_framework.views import APIView
 from common.services import get_user_organization
 from common.permissions import (
     RequiredPermsMixin, has_perm, resolve_scope, own_request_denied, out_of_scope_denied,
+    get_approver_users,
 )
 from app.audit.services import log_activity
 
@@ -1386,16 +1387,15 @@ class AttendanceCorrectionCreateAPIView(AttendanceBaseAPIView):
             },
         )
 
-        # ---- Notify admin of correction request ----
-        # Determine the admin to notify.
-        # Use the organization owner as the primary recipient.
-        admin_user = None
-        if organization.owner_id:
-            admin_user = organization.owner
+        # ---- Notify the people who can approve it (batch 4.2) ----
+        approvers = get_approver_users(
+            organization, attendance.employee, "attendance.approve_correction",
+            team_code="attendance.view_team", all_code="attendance.view_all",
+        )
 
-        if admin_user:
+        if approvers:
             transaction.on_commit(lambda: notify(
-                users=admin_user,
+                users=approvers,
                 event_code="ATTENDANCE_CORRECTION_SUBMITTED",
                 title="Attendance correction request",
                 body=(

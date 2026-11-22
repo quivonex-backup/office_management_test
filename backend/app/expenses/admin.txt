@@ -770,3 +770,11 @@ The organization owner has every code. Codes come from the caller's access role.
   recurring/* and recurring/entries/*            expense.manage
   Vendor dropdown: vendors/list/ accepts expense.manage too.
 Default roles: Payroll Manager has expense.manage (and vendor.manage).
+
+================================================================================
+SECTION — WHO IS NOTIFIED (batch 4.2)
+================================================================================
+New requests notify the people who can act on them, not only the owner:
+  reimbursement claims: reimbursement.review holders (no team scope).
+The requester is never notified about their own request. If nobody qualifies,
+the organization owner is notified.

@@ -784,3 +784,12 @@ SECTION — AUDIT (batch 4)
 
 Successful type create/update/deactivate, balance initialize/adjust,
 application create/review/cancel are written to the activity log (module LEAVE).
+
+================================================================================
+SECTION — WHO IS NOTIFIED (batch 4.2)
+================================================================================
+New requests notify the people who can act on them, not only the owner:
+  leave.approve holders whose scope includes the employee: managers above them on
+  the reporting line (leave.view_team) and leave.view_all holders (HR Manager).
+The requester is never notified about their own request. If nobody qualifies,
+the organization owner is notified.
