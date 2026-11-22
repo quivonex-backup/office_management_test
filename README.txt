@@ -149,6 +149,9 @@ Check container status	                docker compose ps
 >> mkdir app\payroll 
 >> python manage.py startapp payroll app\payroll  
 
+celery -A config worker -l info --pool=solo
+celery -A config beat -l info
+
 
 wsl
 sudo service redis-server start

@@ -189,6 +189,24 @@ def run():
     s, _ = post(C["plain"], "leave/types/create/", {"name": "X", "code": "X"})
     check("refused leave call writes no log row", ActivityLog.objects.filter(module="LEAVE").count() == before + 1)
 
+    # ================= announcements use announcement.manage (owner / HR Manager)
+    check("HR Manager default role has announcement.manage",
+          roles["HR Manager"].permissions.filter(code="announcement.manage").exists())
+    with mock.patch("app.communications.views.notify", return_value=None, create=True):
+        s, b = post(C["hr"], "communications/announcements/create/", {"title": "Holiday", "description": "Office closed"}, multipart=True)
+        check("HR Manager can create an announcement", s in (200, 201), (s, b))
+        s, b = post(C["pay"], "communications/announcements/create/", {"title": "X", "description": "Y"}, multipart=True)
+        check("user without announcement.manage -> 403 standard message",
+              s == 403 and b.get("message") == "You do not have permission to perform this action.", (s, b))
+        s, _ = post(C["plain"], "communications/announcements/list/")
+        check("plain employee -> 403 on announcements/list (admin list)", s == 403, s)
+        s, _ = post(C["plain"], "communications/announcements/my/")
+        check("plain employee still reads announcements/my/", s == 200, s)
+        s, _ = post(C["owner"], "communications/announcements/list/")
+        check("owner announcements/list", s == 200, s)
+        s, _ = post(C["su"], "communications/announcements/list/", {"organization_id": org.id})
+        check("super admin has no access to an organization's announcements", s in (403, 404), s)
+
     # ================= celery tasks (run inline)
     from app.attendance.tasks import auto_mark_absent_task, flag_stale_attendance_task
     AttendanceSettings.objects.filter(organization=org).update(absent_after_minutes=0)
