@@ -28,7 +28,7 @@ BOOTSTRAP ORDER — READ THIS FIRST
 Data must exist in this order for the rest of the system to work:
 
   STEP 0 (super admin — one time for the platform)
-    └─ 1. Create Roles                 (Admin, Accountant, etc.)
+    └─ 1. Create Roles                 (Admin, Employee)
     └─ 2. Create Organizations         (each tenant)
     └─ 3. Assign Organization Owner    (Admin role + membership)
 
@@ -51,7 +51,7 @@ IMPORTANT:
   - A user can belong to AT MOST ONE active organization (enforced).
   - "Admin" role is reserved for organization owners and must be
     assigned via the assign-owner API, not assign-user.
-  - "Accountant" role is used when downgrading a previous owner.
+  - A previous owner is downgraded to "Employee" when replaced.
 
 
 ================================================================================
@@ -715,7 +715,7 @@ Auth : #SU   (✅ enforced)
 Purpose : Assign an Admin (owner) to an organization.
           - Creates/reactivates an OrganizationMembership.
           - Sets user.role = Admin.
-          - If there was a previous owner, downgrades them to Accountant
+          - If there was a previous owner, downgrades them to Employee
             and keeps their membership active.
           - Enforces one-active-org-per-user.
 
@@ -744,7 +744,7 @@ Response 200:
 
 Response 400 variants:
   { "status": false, "message": "organization_id and user_id are required." }
-  { "status": false, "message": "Active Admin and Accountant roles must exist." }
+  { "status": false, "message": "Active Admin and Employee roles must exist." }
   { "status": false, "message": "This user already belongs to another active organization." }
 Response 403: { "status": false, "message": "Only the super admin can assign an organization owner." }
 Response 404: { "status": false, "message": "Organization not found or inactive." | "User not found or inactive." }

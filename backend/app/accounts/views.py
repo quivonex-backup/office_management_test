@@ -14,7 +14,7 @@ from django.db import IntegrityError
 from django.db import transaction
 from django.http import FileResponse
 from django.utils import timezone
-from django.db.models import Q
+from django.db.models import Count, Q
 
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -23,7 +23,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 from rest_framework.parsers import MultiPartParser, FormParser
 
-from .services import is_super_admin, send_user_registration_email
+from .services import is_super_admin, send_user_registration_email, seed_organization_defaults
 from common.s3_utils import (
     upload_to_s3,
     update_s3_file,
@@ -31,7 +31,10 @@ from common.s3_utils import (
 )
 from common.code_generators import generate_organization_code
 
-from .models import User, Role, EmailOTP, Organization, OrganizationMembership, DatabaseBackup
+from .models import (
+    User, Role, EmailOTP, Organization, OrganizationMembership, DatabaseBackup,
+    AccessRole, AccessRolePermission, Branch, Permission,
+)
 from .serializers import (
     UserSerializer,
     UserCreateSerializer,
@@ -45,6 +48,8 @@ from .serializers import (
     DatabaseBackupSerializer,
     DatabaseBackupDownloadSerializer,
     DatabaseBackupRestoreSerializer,
+    AccessRoleSerializer, AccessRoleWriteSerializer, BranchSerializer,
+    BranchWriteSerializer, PermissionSerializer,
 )
 
 from .backup_services import (
@@ -54,6 +59,8 @@ from .backup_services import (
 
 from app.communications.notification_service import notify
 from app.audit.services import log_activity
+from common.permissions import OrgAPIView, require_perm
+from common.services import get_user_organization
 
 logger = logging.getLogger(__name__)
 
@@ -503,14 +510,68 @@ class MyProfileAPIView(APIView):
             .get(id=request.user.id)
         )
 
+        data = UserSerializer(user).data
+        data.update(build_access_profile(request, user))
+
         return Response(
             {
                 "status": True,
                 "message": "Profile fetched successfully.",
-                "data": UserSerializer(user).data,
+                "data": data,
             },
             status=status.HTTP_200_OK,
         )
+
+
+def build_access_profile(request, user):
+    """
+    Additive my-profile fields (batch 1). Never fails the request:
+    users without an organization (e.g. super admin) get nulls.
+    """
+    from common.services import get_user_organization
+    from common.permissions import get_permission_codes, get_user_employee, is_org_owner
+
+    profile = {
+        "account_role": user.role.name if user.role else None,
+        "is_org_owner": False,
+        "organization": None,
+        "employee": None,
+        "access_role": None,
+        "permissions": [],
+    }
+
+    organization, error = get_user_organization(request)
+    if error or organization is None:
+        return profile
+
+    profile["organization"] = {"id": organization.id, "name": organization.organization_name}
+    profile["is_org_owner"] = is_org_owner(user, organization)
+    profile["permissions"] = get_permission_codes(user, organization)
+
+    employee = get_user_employee(user, organization)
+    if employee:
+        def ref(obj, attr="name"):
+            return {"id": obj.id, "name": getattr(obj, attr)} if obj else None
+
+        manager = employee.reports_to
+        profile["employee"] = {
+            "id": employee.id,
+            "employee_code": employee.employee_code,
+            "full_name": " ".join(p for p in [employee.first_name, employee.middle_name, employee.last_name] if p),
+            "branch": ref(employee.branch),
+            "department": ref(employee.department_ref) or (
+                {"id": None, "name": employee.department} if employee.department else None),
+            "designation": ref(employee.designation_ref) or (
+                {"id": None, "name": employee.designation} if employee.designation else None),
+            "reports_to": (
+                {"id": manager.id, "full_name": f"{manager.first_name} {manager.last_name}".strip()}
+                if manager else None
+            ),
+        }
+        if employee.access_role and employee.access_role.is_active:
+            profile["access_role"] = ref(employee.access_role)
+
+    return profile
 
 
 class MyProfileUpdateAPIView(APIView):
@@ -1223,6 +1284,10 @@ class OrganizationCreateAPIView(APIView):
                 logo=logo_path,
             )
 
+            # Batch 1: default access roles (HR Manager, HR Executive,
+            # Department Manager, Payroll Manager).
+            seed_organization_defaults(organization, created_by=request.user)
+
             log_activity(
                 request=request,
                 action="CREATE",
@@ -1403,17 +1468,19 @@ class OrganizationAssignOwnerAPIView(APIView):
             is_active=True,
         ).first()
 
-        accountant_role = Role.objects.filter(
-            name__iexact="Accountant",
+        # The previous owner becomes a normal Employee (accounts.Role
+        # has only Admin and Employee).
+        employee_role = Role.objects.filter(
+            name__iexact="Employee",
             is_active=True,
         ).first()
 
-        if not admin_role or not accountant_role:
+        if not admin_role or not employee_role:
             return Response(
                 {
                     "status": False,
                     "message": (
-                        "Active Admin and Accountant roles must exist."
+                        "Active Admin and Employee roles must exist."
                     ),
                 },
                 status=status.HTTP_400_BAD_REQUEST,
@@ -1448,7 +1515,7 @@ class OrganizationAssignOwnerAPIView(APIView):
             ).first()
 
             if previous_owner:
-                previous_owner.role = accountant_role
+                previous_owner.role = employee_role
                 previous_owner.save(update_fields=["role"])
 
                 # Keep the previous owner's membership active.
@@ -2151,3 +2218,267 @@ class DatabaseBackupRestoreAPIView(APIView):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+
+# =========================================================
+# =========================================================
+# ORGANIZATION STRUCTURE + ACCESS (branches, access roles,
+# permission catalog). Organization level, see org access notes
+# in admin.txt.
+# =========================================================
+# =========================================================
+def _active_employee_q():
+    return Q(employees__is_active=True)
+
+
+# =========================================================
+# BRANCH
+# =========================================================
+def _branch_queryset(organization):
+    return (
+        Branch.objects.filter(organization=organization)
+        .select_related("state")
+        .annotate(employee_count=Count("employees", filter=_active_employee_q(), distinct=True))
+    )
+
+
+class BranchListAPIView(OrgAPIView):
+    """Any member (dropdowns)."""
+
+    def post(self, request):
+        organization, error = get_user_organization(request)
+        if error:
+            return error
+
+        qs = _branch_queryset(organization)
+        search = (request.data.get("search") or "").strip()
+        if search:
+            qs = qs.filter(Q(name__icontains=search) | Q(code__icontains=search) | Q(city__icontains=search))
+        is_active = self.parse_bool(request.data.get("is_active"))
+        if is_active is not None:
+            qs = qs.filter(is_active=is_active)
+
+        return self.ok("Branches fetched successfully.", BranchSerializer(qs.order_by("name"), many=True).data)
+
+
+class BranchCreateAPIView(OrgAPIView):
+    @transaction.atomic
+    def post(self, request):
+        organization, error = get_user_organization(request)
+        if error:
+            return error
+        denied = require_perm(request, organization, "org.manage")
+        if denied:
+            return denied
+
+        serializer = BranchWriteSerializer(data=request.data, context={"organization": organization})
+        if not serializer.is_valid():
+            return self.fail("Validation failed.", serializer.errors)
+
+        branch = serializer.save(organization=organization, created_by=request.user, updated_by=request.user)
+        data = BranchSerializer(_branch_queryset(organization).get(pk=branch.pk)).data
+        log_activity(request=request, action="CREATE", module="BRANCH", object_type="Branch",
+                     object_id=branch.id, description=f"Branch '{branch.name}' created.", new_data=data)
+        return self.ok("Branch created successfully.", data, status.HTTP_201_CREATED)
+
+
+class BranchUpdateAPIView(OrgAPIView):
+    @transaction.atomic
+    def post(self, request):
+        organization, error = get_user_organization(request)
+        if error:
+            return error
+        denied = require_perm(request, organization, "org.manage")
+        if denied:
+            return denied
+
+        branch_id = request.data.get("branch_id")
+        if not branch_id:
+            return self.fail("branch_id is required.")
+        branch = Branch.objects.filter(id=branch_id, organization=organization).first()
+        if not branch:
+            return self.fail("Branch not found.", http_status=status.HTTP_404_NOT_FOUND)
+
+        old = BranchSerializer(_branch_queryset(organization).get(pk=branch.pk)).data
+        serializer = BranchWriteSerializer(branch, data=request.data, partial=True,
+                                           context={"organization": organization})
+        if not serializer.is_valid():
+            return self.fail("Validation failed.", serializer.errors)
+
+        branch = serializer.save(updated_by=request.user)
+        data = BranchSerializer(_branch_queryset(organization).get(pk=branch.pk)).data
+        log_activity(request=request, action="UPDATE", module="BRANCH", object_type="Branch",
+                     object_id=branch.id, description=f"Branch '{branch.name}' updated.",
+                     old_data=old, new_data=data)
+        return self.ok("Branch updated successfully.", data)
+
+
+class BranchDeactivateAPIView(OrgAPIView):
+    @transaction.atomic
+    def post(self, request):
+        organization, error = get_user_organization(request)
+        if error:
+            return error
+        denied = require_perm(request, organization, "org.manage")
+        if denied:
+            return denied
+
+        branch_id = request.data.get("branch_id")
+        if not branch_id:
+            return self.fail("branch_id is required.")
+        branch = Branch.objects.filter(id=branch_id, organization=organization, is_active=True).first()
+        if not branch:
+            return self.fail("Active branch not found.", http_status=status.HTTP_404_NOT_FOUND)
+
+        in_use = branch.employees.filter(is_active=True).count()
+        if in_use:
+            return self.fail(f"This branch is assigned to {in_use} active employee(s). Move them first.")
+
+        branch.is_active = False
+        branch.updated_by = request.user
+        branch.save(update_fields=["is_active", "updated_by", "updated_at"])
+        log_activity(request=request, action="DELETE", module="BRANCH", object_type="Branch",
+                     object_id=branch.id, description=f"Branch '{branch.name}' deactivated.",
+                     old_data={"is_active": True}, new_data={"is_active": False})
+        return self.ok("Branch deactivated successfully.", {"id": branch.id, "is_active": False})
+
+
+# =========================================================
+# PERMISSION (read only)
+# =========================================================
+class PermissionListAPIView(OrgAPIView):
+    def post(self, request):
+        organization, error = get_user_organization(request)
+        if error:
+            return error
+        denied = require_perm(request, organization, "access.manage")
+        if denied:
+            return denied
+        return self.ok("Permissions fetched successfully.",
+                       PermissionSerializer(Permission.objects.all(), many=True).data)
+
+
+# =========================================================
+# ACCESS ROLE
+# =========================================================
+def _access_role_queryset(organization):
+    return (
+        AccessRole.objects.filter(organization=organization)
+        .prefetch_related("permissions")
+        .annotate(employee_count=Count("employees", filter=_active_employee_q(), distinct=True))
+    )
+
+
+def _set_role_permissions(role, codes):
+    AccessRolePermission.objects.filter(access_role=role).exclude(permission__code__in=codes).delete()
+    existing = set(AccessRolePermission.objects.filter(access_role=role).values_list("permission__code", flat=True))
+    to_add = Permission.objects.filter(code__in=set(codes) - existing)
+    AccessRolePermission.objects.bulk_create(
+        [AccessRolePermission(access_role=role, permission=p) for p in to_add]
+    )
+
+
+class AccessRoleListAPIView(OrgAPIView):
+    def post(self, request):
+        organization, error = get_user_organization(request)
+        if error:
+            return error
+        denied = require_perm(request, organization, "access.manage")
+        if denied:
+            return denied
+
+        qs = _access_role_queryset(organization)
+        is_active = self.parse_bool(request.data.get("is_active"))
+        if is_active is not None:
+            qs = qs.filter(is_active=is_active)
+        return self.ok("Access roles fetched successfully.",
+                       AccessRoleSerializer(qs.order_by("name"), many=True).data)
+
+
+class AccessRoleCreateAPIView(OrgAPIView):
+    @transaction.atomic
+    def post(self, request):
+        organization, error = get_user_organization(request)
+        if error:
+            return error
+        denied = require_perm(request, organization, "access.manage")
+        if denied:
+            return denied
+
+        serializer = AccessRoleWriteSerializer(data=request.data, context={"organization": organization})
+        if not serializer.is_valid():
+            return self.fail("Validation failed.", serializer.errors)
+
+        codes = serializer.validated_data.pop("permission_codes", [])
+        role = serializer.save(organization=organization, created_by=request.user, updated_by=request.user)
+        _set_role_permissions(role, codes)
+
+        data = AccessRoleSerializer(_access_role_queryset(organization).get(pk=role.pk)).data
+        log_activity(request=request, action="CREATE", module="ACCESS_ROLE", object_type="AccessRole",
+                     object_id=role.id, description=f"Access role '{role.name}' created.", new_data=data)
+        return self.ok("Access role created successfully.", data, status.HTTP_201_CREATED)
+
+
+class AccessRoleUpdateAPIView(OrgAPIView):
+    @transaction.atomic
+    def post(self, request):
+        organization, error = get_user_organization(request)
+        if error:
+            return error
+        denied = require_perm(request, organization, "access.manage")
+        if denied:
+            return denied
+
+        role_id = request.data.get("access_role_id")
+        if not role_id:
+            return self.fail("access_role_id is required.")
+        role = AccessRole.objects.filter(id=role_id, organization=organization).first()
+        if not role:
+            return self.fail("Access role not found.", http_status=status.HTTP_404_NOT_FOUND)
+
+        old = AccessRoleSerializer(_access_role_queryset(organization).get(pk=role.pk)).data
+        serializer = AccessRoleWriteSerializer(role, data=request.data, partial=True,
+                                               context={"organization": organization})
+        if not serializer.is_valid():
+            return self.fail("Validation failed.", serializer.errors)
+
+        codes = serializer.validated_data.pop("permission_codes", None)
+        role = serializer.save(updated_by=request.user)
+        if codes is not None:  # full replacement when sent
+            _set_role_permissions(role, codes)
+
+        data = AccessRoleSerializer(_access_role_queryset(organization).get(pk=role.pk)).data
+        log_activity(request=request, action="UPDATE", module="ACCESS_ROLE", object_type="AccessRole",
+                     object_id=role.id, description=f"Access role '{role.name}' updated.",
+                     old_data=old, new_data=data)
+        return self.ok("Access role updated successfully.", data)
+
+
+class AccessRoleDeactivateAPIView(OrgAPIView):
+    @transaction.atomic
+    def post(self, request):
+        organization, error = get_user_organization(request)
+        if error:
+            return error
+        denied = require_perm(request, organization, "access.manage")
+        if denied:
+            return denied
+
+        role_id = request.data.get("access_role_id")
+        if not role_id:
+            return self.fail("access_role_id is required.")
+        role = AccessRole.objects.filter(id=role_id, organization=organization, is_active=True).first()
+        if not role:
+            return self.fail("Active access role not found.", http_status=status.HTTP_404_NOT_FOUND)
+
+        in_use = role.employees.filter(is_active=True).count()
+        if in_use:
+            return self.fail(f"This access role is assigned to {in_use} active employee(s). Reassign them first.")
+
+        role.is_active = False
+        role.updated_by = request.user
+        role.save(update_fields=["is_active", "updated_by", "updated_at"])
+        log_activity(request=request, action="DELETE", module="ACCESS_ROLE", object_type="AccessRole",
+                     object_id=role.id, description=f"Access role '{role.name}' deactivated.",
+                     old_data={"is_active": True}, new_data={"is_active": False})
+        return self.ok("Access role deactivated successfully.", {"id": role.id, "is_active": False})

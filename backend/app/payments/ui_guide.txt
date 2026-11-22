@@ -1,0 +1,20 @@
+================================================================================
+PAYMENTS (project payments from clients, invoices) — UI GUIDE (for the UI designer / frontend)
+================================================================================
+Who      : Owner / admin side (finance)
+Apps     : Web panel
+Details  : request/response fields are in admin.txt
+Tags     : urls.py marks each endpoint  #SU super admin, #A admin side,
+           #E employee, perm: <code> = permission the caller needs.
+           Show admin screens only when my-profile data.permissions contains
+           the code (organization owner has every code).
+
+SCREENS
+1. Payment schedule per project   project/payments-details-by-project/
+2. Payments list                  project/payment-list/ (search), project/payment-detail/
+3. Create / edit installment      project/payment-create/, project/payment-update/, project/payment-cancel/
+   - One ADVANCE per project; installments numbered; total cannot exceed project value.
+4. Record money received          project/transaction/create|update/
+5. Actions                        payment-reminder/ (email), project-invoice/pdf-download/
+STATUS
+  PENDING -> PARTIALLY_PAID / PAID / OVERDUE (server computes).

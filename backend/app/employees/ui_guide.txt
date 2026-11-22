@@ -1,0 +1,45 @@
+================================================================================
+EMPLOYEES (people, departments, designations) — UI GUIDE (for the UI designer / frontend)
+================================================================================
+Who      : HR / admin side (employee.update, employee.create_user, org.manage); employees read their own profile
+Apps     : Web panel; employee mobile app (my-profile only)
+Details  : request/response fields are in admin.txt, employee.txt
+Tags     : urls.py marks each endpoint  #SU super admin, #A admin side,
+           #E employee, perm: <code> = permission the caller needs.
+           Show admin screens only when my-profile data.permissions contains
+           the code (organization owner has every code).
+
+SCREENS
+1. Employee list             list/  filters: search, branch_id, department_id,
+                             designation_id, access_role_id, reports_to_id
+   - Columns: code, name, designation, department, branch, manager, status,
+     has user account. Row click -> detail.
+2. Employee form (create / edit)   create/, update/   (multipart)  perm employee.update
+   Tabs inside ONE form:
+     Personal | Job | Statutory & bank | Documents
+   Job tab dropdowns:
+     Branch       <- accounts/branch/list/
+     Department   <- department/list/
+     Designation  <- designation/list/
+     Reports to   <- list/ (search)         loops are rejected by the server
+     Access role  <- accounts/access-role/list/   ONLY if user has access.manage
+   - "Create login account" checkbox (create_user=true) needs employee.create_user.
+3. Employee detail           detail/ + document/upload|delete/
+   - Header: name, code, designation, branch, manager. Three-dot menu:
+     Create user account (create-user/), Deactivate (deactivate/).
+4. Departments / Designations (Organization page tabs)
+                             department/*, designation/*   perm org.manage
+   - Simple table + inline add / rename / deactivate. Deactivate refused while
+     employees use it. Rename also updates the employees' text field.
+5. My profile (employee app) my-profile/  read only; includes branch,
+                             department_ref, designation_ref, reports_to.
+
+PROCESS
+  Create masters (branch, department, designation) -> create employee with
+  dropdowns -> (optional) create user account -> upload documents ->
+  set reporting manager -> HR staff get an access role.
+
+RULES TO SHOW IN UI
+  - Send *_id fields; the text fields department/designation are filled by the server.
+  - Blank *_id clears the link.
+  - Use multipart for update/ (documents, photo). JSON body with remove_document_ids fails today.

@@ -249,3 +249,21 @@ KEY NOTES FOR FRONTEND — EMPLOYEE SIDE
     fragile. Always use /employees/my-profile/ for the employee's own
     data. If your frontend ever needs to look up a colleague by id,
     that's an admin feature, not an employee feature.
+
+
+================================================================================
+SECTION — ORGANIZATION LINKS IN MY PROFILE
+================================================================================
+
+POST /employees/my-profile/ rows now also contain (read only):
+  "branch":          { "id", "name" } | null
+  "department_ref":  { "id", "name" } | null
+  "designation_ref": { "id", "name" } | null
+  "access_role":     { "id", "name" } | null
+  "reports_to":      { "id", "employee_code", "full_name" } | null
+The text fields "department" / "designation" stay as before.
+
+Lists for dropdowns / display (any member):
+  POST /employees/department/list/
+  POST /employees/designation/list/
+  POST /accounts/branch/list/

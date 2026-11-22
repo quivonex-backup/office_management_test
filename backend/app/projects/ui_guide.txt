@@ -1,0 +1,24 @@
+================================================================================
+PROJECTS (projects, team allocation, tasks) — UI GUIDE (for the UI designer / frontend)
+================================================================================
+Who      : Owner / admin (projects, teams); project head (tasks); employees (my projects, my tasks)
+Apps     : Web panel; employee app
+Details  : request/response fields are in admin.txt, employee.txt
+Tags     : urls.py marks each endpoint  #SU super admin, #A admin side,
+           #E employee, perm: <code> = permission the caller needs.
+           Show admin screens only when my-profile data.permissions contains
+           the code (organization owner has every code).
+
+SCREENS (admin side)
+1. Projects                  create|list|detail|update|deactivate/  (client, priority, status)
+2. Team                      team-allocation/create|list|detail|update|deactivate/,
+                             team-allocation/project-team/, team-allocation/employee-projects/,
+                             team-allocation/assign-head/ (one head per project)
+3. Tasks                     task/create|list|detail|update|status-update|deactivate/
+SCREENS (employee / project head)
+1. My projects               my-projects/, my-projects-as-head/, my-project-detail/
+2. My tasks                  task/my-tasks/, task/status-update/
+3. Head: manage tasks        task/* on own project
+PROCESS
+  Client (clients app) -> project -> allocate team -> assign head -> tasks ->
+  payments (payments app) and expenses linked to the project.

@@ -30,7 +30,7 @@ BOOTSTRAP ORDER — PLATFORM SETUP
 
   STEP 1 — Roles (once, globally)
     └─ POST /accounts/role/create/
-       Create "Admin", "Accountant", "Employee" (and any others)
+       Create "Admin" and "Employee" (only these two are used)
 
   STEP 2 — Organizations (one per tenant)
     └─ POST /accounts/organization/create/
@@ -50,8 +50,7 @@ CRITICAL RULES:
   - A user can belong to AT MOST ONE active organization (enforced).
   - "Admin" role is reserved for organization owners — you cannot
     assign it via assign-user, only via assign-owner.
-  - "Accountant" role is used when the system downgrades a previous
-    owner who was replaced by a new owner.
+  - A previous owner replaced by a new owner is downgraded to "Employee".
 
 
 ================================================================================
@@ -591,7 +590,7 @@ Response 200:
 
 Response 400 variants:
 { "status": false, "message": "organization_id and user_id are required." }
-{ "status": false, "message": "Active Admin and Accountant roles must exist." }
+{ "status": false, "message": "Active Admin and Employee roles must exist." }
 { "status": false, "message": "This user already belongs to another active organization." }
 
 Response 403:
@@ -604,7 +603,7 @@ Response 404:
 NOTE:
   - Wrapped in transaction.atomic with select_for_update on org and user.
   - If the org already had a different owner:
-      * Previous owner's role downgrades to "Accountant"
+      * Previous owner's role downgrades to "Employee"
       * Previous owner's membership stays active
   - New owner gets Admin role + active membership.
   - Idempotent: calling again for the SAME user creates nothing new
@@ -722,9 +721,9 @@ KEY NOTES FOR FRONTEND — SUPER ADMIN SIDE
    Super admin usually has NO organization membership at all.
 
 3. ROLES ARE GLOBAL
-   The roles you create (Admin, Accountant, Employee) are shared across
-   every organization on the platform. Renaming "Accountant" affects
-   every org's UI labels.
+   The roles you create (Admin, Employee) are shared across every
+   organization on the platform. Job-level access (HR Manager, Payroll
+   Manager ...) is per organization: see accounts/admin.txt (ORGANIZATION STRUCTURE + ACCESS).
 
 4. ONE-ACTIVE-ORG-PER-USER
    Assigning a user who already belongs to another active org returns
@@ -736,13 +735,11 @@ KEY NOTES FOR FRONTEND — SUPER ADMIN SIDE
    Users, Roles, Organizations are never hard-deleted.
    is_active=false hides them from list endpoints.
 
-6. "ACCOUNTANT" ROLE IS LOAD-BEARING
+6. "EMPLOYEE" ROLE IS LOAD-BEARING
    When assigning a new owner to an org that already has one, the
-   system downgrades the previous owner to "Accountant". This role
-   MUST exist or /assign-owner/ returns 400 "Active Admin and
-   Accountant roles must exist."
-   Ensure both "Admin" and "Accountant" roles exist before you assign
-   any owner.
+   system downgrades the previous owner to "Employee". Both "Admin" and
+   "Employee" roles MUST exist or /assign-owner/ returns 400 "Active
+   Admin and Employee roles must exist."
 
 7. AUDIT EVERYTHING
    Every mutating endpoint writes a log_activity row. No PII (passwords,
@@ -773,3 +770,23 @@ KEY NOTES FOR FRONTEND — SUPER ADMIN SIDE
     /forgot-password/ works only by email match (used by the user
     themselves). If super admin needs to force-reset a user's password,
     that capability doesn't exist — flag for backend.
+
+
+================================================================================
+SECTION — ORGANIZATION ACCESS SETUP (batch 1)
+================================================================================
+--------------------------------------------------------------------------------
+/accounts/organization/create/        also creates the 4 default access roles.
+/accounts/organization/assign-owner/  previous owner becomes "Employee" (no
+                                      Accountant role needed). 400 message is now
+                                      "Active Admin and Employee roles must exist."
+
+  After deploying batch 1 (once, and safe to repeat):
+      python manage.py migrate
+      python manage.py seed_org_access          # or --dry-run first
+  It syncs the permission catalog, creates the 4 default access roles in
+  every organization that lacks them, and builds Department / Designation
+  lists from existing employee text (text is not changed).
+
+  Super admin has no access inside organizations through access roles;
+  the organization owner manages access roles.

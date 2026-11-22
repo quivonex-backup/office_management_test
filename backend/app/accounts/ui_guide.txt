@@ -1,0 +1,44 @@
+================================================================================
+ACCOUNTS (login, profile, organizations, branches, access roles) — UI GUIDE (for the UI designer / frontend)
+================================================================================
+Who      : Everyone (login/profile); organization owner + users with org.manage / access.manage; super admin
+Apps     : Web panel (all roles), employee mobile app (login/profile), super admin site
+Details  : request/response fields are in employee.txt, admin.txt, super-admin.txt
+Tags     : urls.py marks each endpoint  #SU super admin, #A admin side,
+           #E employee, perm: <code> = permission the caller needs.
+           Show admin screens only when my-profile data.permissions contains
+           the code (organization owner has every code).
+
+SCREENS
+1. Login                     login/, forgot-password/ (+ send-otp/, verify-otp/)
+   - "Username or email" + password. Keep tokens; refresh once on 401 with refresh-token/.
+2. After login (bootstrap)   my-profile/  ONE call gives:
+   - user, account_role (Admin / Employee), is_org_owner, organization
+   - employee {code, branch, department, designation, reports_to}
+   - access_role {id, name}, permissions[]  -> build the menu from this list
+3. My profile                my-profile/update/, change-password/
+   - Email / mobile read only for employees; photo + name editable.
+4. Organization settings     organization/detail/, organization/update/        (owner)
+5. Branches                  branch/list|create|update|deactivate/              (org.manage)
+   - Table: name, city, state, employees, active. Form: name, code, address,
+     city, state (location_master states), map pin -> latitude/longitude,
+     radius in metres (empty = attendance setting).
+   - Deactivate is refused while employees are in the branch: show the message.
+6. Access roles              access-role/list|create|update|deactivate/,
+                             permission/list/                                   (access.manage)
+   - Left: role list (name, employee count). Right: permission matrix grouped
+     by "group" from permission/list/. Save sends the FULL permission_codes list.
+   - Assigning a role to a person is done on the employee form (employees app).
+7. Super admin only          register/, user/*, role/*, organization/create|list|assign-owner|assign-user,
+                             database/backup/*
+
+PROCESS (new organization)
+  Super admin: create organization -> register owner user -> assign-owner
+  Owner: update organization -> create branches -> departments/designations
+         (employees app) -> review the 4 default access roles -> add employees
+         and give HR staff an access role.
+
+RULES TO SHOW IN UI
+  - accounts.Role has only Admin (owner) and Employee. Job access = access role.
+  - A replaced owner becomes Employee.
+  - Names are unique per organization (case-insensitive): show errors.name.

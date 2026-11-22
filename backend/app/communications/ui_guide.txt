@@ -1,0 +1,21 @@
+================================================================================
+COMMUNICATIONS (notifications, announcements, project chat) — UI GUIDE (for the UI designer / frontend)
+================================================================================
+Who      : Everyone (notifications); owner / admin (announcements, chat settings); project members (chat)
+Apps     : Web panel + employee app
+Details  : request/response fields are in admin.txt, employee.txt, notify_admin.txt, notify_employee.txt
+Tags     : urls.py marks each endpoint  #SU super admin, #A admin side,
+           #E employee, perm: <code> = permission the caller needs.
+           Show admin screens only when my-profile data.permissions contains
+           the code (organization owner has every code).
+
+SCREENS
+1. Notification bell         notifications/unread-count/ (poll on web), notifications/list/,
+                             notifications/mark-read/, notifications/mark-all-read/, notifications/delete/
+   - Mobile registers FCM with device-token/register/.
+2. Announcements (admin)     announcements/create|list|update|deactivate/  (multipart, attachments)
+3. Announcements (employee)  announcements/my/
+4. Project chat              project-chat/messages/, project-chat/send/ (multipart always),
+                             project-chat/delete/, project-chat/settings/ (admin: who can post)
+DEV ONLY
+  test-notification/ works only with DEBUG=True; do not show in UI.

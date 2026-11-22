@@ -2,6 +2,53 @@ from django.conf import settings
 from django.db import models
 
 # =========================================================
+# DEPARTMENT  (per organization)
+# =========================================================
+class Department(models.Model):
+    organization = models.ForeignKey("accounts.Organization", on_delete=models.CASCADE, related_name="departments")
+    name = models.CharField(max_length=100)
+    code = models.CharField(max_length=30, blank=True, null=True)
+    is_active = models.BooleanField(default=True, db_index=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="departments_created")
+    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="departments_updated")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "departments"
+        ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(fields=["organization", "name"], name="unique_department_name_per_org"),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
+# =========================================================
+# DESIGNATION  (per organization)
+# =========================================================
+class Designation(models.Model):
+    organization = models.ForeignKey("accounts.Organization", on_delete=models.CASCADE, related_name="designations")
+    name = models.CharField(max_length=100)
+    is_active = models.BooleanField(default=True, db_index=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="designations_created")
+    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="designations_updated")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "designations"
+        ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(fields=["organization", "name"], name="unique_designation_name_per_org"),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
+# =========================================================
 # EMPLOYEE MODEL
 # =========================================================
 class Employee(models.Model):
@@ -78,6 +125,15 @@ class Employee(models.Model):
 
     # ---- Organization ----
     organization = models.ForeignKey("accounts.Organization", on_delete=models.PROTECT, related_name="employees", db_index=True, null=True, blank=True)
+
+    # ---- Organization structure (batch 1) ----
+    # Text fields `department` / `designation` above are kept and filled
+    # from these masters, so existing API clients keep working.
+    branch = models.ForeignKey("accounts.Branch", on_delete=models.SET_NULL, null=True, blank=True, related_name="employees")
+    department_ref = models.ForeignKey("employees.Department", on_delete=models.SET_NULL, null=True, blank=True, related_name="employees")
+    designation_ref = models.ForeignKey("employees.Designation", on_delete=models.SET_NULL, null=True, blank=True, related_name="employees")
+    access_role = models.ForeignKey("accounts.AccessRole", on_delete=models.SET_NULL, null=True, blank=True, related_name="employees")
+    reports_to = models.ForeignKey("self", on_delete=models.SET_NULL, null=True, blank=True, related_name="direct_reports")
 
     # ---- Audit ----
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="employees_created")

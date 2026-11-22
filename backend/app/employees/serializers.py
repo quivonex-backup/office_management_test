@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Employee, EmployeeDocument
+from .models import Department, Designation, Employee, EmployeeDocument
 
 
 # =========================================================
@@ -20,6 +20,83 @@ class EmployeeDocumentSerializer(serializers.ModelSerializer):
             'created_at',
         ]
 
+
+
+# =========================================================
+# BATCH 1: ORGANIZATION LINKS IN EMPLOYEE RESPONSES
+# =========================================================
+def _ref(obj):
+    return {"id": obj.id, "name": obj.name} if obj else None
+
+
+class EmployeeOrgLinksMixin(serializers.Serializer):
+    branch = serializers.SerializerMethodField()
+    department_ref = serializers.SerializerMethodField()
+    designation_ref = serializers.SerializerMethodField()
+    access_role = serializers.SerializerMethodField()
+    reports_to = serializers.SerializerMethodField()
+
+    ORG_LINK_FIELDS = ["branch", "department_ref", "designation_ref", "access_role", "reports_to"]
+
+    def get_branch(self, obj):
+        return _ref(obj.branch)
+
+    def get_department_ref(self, obj):
+        return _ref(obj.department_ref)
+
+    def get_designation_ref(self, obj):
+        return _ref(obj.designation_ref)
+
+    def get_access_role(self, obj):
+        return _ref(obj.access_role)
+
+    def get_reports_to(self, obj):
+        m = obj.reports_to
+        if not m:
+            return None
+        return {"id": m.id, "employee_code": m.employee_code,
+                "full_name": " ".join(p for p in [m.first_name, m.middle_name, m.last_name] if p)}
+
+
+class _OrgUniqueNameMixin:
+    def validate_name(self, value):
+        value = (value or "").strip()
+        if not value:
+            raise serializers.ValidationError("Name is required.")
+        qs = self.Meta.model.objects.filter(organization=self.context["organization"], name__iexact=value)
+        if self.instance is not None:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError("This name already exists in your organization.")
+        return value
+
+
+class DepartmentSerializer(serializers.ModelSerializer):
+    employee_count = serializers.IntegerField(read_only=True, default=0)
+
+    class Meta:
+        model = Department
+        fields = ["id", "name", "code", "is_active", "employee_count", "created_at", "updated_at"]
+
+
+class DepartmentWriteSerializer(_OrgUniqueNameMixin, serializers.ModelSerializer):
+    class Meta:
+        model = Department
+        fields = ["name", "code"]
+
+
+class DesignationSerializer(serializers.ModelSerializer):
+    employee_count = serializers.IntegerField(read_only=True, default=0)
+
+    class Meta:
+        model = Designation
+        fields = ["id", "name", "is_active", "employee_count", "created_at", "updated_at"]
+
+
+class DesignationWriteSerializer(_OrgUniqueNameMixin, serializers.ModelSerializer):
+    class Meta:
+        model = Designation
+        fields = ["name"]
 
 
 # =========================================================
@@ -77,7 +154,7 @@ class EmployeeCreateSerializer(serializers.ModelSerializer):
 # =========================================================
 # EMPLOYEE LIST SERIALIZER
 # =========================================================
-class EmployeeListSerializer(serializers.ModelSerializer):
+class EmployeeListSerializer(EmployeeOrgLinksMixin, serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
     work_state_name = serializers.CharField(source="work_state.state_name", read_only=True, allow_null=True)
     documents = EmployeeDocumentSerializer(many=True, read_only=True)
@@ -125,7 +202,8 @@ class EmployeeListSerializer(serializers.ModelSerializer):
             'documents',
             'is_active',
             'created_at',
-            'has_user_account', 
+            'has_user_account',
+            *EmployeeOrgLinksMixin.ORG_LINK_FIELDS,
         ]
 
     def get_full_name(self, obj):
@@ -139,7 +217,7 @@ class EmployeeListSerializer(serializers.ModelSerializer):
 # =========================================================
 # EMPLOYEE DETAIL SERIALIZER
 # =========================================================
-class EmployeeDetailSerializer(serializers.ModelSerializer):
+class EmployeeDetailSerializer(EmployeeOrgLinksMixin, serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
     work_state_name = serializers.CharField(source="work_state.state_name", read_only=True, allow_null=True)
     documents = EmployeeDocumentSerializer(many=True, read_only=True)
@@ -189,6 +267,7 @@ class EmployeeDetailSerializer(serializers.ModelSerializer):
             'created_at',
             'updated_at',
             'has_user_account',
+            *EmployeeOrgLinksMixin.ORG_LINK_FIELDS,
         ]
 
     def get_full_name(self, obj):
@@ -248,7 +327,7 @@ class EmployeeUpdateSerializer(serializers.ModelSerializer):
 # =========================================================
 # EMPLOYEE SELF-SERVICE PROFILE SERIALIZER
 # =========================================================
-class MyEmployeeProfileSerializer(serializers.ModelSerializer):
+class MyEmployeeProfileSerializer(EmployeeOrgLinksMixin, serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
     work_state_name = serializers.CharField(
         source="work_state.state_name",
@@ -309,6 +388,7 @@ class MyEmployeeProfileSerializer(serializers.ModelSerializer):
             "is_active",
             "created_at",
             "updated_at",
+            *EmployeeOrgLinksMixin.ORG_LINK_FIELDS,
         ]
         read_only_fields = fields   # everything is read-only here
 

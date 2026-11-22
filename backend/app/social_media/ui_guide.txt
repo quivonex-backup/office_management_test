@@ -1,0 +1,19 @@
+================================================================================
+SOCIAL MEDIA (Meta accounts and posts) — UI GUIDE (for the UI designer / frontend)
+================================================================================
+Who      : Owner / marketing (admin side)
+Apps     : Web panel
+Details  : request/response fields are in (no API doc in the repo yet)
+Tags     : urls.py marks each endpoint  #SU super admin, #A admin side,
+           #E employee, perm: <code> = permission the caller needs.
+           Show admin screens only when my-profile data.permissions contains
+           the code (organization owner has every code).
+
+SCREENS
+1. Connected accounts        meta/connect/ (opens Meta login), meta/callback/ (public redirect),
+                             accounts/list|activate|deactivate|delete/, accounts/media/list/
+2. Posts                     posts/create|list|detail|update|delete/
+3. Publish / schedule        posts/publish/, posts/schedule/, posts/unschedule/
+4. Publication log           publications/list/, publications/detail/
+NOTE
+  Not reviewed in detail; field names to be confirmed from the views before building.

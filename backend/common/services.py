@@ -243,3 +243,54 @@ def get_accessible_projects(request):
 
     projects = Project.objects.filter(id__in=project_ids, is_active=True)
     return projects, permission_map, None
+
+
+# =========================================================
+# REPORTING LINE (Employee.reports_to)
+# =========================================================
+def get_team_employee_ids(employee, include_self=True):
+    """
+    IDs of everyone below `employee` via reports_to (recursive), limited to
+    active employees of the same organization. Iterative; safe against
+    accidental cycles.
+    """
+    from app.employees.models import Employee
+
+    if employee is None:
+        return []
+
+    seen = {employee.id}
+    frontier = [employee.id]
+    while frontier:
+        children = list(
+            Employee.objects.filter(
+                organization_id=employee.organization_id,
+                reports_to_id__in=frontier,
+                is_active=True,
+            )
+            .exclude(id__in=seen)
+            .values_list("id", flat=True)
+        )
+        seen.update(children)
+        frontier = children
+
+    if not include_self:
+        seen.discard(employee.id)
+    return sorted(seen)
+
+
+def would_create_reporting_cycle(employee, new_manager):
+    """True if setting employee.reports_to = new_manager makes a loop."""
+    if employee is None or new_manager is None:
+        return False
+    if employee.id is not None and employee.id == new_manager.id:
+        return True
+
+    current = new_manager
+    hops = 0
+    while current is not None and hops < 1000:
+        if employee.id is not None and current.reports_to_id == employee.id:
+            return True
+        current = current.reports_to
+        hops += 1
+    return False

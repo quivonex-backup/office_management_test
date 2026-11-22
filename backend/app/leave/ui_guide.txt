@@ -1,0 +1,32 @@
+================================================================================
+LEAVE (types, balances, applications) — UI GUIDE (for the UI designer / frontend)
+================================================================================
+Who      : Employees apply and cancel; approvers / HR / owner manage types, balances and reviews
+Apps     : Employee app; web panel
+Details  : request/response fields are in admin.txt, employee.txt, usecase.txt
+Tags     : urls.py marks each endpoint  #SU super admin, #A admin side,
+           #E employee, perm: <code> = permission the caller needs.
+           Show admin screens only when my-profile data.permissions contains
+           the code (organization owner has every code).
+
+SCREENS (employee)
+1. My leave                  balances/my/ (cards per type), applications/my/
+2. Apply                     types/list/ (dropdown) -> applications/create/
+   - Server computes total_days from calendar and shift; show its errors
+     (insufficient balance, overlap, past date).
+3. Cancel                    applications/cancel/my/
+
+SCREENS (admin side)
+1. Leave types               types/list|create|update|deactivate/
+2. Balances                  balances/list/, balances/initialize/ (yearly), balances/adjust/
+3. Requests                  applications/list/ -> applications/review/ (APPROVED / REJECTED, remarks)
+   - Approve inline from the list; cancel any request with applications/cancel/organization/.
+4. History                   transactions/list/
+
+PROCESS
+  Create types -> initialize balances for the year -> employees apply ->
+  approver reviews -> approved leave appears as ON_LEAVE in attendance.
+
+COMING IN BATCH 2
+  scope = self | team | all (Department Manager sees own team), leave.approve
+  enforced, cannot approve own leave.

@@ -25,28 +25,35 @@ from .views import (
 )
 
 
+# ---------------------------------------------------------------------------
+# Who calls what:
+#   #SU  super admin (platform)        #A  organization admin side
+#   #E   employee self-service         #PUB public (no token)   #DEV debug only
+#   perm: <code>  enforced permission code (organization owner always passes;
+#                 others need an access role that has the code)
+# ---------------------------------------------------------------------------
 urlpatterns = [
 
     # Leave Types
-    path("types/list/", LeaveTypeListAPIView.as_view()),
-    path("types/create/", LeaveTypeCreateAPIView.as_view()),
-    path("types/update/", LeaveTypeUpdateAPIView.as_view()),
-    path("types/deactivate/", LeaveTypeDeactivateAPIView.as_view()),
+    path("types/list/", LeaveTypeListAPIView.as_view()),                                               #E #A
+    path("types/create/", LeaveTypeCreateAPIView.as_view()),                                           #A
+    path("types/update/", LeaveTypeUpdateAPIView.as_view()),                                           #A
+    path("types/deactivate/", LeaveTypeDeactivateAPIView.as_view()),                                   #A
 
     # Leave Balances
-    path("balances/my/", MyLeaveBalanceListAPIView.as_view()),
-    path("balances/list/", OrganizationLeaveBalanceListAPIView.as_view()),
-    path("balances/initialize/", LeaveBalanceInitializeAPIView.as_view()),
-    path("balances/adjust/", LeaveBalanceAdjustAPIView.as_view()),
+    path("balances/my/", MyLeaveBalanceListAPIView.as_view()),                                         #E
+    path("balances/list/", OrganizationLeaveBalanceListAPIView.as_view()),                             #A
+    path("balances/initialize/", LeaveBalanceInitializeAPIView.as_view()),                             #A
+    path("balances/adjust/", LeaveBalanceAdjustAPIView.as_view()),                                     #A
 
     # Leave Applications
-    path("applications/create/", LeaveApplicationCreateAPIView.as_view()),
-    path("applications/my/", MyLeaveApplicationListAPIView.as_view()),
-    path("applications/list/", OrganizationLeaveApplicationListAPIView.as_view()),
-    path("applications/review/", LeaveApplicationReviewAPIView.as_view()),
-    path("applications/cancel/my/", MyLeaveApplicationCancelAPIView.as_view()),
-    path("applications/cancel/organization/", OrganizationLeaveApplicationCancelAPIView.as_view()),
+    path("applications/create/", LeaveApplicationCreateAPIView.as_view()),                             #E
+    path("applications/my/", MyLeaveApplicationListAPIView.as_view()),                                 #E
+    path("applications/list/", OrganizationLeaveApplicationListAPIView.as_view()),                     #A
+    path("applications/review/", LeaveApplicationReviewAPIView.as_view()),                             #A
+    path("applications/cancel/my/", MyLeaveApplicationCancelAPIView.as_view()),                        #E
+    path("applications/cancel/organization/", OrganizationLeaveApplicationCancelAPIView.as_view()),    #A
 
     # Leave Transactions
-    path("transactions/list/", OrganizationLeaveTransactionListAPIView.as_view()),
+    path("transactions/list/", OrganizationLeaveTransactionListAPIView.as_view()),                     #A
 ]

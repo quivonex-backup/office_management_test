@@ -630,3 +630,32 @@ KEY NOTES FOR FRONTEND — EMPLOYEE SIDE
     (without OTP reset), the endpoint is:
     POST /accounts/change-password/ with
     { old_password, new_password, confirm_password }
+
+
+================================================================================
+SECTION — MY ACCESS (my-profile fields, menu)
+================================================================================
+
+--------------------------------------------------------------------------------
+A. POST /accounts/my-profile/   (existing; fields ADDED, nothing removed)
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+data = existing user fields (id, username, email, mobile, role, role_details, ...) +
+{
+  "account_role": "Employee",                  // accounts.Role name or null
+  "is_org_owner": false,
+  "organization": { "id": 3, "name": "Quivonex" },          // null if none
+  "employee": {                                              // null if no Employee row
+    "id": 12, "employee_code": "EMP-000012", "full_name": "Priya Shah",
+    "branch":      { "id": 1, "name": "Pune HQ" },           // or null
+    "department":  { "id": 4, "name": "Engineering" },       // id null = legacy text only
+    "designation": { "id": 7, "name": "Software Engineer" },
+    "reports_to":  { "id": 9, "full_name": "Vikram Rao" }    // or null
+  },
+  "access_role": { "id": 2, "name": "HR Executive" },        // or null
+  "permissions": ["applicant.create", "applicant.view", "dashboard.view", ...]
+}
+
+--------------------------------------------------------------------------------
+B. POST /accounts/branch/list/   (any member, for dropdowns)
+--------------------------------------------------------------------------------
+  Same response as the admin document (branch objects).

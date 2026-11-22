@@ -1,0 +1,23 @@
+================================================================================
+CALENDAR (weekly offs, holidays, employee calendar) — UI GUIDE (for the UI designer / frontend)
+================================================================================
+Who      : Admin side sets rules; employees view their calendar
+Apps     : Web panel (setup); employee app (calendar)
+Details  : request/response fields are in admin.txt, employee.txt
+Tags     : urls.py marks each endpoint  #SU super admin, #A admin side,
+           #E employee, perm: <code> = permission the caller needs.
+           Show admin screens only when my-profile data.permissions contains
+           the code (organization owner has every code).
+
+SCREENS
+1. Weekly offs (admin)       weekly-offs/list|create|update|deactivate|bulk-create/
+   - Rules are per shift: day of week + optional week of month (2nd/4th Saturday).
+   - bulk-create applies one rule to every active shift (all-or-nothing).
+2. Holidays (admin)          holidays/list|create|update|deactivate|bulk-import/
+   - Organization-wide; PAID / UNPAID; one holiday per date.
+3. My calendar (employee)    employee/  month view; day_type = WORKING_DAY /
+                             WEEKLY_OFF / HOLIDAY / NO_SHIFT_ASSIGNED
+
+PROCESS
+  Shifts (attendance) -> weekly offs -> holidays for the year -> employees see
+  their calendar; attendance and leave use it to count working days.

@@ -410,3 +410,55 @@ KEY NOTES FOR FRONTEND — ADMIN SIDE
 7. NO ROLE MANAGEMENT HERE
    Role assignment (Admin, Manager, etc.) happens in /accounts/.
    Employee creation only assigns the "Employee" role by default.
+
+
+================================================================================
+SECTION — ORGANIZATION LINKS (branch, department, designation, access role, manager)
+================================================================================
+
+--------------------------------------------------------------------------------
+A. DEPARTMENT / DESIGNATION   (list: any member; others: org.manage)
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+POST /employees/department/list/        { "search"?: "", "is_active"?: true }
+POST /employees/department/create/      { "name": "Engineering", "code"?: "ENG" }
+POST /employees/department/update/      { "department_id": 4, "name"?: "...", "code"?: "..." }
+POST /employees/department/deactivate/  { "department_id": 4 }
+
+POST /employees/designation/list/       { "search"?: "", "is_active"?: true }
+POST /employees/designation/create/     { "name": "Software Engineer" }
+POST /employees/designation/update/     { "designation_id": 7, "name": "..." }
+POST /employees/designation/deactivate/ { "designation_id": 7 }
+
+Department: { "id", "name", "code", "is_active", "employee_count", "created_at", "updated_at" }
+Designation: { "id", "name", "is_active", "employee_count", "created_at", "updated_at" }
+Renaming updates the text field on linked employees. Deactivate refused while in use.
+
+--------------------------------------------------------------------------------
+B. EMPLOYEES (existing endpoints; fields ADDED)
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+Permissions now enforced:
+  /employees/create/        employee.update  (+ employee.create_user when create_user=true)
+  /employees/create-user/   employee.create_user
+  /employees/update/        employee.update
+  /employees/deactivate/    employee.update
+  (list/detail scope comes in batch 2)
+
+create / update accept (all optional; blank or null clears the link):
+  "branch_id", "department_id", "designation_id",
+  "access_role_id"  (also needs access.manage),
+  "reports_to_id"   (same organization; loops rejected)
+  Old clients may keep sending "department"/"designation" text: when it matches
+  a master name the link is set; sending department_id overwrites the text.
+
+list / detail / my-profile (employees app) rows gain:
+  "branch":          { "id", "name" } | null
+  "department_ref":  { "id", "name" } | null
+  "designation_ref": { "id", "name" } | null
+  "access_role":     { "id", "name" } | null
+  "reports_to":      { "id", "employee_code", "full_name" } | null
+list filters added: branch_id, department_id, designation_id, access_role_id, reports_to_id
+
+Errors (400): errors.<field> e.g.
+  { "branch_id": ["Active branch not found in this organization."] }
+  { "access_role_id": ["You do not have permission to assign access roles."] }
+  { "reports_to_id": ["This reporting manager would create a reporting loop."] }

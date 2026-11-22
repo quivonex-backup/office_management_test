@@ -1,0 +1,23 @@
+================================================================================
+EXPENSES (company expenses, recurring expenses, reimbursements) — UI GUIDE (for the UI designer / frontend)
+================================================================================
+Who      : Owner / finance (company expenses); employees (reimbursement claims); approvers
+Apps     : Web panel; employee app (reimbursements)
+Details  : request/response fields are in admin.txt, employee.txt
+Tags     : urls.py marks each endpoint  #SU super admin, #A admin side,
+           #E employee, perm: <code> = permission the caller needs.
+           Show admin screens only when my-profile data.permissions contains
+           the code (organization owner has every code).
+
+SCREENS (admin side)
+1. Expenses                  create|list|detail|update|deactivate/   (vendor, project, payment status)
+2. Recurring expenses        recurring/*  + monthly entries recurring/entries/*
+3. Reimbursement requests    reimbursements/list/ -> reimbursements/review/ -> reimbursements/mark-paid/
+SCREENS (employee)
+1. My claims                 reimbursements/my/, reimbursements/detail/
+2. New claim                 reimbursements/create/ (multipart, receipts)
+3. Cancel                    reimbursements/cancel/ (PENDING only)
+PROCESS
+  Claim PENDING -> APPROVED / REJECTED -> PAID (payment method + reference).
+COMING IN BATCH 2
+  reimbursement.review / reimbursement.pay enforced; nobody approves their own claim; scope on list.

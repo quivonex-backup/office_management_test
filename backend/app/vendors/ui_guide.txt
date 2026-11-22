@@ -1,0 +1,17 @@
+================================================================================
+VENDORS — UI GUIDE (for the UI designer / frontend)
+================================================================================
+Who      : Owner / admin side
+Apps     : Web panel
+Details  : request/response fields are in admin.txt
+Tags     : urls.py marks each endpoint  #SU super admin, #A admin side,
+           #E employee, perm: <code> = permission the caller needs.
+           Show admin screens only when my-profile data.permissions contains
+           the code (organization owner has every code).
+
+SCREENS
+1. Vendor list               list/
+2. Vendor form               create/, update/
+3. Vendor detail             detail/, deactivate/
+USED BY
+  expenses (vendor dropdown) and recurring expenses.

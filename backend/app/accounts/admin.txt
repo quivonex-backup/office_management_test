@@ -450,7 +450,8 @@ KEY NOTES FOR FRONTEND — ADMIN SIDE
         org.owner == user.id
    Both checks together confirm ownership. role_details.name alone is
    not enough — a super admin might also be labeled "Admin" by role,
-   and a downgraded previous owner becomes "Accountant" not "Admin".
+   and a downgraded previous owner becomes "Employee" not "Admin".
+   Simpler (batch 1): use my-profile data.is_org_owner and data.permissions.
 
 2. ADMIN IS NOT AN EMPLOYEE
    As an Admin, you have a User row but NO Employee row.
@@ -491,12 +492,11 @@ KEY NOTES FOR FRONTEND — ADMIN SIDE
 7. ASSIGN-USER CANNOT TOUCH ADMIN ROLE
    You cannot assign anyone the "Admin" role through /assign-user/.
    Only super admin can create a new owner via /assign-owner/ — which
-   automatically downgrades you to "Accountant" and makes the new user
+   automatically downgrades you to "Employee" and makes the new user
    the Admin.
 
 8. ROLE HIERARCHY AT A GLANCE
    - Admin role    → always exactly 1 per org (the owner)
-   - Accountant    → role assigned to a demoted previous owner
    - Employee      → default role for members
    - Custom roles  → you can create more roles if super admin allows,
                      but assignment via /assign-user/ is the only way
@@ -509,3 +509,77 @@ KEY NOTES FOR FRONTEND — ADMIN SIDE
     /change-password/ has Django validators commented out. Users can
     set "123" as their password. If your org needs strong passwords,
     flag to backend for re-enabling validators on this endpoint.
+
+
+================================================================================
+SECTION — ORGANIZATION STRUCTURE + ACCESS (branches, access roles)
+================================================================================
+CONCEPTS
+  accounts.Role   (unchanged)  Admin = organization owner, Employee = everyone else.
+  Access role     (new, per organization) e.g. HR Manager, HR Executive,
+                  Department Manager, Payroll Manager. Holds permission codes.
+                  One access role per employee (Employee.access_role).
+  Branch          (new, per organization) an office of the same company.
+                  Has its own GPS point + radius (used by attendance from batch 2).
+  Department / Designation (new, per organization) dropdown masters.
+
+  Who has which permission:
+    - Organization owner        -> every code.
+    - Employee with access role -> the role's codes + self-service codes.
+    - Employee without role     -> self-service codes only:
+                                   dashboard.view, attendance.view_self,
+                                   leave.apply, payroll.view_self
+    - Super admin               -> nothing inside organizations.
+
+  Build the menu from my-profile data.permissions (one menu for everyone).
+
+  New organizations get the 4 default access roles automatically.
+  Existing organizations get them from: python manage.py seed_org_access
+
+--------------------------------------------------------------------------------
+A. BRANCH   (list: any member; create/update/deactivate: org.manage)
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+POST /accounts/branch/list/        { "search"?: "pune", "is_active"?: true }
+POST /accounts/branch/create/      { "name": "Pune HQ", "code"?: "PUN", "address"?: "...",
+                                     "city"?: "Pune", "state_id"?: 21,
+                                     "latitude"?: 18.5204, "longitude"?: 73.8567,
+                                     "allowed_radius_meters"?: 150 }
+POST /accounts/branch/update/      { "branch_id": 1, ...only changed fields }
+POST /accounts/branch/deactivate/  { "branch_id": 1 }
+
+Branch object:
+{ "id": 1, "name": "Pune HQ", "code": "PUN", "address": null, "city": "Pune",
+  "state_id": 21, "state_name": "Maharashtra", "latitude": "18.520400",
+  "longitude": "73.856700", "allowed_radius_meters": 150, "is_active": true,
+  "employee_count": 14, "created_at": "...", "updated_at": "..." }
+
+Rules: name unique per organization (case-insensitive); latitude and longitude
+together or neither; allowed_radius_meters null = attendance settings radius;
+deactivate refused while active employees are assigned
+("This branch is assigned to N active employee(s). Move them first.").
+
+--------------------------------------------------------------------------------
+B. PERMISSIONS + ACCESS ROLES   (access.manage)
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+POST /accounts/permission/list/      {}
+  data: [ { "code": "applicant.create", "group": "Applicants", "label": "Create applicant" }, ... ]
+  Use group for the matrix sections.
+
+POST /accounts/access-role/list/     { "is_active"?: true }
+  data: [ { "id": 2, "name": "HR Executive", "description": "...", "is_active": true,
+            "permission_codes": ["applicant.create", ...], "employee_count": 3,
+            "created_at": "...", "updated_at": "..." } ]
+
+POST /accounts/access-role/create/   { "name": "Team Lead", "description"?: "...",
+                                       "permission_codes": ["leave.view_team", "leave.approve"] }
+POST /accounts/access-role/update/   { "access_role_id": 5, "name"?: "...", "description"?: "...",
+                                       "permission_codes"?: [...] }   // full replacement when sent
+POST /accounts/access-role/deactivate/ { "access_role_id": 5 }        // refused while assigned
+
+Unknown permission code -> 400 with errors.permission_codes.
+
+--------------------------------------------------------------------------------
+C. Assigning an access role to an employee
+--------------------------------------------------------------------------------
+  Use /employees/update/ with "access_role_id" (needs access.manage).
+  See employees/admin.txt, section ORGANIZATION LINKS.

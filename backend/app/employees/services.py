@@ -187,3 +187,110 @@ def create_employee_user(employee):
     )
 
     return user, generated_password
+
+
+# =========================================================
+# ORGANIZATION ASSIGNMENTS (batch 1)
+# branch / department / designation / access role / reporting manager
+# =========================================================
+ASSIGNMENT_KEYS = ("branch_id", "department_id", "designation_id", "access_role_id", "reports_to_id")
+
+
+def _is_blank(value):
+    return value is None or (isinstance(value, str) and value.strip().lower() in ("", "null", "none"))
+
+
+def resolve_org_assignments(data, organization, employee=None, can_assign_access=True):
+    """
+    Validate the assignment keys present in `data` (all optional).
+    A blank / null value clears the link.
+
+    Returns (changes, errors):
+      changes: {"branch": obj|None, "department_ref": ..., "designation_ref": ...,
+                "access_role": ..., "reports_to": ...}  (only keys that were sent)
+      errors:  {field: [message]}
+    """
+    from app.accounts.models import AccessRole, Branch
+    from common.services import would_create_reporting_cycle
+    from .models import Department, Designation
+
+    lookups = {
+        "branch_id": ("branch", Branch, "Branch"),
+        "department_id": ("department_ref", Department, "Department"),
+        "designation_id": ("designation_ref", Designation, "Designation"),
+        "access_role_id": ("access_role", AccessRole, "Access role"),
+        "reports_to_id": ("reports_to", Employee, "Reporting manager"),
+    }
+
+    changes, errors = {}, {}
+    for key in ASSIGNMENT_KEYS:
+        if key not in data:
+            continue
+        attr, model, label = lookups[key]
+        value = data.get(key)
+
+        if key == "access_role_id" and not can_assign_access:
+            errors[key] = ["You do not have permission to assign access roles."]
+            continue
+
+        if _is_blank(value):
+            changes[attr] = None
+            continue
+
+        try:
+            pk = int(value)
+        except (TypeError, ValueError):
+            errors[key] = [f"{label} id must be a number."]
+            continue
+
+        obj = model.objects.filter(pk=pk, organization=organization, is_active=True).first()
+        if obj is None:
+            errors[key] = [f"Active {label.lower()} not found in this organization."]
+            continue
+        changes[attr] = obj
+
+    manager = changes.get("reports_to")
+    if manager is not None and employee is not None and would_create_reporting_cycle(employee, manager):
+        errors["reports_to_id"] = ["This reporting manager would create a reporting loop."]
+
+    return changes, errors
+
+
+def apply_org_assignments(employee, changes, text_sent=None):
+    """
+    Apply `changes` from resolve_org_assignments and keep the legacy text
+    fields in step. `text_sent` = set of legacy text fields ("department",
+    "designation") the client sent without the matching *_id: those are
+    linked to a master with the same name when one exists.
+    Saves only the changed fields. Returns the list of saved field names.
+    """
+    from .models import Department, Designation
+
+    fields = []
+    for attr, obj in changes.items():
+        setattr(employee, attr, obj)
+        fields.append(attr)
+        if attr == "department_ref":
+            employee.department = obj.name if obj else None
+            fields.append("department")
+        elif attr == "designation_ref":
+            employee.designation = obj.name if obj else None
+            fields.append("designation")
+
+    for text_field, ref_attr, model in (
+        ("department", "department_ref", Department),
+        ("designation", "designation_ref", Designation),
+    ):
+        if text_sent and text_field in text_sent and ref_attr not in changes:
+            raw = (getattr(employee, text_field) or "").strip()
+            match = (
+                model.objects.filter(organization=employee.organization, name__iexact=raw, is_active=True).first()
+                if raw else None
+            )
+            setattr(employee, ref_attr, match)
+            fields.append(ref_attr)
+
+    if fields:
+        fields = sorted(set(fields)) + ["updated_at"]
+        employee.save(update_fields=fields)
+    return fields

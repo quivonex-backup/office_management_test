@@ -421,3 +421,102 @@ class DatabaseBackupRestoreSerializer(serializers.Serializer):
             )
 
         return value
+
+
+# =========================================================
+# BATCH 1: BRANCH / ACCESS ROLE / PERMISSION
+# =========================================================
+from .models import Branch, AccessRole, Permission  # noqa: E402
+from .permission_catalog import ALL_CODES  # noqa: E402
+from app.location_master.models import StateMaster  # noqa: E402
+
+
+class _OrgUniqueNameMixin:
+    """Case-insensitive unique `name` within context['organization']."""
+
+    def validate_name(self, value):
+        value = (value or "").strip()
+        if not value:
+            raise serializers.ValidationError("Name is required.")
+        organization = self.context["organization"]
+        qs = self.Meta.model.objects.filter(organization=organization, name__iexact=value)
+        if self.instance is not None:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError("This name already exists in your organization.")
+        return value
+
+
+class BranchSerializer(serializers.ModelSerializer):
+    state_id = serializers.IntegerField(source="state.id", read_only=True, allow_null=True)
+    state_name = serializers.CharField(source="state.state_name", read_only=True, allow_null=True)
+    employee_count = serializers.IntegerField(read_only=True, default=0)
+
+    class Meta:
+        model = Branch
+        fields = [
+            "id", "name", "code", "address", "city", "state_id", "state_name",
+            "latitude", "longitude", "allowed_radius_meters",
+            "is_active", "employee_count", "created_at", "updated_at",
+        ]
+
+
+class BranchWriteSerializer(_OrgUniqueNameMixin, serializers.ModelSerializer):
+    state_id = serializers.PrimaryKeyRelatedField(
+        source="state", queryset=StateMaster.objects.filter(is_active=True),
+        required=False, allow_null=True,
+    )
+
+    class Meta:
+        model = Branch
+        fields = [
+            "name", "code", "address", "city", "state_id",
+            "latitude", "longitude", "allowed_radius_meters",
+        ]
+
+    def validate(self, attrs):
+        lat = attrs.get("latitude", getattr(self.instance, "latitude", None))
+        lng = attrs.get("longitude", getattr(self.instance, "longitude", None))
+        if (lat is None) != (lng is None):
+            raise serializers.ValidationError(
+                {"latitude": "Send latitude and longitude together, or neither."}
+            )
+        if lat is not None and not (-90 <= lat <= 90):
+            raise serializers.ValidationError({"latitude": "Latitude must be between -90 and 90."})
+        if lng is not None and not (-180 <= lng <= 180):
+            raise serializers.ValidationError({"longitude": "Longitude must be between -180 and 180."})
+        return attrs
+
+
+class PermissionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Permission
+        fields = ["code", "group", "label"]
+
+
+class AccessRoleSerializer(serializers.ModelSerializer):
+    permission_codes = serializers.SerializerMethodField()
+    employee_count = serializers.IntegerField(read_only=True, default=0)
+
+    class Meta:
+        model = AccessRole
+        fields = [
+            "id", "name", "description", "is_active",
+            "permission_codes", "employee_count", "created_at", "updated_at",
+        ]
+
+    def get_permission_codes(self, obj):
+        return sorted(p.code for p in obj.permissions.all())
+
+
+class AccessRoleWriteSerializer(_OrgUniqueNameMixin, serializers.ModelSerializer):
+    permission_codes = serializers.ListField(
+        child=serializers.ChoiceField(choices=ALL_CODES), required=False, allow_empty=True,
+    )
+
+    class Meta:
+        model = AccessRole
+        fields = ["name", "description", "permission_codes"]
+
+    def validate_permission_codes(self, value):
+        return sorted(set(value))

@@ -1,5 +1,5 @@
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Count, Q
 from django.contrib.auth import get_user_model
 
 from rest_framework import status
@@ -8,7 +8,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.exceptions import ValidationError
 
-from .models import Employee, EmployeeDocument
+from .models import Department, Designation, Employee, EmployeeDocument
 from app.accounts.models import Role, OrganizationMembership
 
 from .serializers import (
@@ -17,12 +17,17 @@ from .serializers import (
     EmployeeDetailSerializer,
     EmployeeUpdateSerializer,
     MyEmployeeProfileSerializer,
+    DepartmentSerializer,
+    DepartmentWriteSerializer,
+    DesignationSerializer,
+    DesignationWriteSerializer,
 )
 
 from common.services import get_user_organization, get_current_employee
 from common.s3_utils import upload_to_s3, delete_from_s3
 from app.audit.services import log_activity
-from .services import create_employee_user
+from .services import create_employee_user, resolve_org_assignments, apply_org_assignments
+from common.permissions import OrgAPIView, require_perm, has_perm
 
 
 
@@ -43,6 +48,10 @@ class EmployeeCreateAPIView(APIView):
         if error_response:
             return error_response
 
+        denied = require_perm(request, organization, "employee.update")
+        if denied:
+            return denied
+
         # -------------------------------------------------
         # VALIDATE EMPLOYEE DATA
         # -------------------------------------------------
@@ -60,6 +69,33 @@ class EmployeeCreateAPIView(APIView):
 
         create_user = serializer.validated_data.get("create_user", False)
 
+        if create_user and not has_perm(request, organization, "employee.create_user"):
+            return Response(
+                {
+                    "status": False,
+                    "message": "You do not have permission to create user accounts.",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Batch 1: branch / department / designation / access role / manager
+        org_changes, org_errors = resolve_org_assignments(
+            request.data,
+            organization,
+            employee=None,
+            can_assign_access=has_perm(request, organization, "access.manage"),
+        )
+
+        if org_errors:
+            return Response(
+                {
+                    "status": False,
+                    "message": "Validation failed.",
+                    "errors": org_errors,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         # -------------------------------------------------
         # CREATE EMPLOYEE
         # -------------------------------------------------
@@ -74,6 +110,12 @@ class EmployeeCreateAPIView(APIView):
         # -------------------------------------------------
         employee.employee_code = f"EMP-{employee.id:06d}"
         employee.save(update_fields=["employee_code"])
+
+        apply_org_assignments(
+            employee,
+            org_changes,
+            text_sent={f for f in ("department", "designation") if f in request.data},
+        )
 
         # -------------------------------------------------
         # CREATE USER ACCOUNT IF REQUESTED
@@ -257,6 +299,10 @@ class EmployeeUserCreateAPIView(APIView):
         if error_response:
             return error_response
 
+        denied = require_perm(request, organization, "employee.create_user")
+        if denied:
+            return denied
+
         # -------------------------------------------------
         # VALIDATE EMPLOYEE ID
         # -------------------------------------------------
@@ -404,7 +450,30 @@ class EmployeeListAPIView(APIView):
         employees = Employee.objects.filter(
             organization=organization,
             is_active=True,
-        )
+        ).select_related(
+            "work_state", "branch", "department_ref", "designation_ref",
+            "access_role", "reports_to",
+        ).prefetch_related("documents")
+
+        # -------------------------------------------------
+        # FILTERS (batch 1)
+        # -------------------------------------------------
+        for key, lookup in (
+            ("branch_id", "branch_id"),
+            ("department_id", "department_ref_id"),
+            ("designation_id", "designation_ref_id"),
+            ("access_role_id", "access_role_id"),
+            ("reports_to_id", "reports_to_id"),
+        ):
+            value = request.data.get(key)
+            if value not in (None, ""):
+                try:
+                    employees = employees.filter(**{lookup: int(value)})
+                except (TypeError, ValueError):
+                    return Response(
+                        {"status": False, "message": f"{key} must be a number."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
 
         # -------------------------------------------------
         # SEARCH
@@ -535,6 +604,10 @@ class EmployeeUpdateAPIView(APIView):
         if error_response:
             return error_response
 
+        denied = require_perm(request, organization, "employee.update")
+        if denied:
+            return denied
+
         employee_id = request.data.get("employee_id")
 
         if not employee_id:
@@ -618,6 +691,32 @@ class EmployeeUpdateAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Batch 1: branch / department / designation / access role / manager
+        org_changes, org_errors = resolve_org_assignments(
+            request.data,
+            organization,
+            employee=employee,
+            can_assign_access=has_perm(request, organization, "access.manage"),
+        )
+
+        if org_errors:
+            return Response(
+                {
+                    "status": False,
+                    "message": "Validation failed.",
+                    "errors": org_errors,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        old_data["org_links"] = {
+            "branch_id": employee.branch_id,
+            "department_id": employee.department_ref_id,
+            "designation_id": employee.designation_ref_id,
+            "access_role_id": employee.access_role_id,
+            "reports_to_id": employee.reports_to_id,
+        }
+
         validated_data = serializer.validated_data
         User = get_user_model()
 
@@ -689,6 +788,12 @@ class EmployeeUpdateAPIView(APIView):
 
         employee = serializer.save(
             updated_by=request.user,
+        )
+
+        apply_org_assignments(
+            employee,
+            org_changes,
+            text_sent={f for f in ("department", "designation") if f in request.data},
         )
 
         # -------------------------------------------------
@@ -858,6 +963,14 @@ class EmployeeUpdateAPIView(APIView):
             ),
         }
 
+        new_data["org_links"] = {
+            "branch_id": employee.branch_id,
+            "department_id": employee.department_ref_id,
+            "designation_id": employee.designation_ref_id,
+            "access_role_id": employee.access_role_id,
+            "reports_to_id": employee.reports_to_id,
+        }
+
         if profile_photo_changed:
             new_data["profile_photo_changed"] = True
             new_data["old_profile_photo"] = old_profile_photo
@@ -913,6 +1026,10 @@ class EmployeeDeactivateAPIView(APIView):
 
         if error_response:
             return error_response
+
+        denied = require_perm(request, organization, "employee.update")
+        if denied:
+            return denied
 
         employee_id = request.data.get("employee_id")
 
@@ -1296,3 +1413,143 @@ class MyEmployeeProfileAPIView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+# =========================================================
+# =========================================================
+# DEPARTMENT / DESIGNATION MASTERS (per organization)
+# list = any member; create / update / deactivate = org.manage
+# =========================================================
+# =========================================================
+class _MasterBase(OrgAPIView):
+    model = None
+    read_serializer = None
+    write_serializer = None
+    id_field = None       # "department_id"
+    label = None          # "Department"
+    module = None         # "DEPARTMENT"
+    search_fields = ("name",)
+
+    def queryset(self, organization):
+        return self.model.objects.filter(organization=organization).annotate(
+            employee_count=Count("employees", filter=Q(employees__is_active=True), distinct=True)
+        )
+
+    def serialize(self, organization, pk):
+        return self.read_serializer(self.queryset(organization).get(pk=pk)).data
+
+
+class _MasterList(_MasterBase):
+    def post(self, request):
+        organization, error = get_user_organization(request)
+        if error:
+            return error
+        qs = self.queryset(organization)
+        search = (request.data.get("search") or "").strip()
+        if search:
+            q = Q()
+            for f in self.search_fields:
+                q |= Q(**{f"{f}__icontains": search})
+            qs = qs.filter(q)
+        is_active = self.parse_bool(request.data.get("is_active"))
+        if is_active is not None:
+            qs = qs.filter(is_active=is_active)
+        return self.ok(f"{self.label}s fetched successfully.",
+                       self.read_serializer(qs.order_by("name"), many=True).data)
+
+
+class _MasterCreate(_MasterBase):
+    @transaction.atomic
+    def post(self, request):
+        organization, error = get_user_organization(request)
+        if error:
+            return error
+        denied = require_perm(request, organization, "org.manage")
+        if denied:
+            return denied
+        serializer = self.write_serializer(data=request.data, context={"organization": organization})
+        if not serializer.is_valid():
+            return self.fail("Validation failed.", serializer.errors)
+        obj = serializer.save(organization=organization, created_by=request.user, updated_by=request.user)
+        data = self.serialize(organization, obj.pk)
+        log_activity(request=request, action="CREATE", module=self.module, object_type=self.model.__name__,
+                     object_id=obj.id, description=f"{self.label} '{obj.name}' created.", new_data=data)
+        return self.ok(f"{self.label} created successfully.", data, status.HTTP_201_CREATED)
+
+
+class _MasterUpdate(_MasterBase):
+    @transaction.atomic
+    def post(self, request):
+        organization, error = get_user_organization(request)
+        if error:
+            return error
+        denied = require_perm(request, organization, "org.manage")
+        if denied:
+            return denied
+        pk = request.data.get(self.id_field)
+        if not pk:
+            return self.fail(f"{self.id_field} is required.")
+        obj = self.model.objects.filter(pk=pk, organization=organization).first()
+        if not obj:
+            return self.fail(f"{self.label} not found.", http_status=status.HTTP_404_NOT_FOUND)
+
+        old = self.serialize(organization, obj.pk)
+        serializer = self.write_serializer(obj, data=request.data, partial=True,
+                                           context={"organization": organization})
+        if not serializer.is_valid():
+            return self.fail("Validation failed.", serializer.errors)
+        obj = serializer.save(updated_by=request.user)
+
+        # Keep the legacy text field on linked employees in step with a rename.
+        if "name" in serializer.validated_data and old["name"] != obj.name:
+            text_field = "department" if self.model is Department else "designation"
+            obj.employees.update(**{text_field: obj.name})
+
+        data = self.serialize(organization, obj.pk)
+        log_activity(request=request, action="UPDATE", module=self.module, object_type=self.model.__name__,
+                     object_id=obj.id, description=f"{self.label} '{obj.name}' updated.",
+                     old_data=old, new_data=data)
+        return self.ok(f"{self.label} updated successfully.", data)
+
+
+class _MasterDeactivate(_MasterBase):
+    @transaction.atomic
+    def post(self, request):
+        organization, error = get_user_organization(request)
+        if error:
+            return error
+        denied = require_perm(request, organization, "org.manage")
+        if denied:
+            return denied
+        pk = request.data.get(self.id_field)
+        if not pk:
+            return self.fail(f"{self.id_field} is required.")
+        obj = self.model.objects.filter(pk=pk, organization=organization, is_active=True).first()
+        if not obj:
+            return self.fail(f"Active {self.label.lower()} not found.", http_status=status.HTTP_404_NOT_FOUND)
+        in_use = obj.employees.filter(is_active=True).count()
+        if in_use:
+            return self.fail(f"This {self.label.lower()} is assigned to {in_use} active employee(s). Reassign them first.")
+        obj.is_active = False
+        obj.updated_by = request.user
+        obj.save(update_fields=["is_active", "updated_by", "updated_at"])
+        log_activity(request=request, action="DELETE", module=self.module, object_type=self.model.__name__,
+                     object_id=obj.id, description=f"{self.label} '{obj.name}' deactivated.",
+                     old_data={"is_active": True}, new_data={"is_active": False})
+        return self.ok(f"{self.label} deactivated successfully.", {"id": obj.id, "is_active": False})
+
+
+_DEPT = dict(model=Department, read_serializer=DepartmentSerializer, write_serializer=DepartmentWriteSerializer,
+             id_field="department_id", label="Department", module="DEPARTMENT", search_fields=("name", "code"))
+_DESIG = dict(model=Designation, read_serializer=DesignationSerializer, write_serializer=DesignationWriteSerializer,
+              id_field="designation_id", label="Designation", module="DESIGNATION")
+
+DepartmentListAPIView = type("DepartmentListAPIView", (_MasterList,), _DEPT)
+DepartmentCreateAPIView = type("DepartmentCreateAPIView", (_MasterCreate,), _DEPT)
+DepartmentUpdateAPIView = type("DepartmentUpdateAPIView", (_MasterUpdate,), _DEPT)
+DepartmentDeactivateAPIView = type("DepartmentDeactivateAPIView", (_MasterDeactivate,), _DEPT)
+
+DesignationListAPIView = type("DesignationListAPIView", (_MasterList,), _DESIG)
+DesignationCreateAPIView = type("DesignationCreateAPIView", (_MasterCreate,), _DESIG)
+DesignationUpdateAPIView = type("DesignationUpdateAPIView", (_MasterUpdate,), _DESIG)
+DesignationDeactivateAPIView = type("DesignationDeactivateAPIView", (_MasterDeactivate,), _DESIG)

@@ -1,4 +1,3 @@
-
 # ==============================
 # PYTHON CACHE
 # ==============================
@@ -18,7 +17,7 @@ backend/venv/
 backend/.venv/
 
 # ==============================
-# DJANGO
+# DJANGO & MIGRATIONS
 # ==============================
 *.log
 local_settings.py
@@ -26,6 +25,11 @@ db.sqlite3
 db.sqlite3-journal
 staticfiles/
 backend/staticfiles/
+media/
+
+# Ignore migration files, but keep __init__.py
+*/migrations/*.py
+!*/migrations/__init__.py
 
 # ==============================
 # ENVIRONMENT VARIABLES
@@ -39,6 +43,11 @@ backend/staticfiles/
 # ==============================
 secrets/
 firebase-service-account.json
+
+# ==============================
+# FRONTEND (Entire Folder)
+# ==============================
+frontend/
 
 # ==============================
 # TESTING / COVERAGE
@@ -86,9 +95,3 @@ dist/
 .eggs/
 wheels/
 pip-wheel-metadata/
-
-# ==============================
-# OTHER
-# ==============================
-frontend
-.json

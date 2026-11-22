@@ -1,0 +1,39 @@
+================================================================================
+ATTENDANCE (settings, shifts, punch, records, corrections) — UI GUIDE (for the UI designer / frontend)
+================================================================================
+Who      : Employees (punch, own records, corrections); attendance managers / HR / owner (setup, org records, review)
+Apps     : Employee mobile app (punch with selfie + GPS); web panel (admin side)
+Details  : request/response fields are in admin.txt, employee.txt
+Tags     : urls.py marks each endpoint  #SU super admin, #A admin side,
+           #E employee, perm: <code> = permission the caller needs.
+           Show admin screens only when my-profile data.permissions contains
+           the code (organization owner has every code).
+
+SCREENS (employee)
+1. Punch                     punch/  (multipart: selfie, latitude, longitude, gps_accuracy)
+   - One button; the server decides CHECK_IN / CHECK_OUT. Show the backend message
+     on failure (face mismatch, outside location, GPS accuracy, shift ended).
+2. My attendance             my-attendance/ (month view), detail/
+3. My shifts                 my-shifts/ (current_shift + history)
+4. Correction request        my-attendance/correct/ or corrections/create/, list in corrections/list/
+5. Face registration check   face-recognition/
+
+SCREENS (admin side)
+1. Attendance settings       settings/   photo/location required, radius, GPS accuracy,
+                             grace minutes, half-day thresholds, overtime rules, auto absent
+2. Shifts                    shifts/list|create|update|deactivate/
+3. Shift assignments         shift-assignments/* incl. bulk-assign, bulk-assign-pattern, bulk-close
+4. Attendance register       list/  filters employee_id, status, work_date / from_date-to_date
+   - Day detail opens from the row (punches with selfie, distance, face score are inside the row).
+5. Missing attendance        bulk-mark-absent/  (dates up to yesterday)
+6. Correction review         corrections/list/, corrections/review/
+
+PROCESS
+  Settings -> shifts -> assign shifts (and calendar weekly offs) -> employees punch
+  -> managers review PENDING_REVIEW / corrections -> mark missing days absent
+  before payroll.
+
+COMING IN BATCH 2
+  scope = self | team | all on list/ and corrections/list/, permission codes
+  attendance.view_* / attendance.correct / attendance.approve_correction,
+  branch geofence (employee's branch location instead of the organization's).

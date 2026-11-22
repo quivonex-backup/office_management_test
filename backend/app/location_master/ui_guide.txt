@@ -1,0 +1,17 @@
+================================================================================
+LOCATION MASTER (states, districts, talukas) — UI GUIDE (for the UI designer / frontend)
+================================================================================
+Who      : Everyone reads (address dropdowns); super admin maintains the lists
+Apps     : All panels (dropdowns)
+Details  : request/response fields are in admin.txt, usecase.txt
+Tags     : urls.py marks each endpoint  #SU super admin, #A admin side,
+           #E employee, perm: <code> = permission the caller needs.
+           Show admin screens only when my-profile data.permissions contains
+           the code (organization owner has every code).
+
+USE
+  Cascading dropdowns: states/list/ -> districts/list/ {state_id} -> talukas/list/ {district_id}.
+  Cache the state list per session.
+MAINTENANCE (super admin)
+  states/create|deactivate, districts/create|deactivate, talukas/create|deactivate.
+  Note: these are not restricted in code yet; keep them out of the org panel.

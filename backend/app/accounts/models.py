@@ -175,3 +175,94 @@ class DatabaseBackup(models.Model):
 
     def __str__(self):
         return self.file.name
+
+
+# =========================================================
+# BRANCH  (an office of the organization; same legal entity)
+# =========================================================
+class Branch(models.Model):
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="branches")
+    name = models.CharField(max_length=150)
+    code = models.CharField(max_length=30, blank=True, null=True)
+    address = models.TextField(blank=True, null=True)
+    city = models.CharField(max_length=100, blank=True, null=True)
+    state = models.ForeignKey("location_master.StateMaster", on_delete=models.SET_NULL, null=True, blank=True, related_name="branches")
+
+    # Attendance geofence. Empty = use the organization location / setting.
+    latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    allowed_radius_meters = models.PositiveIntegerField(null=True, blank=True)
+
+    is_active = models.BooleanField(default=True, db_index=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="branches_created")
+    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="branches_updated")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "branches"
+        ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(fields=["organization", "name"], name="unique_branch_name_per_org"),
+        ]
+
+    def __str__(self):
+        return f"{self.organization} - {self.name}"
+
+
+# =========================================================
+# PERMISSION  (fixed catalog, see permission_catalog.py)
+# =========================================================
+class Permission(models.Model):
+    code = models.CharField(max_length=60, unique=True)
+    group = models.CharField(max_length=50)
+    label = models.CharField(max_length=150)
+
+    class Meta:
+        db_table = "permissions"
+        ordering = ["group", "code"]
+
+    def __str__(self):
+        return self.code
+
+
+# =========================================================
+# ACCESS ROLE  (per organization: HR Manager, Payroll Manager ...)
+# Not the same as accounts.Role (Admin / Employee), which is untouched.
+# =========================================================
+class AccessRole(models.Model):
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="access_roles")
+    name = models.CharField(max_length=100)
+    description = models.CharField(max_length=255, blank=True, null=True)
+    permissions = models.ManyToManyField(Permission, through="AccessRolePermission", related_name="access_roles")
+
+    is_active = models.BooleanField(default=True, db_index=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="access_roles_created")
+    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="access_roles_updated")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "access_roles"
+        ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(fields=["organization", "name"], name="unique_access_role_name_per_org"),
+        ]
+
+    def __str__(self):
+        return f"{self.organization} - {self.name}"
+
+
+class AccessRolePermission(models.Model):
+    access_role = models.ForeignKey(AccessRole, on_delete=models.CASCADE, related_name="role_permissions")
+    permission = models.ForeignKey(Permission, on_delete=models.CASCADE, related_name="role_permissions")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "access_role_permissions"
+        constraints = [
+            models.UniqueConstraint(fields=["access_role", "permission"], name="unique_access_role_permission"),
+        ]
+
+    def __str__(self):
+        return f"{self.access_role.name} - {self.permission.code}"

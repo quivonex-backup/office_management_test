@@ -1,0 +1,33 @@
+================================================================================
+PAYROLL (settings, salary structures, assignments, runs, payslips) — UI GUIDE (for the UI designer / frontend)
+================================================================================
+Who      : Payroll manager / owner (admin side); employees (payslips); super admin (statutory rates)
+Apps     : Web panel; employee app (payslips)
+Details  : request/response fields are in admin.txt, employee.txt, super-admin.txt, usecase.txt
+Tags     : urls.py marks each endpoint  #SU super admin, #A admin side,
+           #E employee, perm: <code> = permission the caller needs.
+           Show admin screens only when my-profile data.permissions contains
+           the code (organization owner has every code).
+
+SETUP ORDER (show as a checklist on the Payroll page)
+  1. Settings                settings/ (cycle start day, salary basis, overtime, payslip mode)
+  2. Statutory settings      statutory-settings/ (PF / ESI / PT / LWF flags)
+  3. Components              components/list|create/
+  4. Structures              structures/list|create|detail|update|deactivate/
+  5. Salary assignments      assignments/list|create|update|bulk-assign|bulk-close/
+                             (effective_from must be a payroll cycle start date)
+  6. Runs                    runs/preview -> create -> generate -> finalize
+SCREENS
+  - Run page: records/list/ with review flags, records/update-deductions/
+    (manual TDS / other deductions, recompute), payments/record|bulk-record|list/,
+    payslips/download/.
+  - Calculator: calculator/ (simulate a payslip).
+  - Employee: my/payslips/, my/payslips/detail/, my/payslips/download/, my/salary/.
+  - Super admin: statutory-rate-configs/*, statutory-slabs/*.
+RULES TO SHOW
+  - Finalize is blocked by ERROR records and unresolved review flags; explain why.
+  - Missing attendance days set requires_review: mark absent (attendance) then recompute.
+  - Salary revision = close old assignment, create a new one.
+COMING
+  Batch 2: payroll.generate / payroll.finalize / salary.assign / payroll.view_all enforced.
+  Batch 3: annual CTC / monthly gross on assignments and offers.

@@ -70,3 +70,48 @@ Project Management ERP Team
     )
 
     email.send(fail_silently=False)
+
+# =========================================================
+# ORGANIZATION DEFAULTS (batch 1)
+# =========================================================
+def sync_permissions():
+    """Make the Permission table match permission_catalog.PERMISSIONS."""
+    from .models import Permission
+    from .permission_catalog import PERMISSIONS
+
+    for code, group, label in PERMISSIONS:
+        Permission.objects.update_or_create(
+            code=code, defaults={"group": group, "label": label}
+        )
+
+
+def seed_organization_defaults(organization, created_by=None):
+    """
+    Create the four default access roles for a new organization.
+    Existing roles with the same name are left untouched.
+    Returns the list of AccessRole rows created.
+    """
+    from .models import AccessRole, AccessRolePermission, Permission
+    from .permission_catalog import DEFAULT_ACCESS_ROLES
+
+    sync_permissions()
+    by_code = {p.code: p for p in Permission.objects.all()}
+
+    created_roles = []
+    for name, spec in DEFAULT_ACCESS_ROLES.items():
+        role, created = AccessRole.objects.get_or_create(
+            organization=organization,
+            name=name,
+            defaults={
+                "description": spec["description"],
+                "created_by": created_by,
+                "updated_by": created_by,
+            },
+        )
+        if not created:
+            continue
+        AccessRolePermission.objects.bulk_create(
+            [AccessRolePermission(access_role=role, permission=by_code[c]) for c in spec["codes"]]
+        )
+        created_roles.append(role)
+    return created_roles
