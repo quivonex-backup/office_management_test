@@ -462,3 +462,31 @@ Errors (400): errors.<field> e.g.
   { "branch_id": ["Active branch not found in this organization."] }
   { "access_role_id": ["You do not have permission to assign access roles."] }
   { "reports_to_id": ["This reporting manager would create a reporting loop."] }
+
+
+================================================================================
+SECTION — ACCESS + SCOPE (batch 2)
+================================================================================
+
+Permission codes come from the caller's access role (accounts/admin.txt,
+ORGANIZATION STRUCTURE + ACCESS). The organization owner has every code.
+Missing code -> 403 {"status": false, "message": "You do not have permission to perform this action."}
+
+SCOPE (list endpoints marked "scope" below)
+  Request : optional "scope": "self" | "team" | "all"
+  Default : the widest scope the caller has.
+  Clamp   : asking for more than allowed gives the next lower allowed scope
+            (never an error, never more than asked). Invalid value -> 400
+            "scope must be self, team or all."
+  Team    : the caller + everyone below them through reports_to (all levels).
+  Response: same body as before + top-level "scope_applied": "self"|"team"|"all"
+  Show a Mine / My team / Everyone switch with only the allowed options:
+  derive them from my-profile data.permissions.
+
+--------------------------------------------------------------------------------
+Endpoints
+--------------------------------------------------------------------------------
+  list/                                        scope (own row = self, employee.view_team, employee.view_all)
+  detail/                                      own, or in scope (else 403 "You do not have permission to view this employee.")
+  document/upload/, document/delete/           employee.update
+  create/, create-user/, update/, deactivate/  unchanged from batch 1

@@ -280,3 +280,11 @@ KEY NOTES FOR FRONTEND — EMPLOYEE SIDE
    If you leave it empty, the backend falls back to `Employee.upi_id`
    from your profile.
    If neither exists, `upi_link` stays null even when APPROVED, and the
+
+
+================================================================================
+SECTION — CHANGES IN BATCH 2
+================================================================================
+
+- No change to create/, my/, detail/ (own), cancel/.
+- Calling reimbursements/list/ without reviewer rights returns only your own claims.

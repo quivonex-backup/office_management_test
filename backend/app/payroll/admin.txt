@@ -2195,4 +2195,26 @@ HTTP	Message
 Statutory configuration problems in FULL mode (for example a missing PF rate) come back as a 400 with the same message a real payroll run would show.
 
 
+================================================================================
+SECTION — ACCESS (batch 2)
+================================================================================
 
+Salary data is never team-scoped: a caller sees all payroll or nothing.
+Employees keep using my/payslips/, my/payslips/detail/, my/payslips/download/, my/salary/.
+
+--------------------------------------------------------------------------------
+Endpoints (caller needs ANY of the listed codes)
+--------------------------------------------------------------------------------
+  settings/, statutory-settings/                                        settings.manage | payroll.generate
+  components/*, structures/*, calculator/                               salary.assign | payroll.generate
+  assignments/list/                                                     salary.assign | payroll.view_all
+  assignments/create|update|bulk-assign|bulk-close/                     salary.assign
+  runs/preview|create|generate/                                         payroll.generate
+  runs/finalize/                                                        payroll.finalize
+  runs/list|detail/, records/list/, payments/list/, payslips/download/  payroll.view_all | payroll.generate | payroll.finalize
+  records/update-deductions/                                            payroll.generate
+  payments/record|bulk-record/                                          payroll.finalize
+  statutory-rate-configs/*, statutory-slabs/*                           super admin (unchanged)
+
+Default roles: Payroll Manager has every payroll code; HR Manager has
+salary.assign only (structures, assignments, calculator; no runs).

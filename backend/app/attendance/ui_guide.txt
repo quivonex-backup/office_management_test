@@ -33,7 +33,14 @@ PROCESS
   -> managers review PENDING_REVIEW / corrections -> mark missing days absent
   before payroll.
 
-COMING IN BATCH 2
-  scope = self | team | all on list/ and corrections/list/, permission codes
-  attendance.view_* / attendance.correct / attendance.approve_correction,
-  branch geofence (employee's branch location instead of the organization's).
+ACCESS (batch 2)
+  - Register (list/) and corrections: show a Mine / My team / Everyone switch,
+    only with the options the user has (attendance.view_self / view_team /
+    view_all). Send "scope"; read "scope_applied".
+  - Review button only with attendance.approve_correction. The server refuses
+    own requests and people outside the team: show its message.
+  - Setup screens (settings, shifts, assignments): settings.manage.
+    Shift lists are readable with any attendance admin code.
+  - Mark absent: attendance.correct.
+  - Branch geofence: an employee in a branch with a map pin punches against
+    the branch; the punch detail shows verification_details.branch.

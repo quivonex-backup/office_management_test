@@ -572,3 +572,46 @@ KEY NOTES FOR FRONTEND — ADMIN SIDE
 7. ATTENDANCE DETAIL IS ROLE-AWARE
    The same endpoint is used by admin (view any) and employee (view own).
    The backend blocks employees from viewing other employees' records.
+
+
+================================================================================
+SECTION — ACCESS + SCOPE (batch 2)
+================================================================================
+
+Permission codes come from the caller's access role (accounts/admin.txt,
+ORGANIZATION STRUCTURE + ACCESS). The organization owner has every code.
+Missing code -> 403 {"status": false, "message": "You do not have permission to perform this action."}
+
+SCOPE (list endpoints marked "scope" below)
+  Request : optional "scope": "self" | "team" | "all"
+  Default : the widest scope the caller has.
+  Clamp   : asking for more than allowed gives the next lower allowed scope
+            (never an error, never more than asked). Invalid value -> 400
+            "scope must be self, team or all."
+  Team    : the caller + everyone below them through reports_to (all levels).
+  Response: same body as before + top-level "scope_applied": "self"|"team"|"all"
+  Show a Mine / My team / Everyone switch with only the allowed options:
+  derive them from my-profile data.permissions.
+
+--------------------------------------------------------------------------------
+Endpoints
+--------------------------------------------------------------------------------
+  settings/                                settings.manage
+  shifts/list/, shift-assignments/list/    settings.manage | attendance.view_all | attendance.view_team | attendance.correct
+  shifts/create|update|deactivate/         settings.manage
+  shift-assignments/create|update|bulk-*/  settings.manage
+  list/                                    scope (attendance.view_self / view_team / view_all)
+  detail/                                  own record, or a record inside the caller's scope (else 403)
+  corrections/list/                        scope (same codes)
+  corrections/create/                      own record; attendance.correct may file for others
+  corrections/review/                      attendance.approve_correction + record in scope + not own
+  bulk-mark-absent/                        attendance.correct
+
+Review errors (403):
+  "You cannot review your own request."
+  "This record is outside your team."
+
+Punch geofence (branch): the employee's branch latitude/longitude and
+radius are used when the branch has coordinates (radius empty = settings
+radius); otherwise the organization location. Each punch stores
+verification_details.branch {id, name} | null and allowed_radius_meters.

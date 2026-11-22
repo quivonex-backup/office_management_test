@@ -26,6 +26,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from common.services import get_user_organization
+from common.permissions import RequiredPermsMixin
 from app.audit.services import log_activity
 from app.communications.notification_service import notify
 from app.employees.models import Employee
@@ -77,7 +78,7 @@ from .services import (
 # BASE VIEWS
 # =========================================================
 
-class PayrollBaseAPIView(APIView):
+class PayrollBaseAPIView(RequiredPermsMixin, APIView):
     permission_classes = [IsAuthenticated]
     parser_classes = [JSONParser]
 
@@ -417,6 +418,7 @@ class StatutorySlabUpdateAPIView(SuperAdminBaseAPIView):
 # =========================================================
 
 class PayrollSettingsAPIView(PayrollBaseAPIView):
+    required_perms = ("settings.manage", "payroll.generate")
 
     @transaction.atomic
     def post(self, request):
@@ -472,6 +474,7 @@ class PayrollSettingsAPIView(PayrollBaseAPIView):
 # =========================================================
 
 class CompanyStatutorySettingsAPIView(PayrollBaseAPIView):
+    required_perms = ("settings.manage", "payroll.generate")
 
     @transaction.atomic
     def post(self, request):
@@ -527,6 +530,7 @@ class CompanyStatutorySettingsAPIView(PayrollBaseAPIView):
 # =========================================================
 
 class SalaryComponentListAPIView(PayrollBaseAPIView):
+    required_perms = ("salary.assign", "payroll.generate")
 
     def post(self, request):
         organization, err = self.get_organization(request)
@@ -559,6 +563,7 @@ class SalaryComponentListAPIView(PayrollBaseAPIView):
 
 
 class SalaryComponentCreateAPIView(PayrollBaseAPIView):
+    required_perms = ("salary.assign", "payroll.generate")
 
     @transaction.atomic
     def post(self, request):
@@ -617,6 +622,7 @@ class SalaryComponentCreateAPIView(PayrollBaseAPIView):
 # =========================================================
 
 class SalaryStructureListAPIView(PayrollBaseAPIView):
+    required_perms = ("salary.assign", "payroll.generate")
 
     def post(self, request):
         organization, err = self.get_organization(request)
@@ -642,6 +648,7 @@ class SalaryStructureListAPIView(PayrollBaseAPIView):
 
 
 class SalaryStructureCreateAPIView(PayrollBaseAPIView):
+    required_perms = ("salary.assign", "payroll.generate")
 
     @transaction.atomic
     def post(self, request):
@@ -728,6 +735,7 @@ class SalaryStructureCreateAPIView(PayrollBaseAPIView):
 
 
 class SalaryStructureDetailAPIView(PayrollBaseAPIView):
+    required_perms = ("salary.assign", "payroll.generate")
 
     def post(self, request):
         organization, err = self.get_organization(request)
@@ -759,6 +767,7 @@ class SalaryStructureDetailAPIView(PayrollBaseAPIView):
 
 
 class SalaryStructureUpdateAPIView(PayrollBaseAPIView):
+    required_perms = ("salary.assign", "payroll.generate")
 
     @transaction.atomic
     def post(self, request):
@@ -862,6 +871,7 @@ class SalaryStructureUpdateAPIView(PayrollBaseAPIView):
 
 
 class SalaryStructureDeactivateAPIView(PayrollBaseAPIView):
+    required_perms = ("salary.assign", "payroll.generate")
 
     @transaction.atomic
     def post(self, request):
@@ -915,6 +925,7 @@ class SalaryStructureDeactivateAPIView(PayrollBaseAPIView):
 # =========================================================
 
 class SalaryAssignmentListAPIView(PayrollBaseAPIView):
+    required_perms = ("salary.assign", "payroll.view_all")
 
     def post(self, request):
         organization, err = self.get_organization(request)
@@ -952,6 +963,7 @@ class SalaryAssignmentListAPIView(PayrollBaseAPIView):
 
 
 class SalaryAssignmentCreateAPIView(PayrollBaseAPIView):
+    required_perms = ("salary.assign",)
 
     @transaction.atomic
     def post(self, request):
@@ -1000,6 +1012,7 @@ class SalaryAssignmentCreateAPIView(PayrollBaseAPIView):
 
 
 class SalaryAssignmentUpdateAPIView(PayrollBaseAPIView):
+    required_perms = ("salary.assign",)
 
     @transaction.atomic
     def post(self, request):
@@ -1087,6 +1100,7 @@ class SalaryAssignmentUpdateAPIView(PayrollBaseAPIView):
 
 
 class SalaryAssignmentBulkAssignAPIView(PayrollBaseAPIView):
+    required_perms = ("salary.assign",)
 
     @transaction.atomic
     def post(self, request):
@@ -1148,6 +1162,7 @@ class SalaryAssignmentBulkAssignAPIView(PayrollBaseAPIView):
 
 
 class SalaryAssignmentBulkCloseAPIView(PayrollBaseAPIView):
+    required_perms = ("salary.assign",)
 
     @transaction.atomic
     def post(self, request):
@@ -1201,6 +1216,7 @@ class SalaryAssignmentBulkCloseAPIView(PayrollBaseAPIView):
 # =========================================================
 
 class PayrollRunPreviewAPIView(PayrollBaseAPIView):
+    required_perms = ("payroll.generate",)
 
     def post(self, request):
         organization, err = self.get_organization(request)
@@ -1341,6 +1357,7 @@ class PayrollRunPreviewAPIView(PayrollBaseAPIView):
 
 
 class PayrollRunCreateAPIView(PayrollBaseAPIView):
+    required_perms = ("payroll.generate",)
 
     @transaction.atomic
     def post(self, request):
@@ -1394,6 +1411,7 @@ class PayrollRunCreateAPIView(PayrollBaseAPIView):
 
 
 class PayrollRunListAPIView(PayrollBaseAPIView):
+    required_perms = ("payroll.view_all", "payroll.generate", "payroll.finalize")
 
     def post(self, request):
         organization, err = self.get_organization(request)
@@ -1413,6 +1431,7 @@ class PayrollRunListAPIView(PayrollBaseAPIView):
 
 
 class PayrollRunDetailAPIView(PayrollBaseAPIView):
+    required_perms = ("payroll.view_all", "payroll.generate", "payroll.finalize")
 
     def post(self, request):
         organization, err = self.get_organization(request)
@@ -1450,6 +1469,7 @@ class PayrollRunDetailAPIView(PayrollBaseAPIView):
 
 
 class PayrollRunGenerateAPIView(PayrollBaseAPIView):
+    required_perms = ("payroll.generate",)
 
     @transaction.atomic
     def post(self, request):
@@ -1512,6 +1532,7 @@ class PayrollRunGenerateAPIView(PayrollBaseAPIView):
         )
 
 class PayrollRunFinalizeAPIView(PayrollBaseAPIView):
+    required_perms = ("payroll.finalize",)
 
     @transaction.atomic
     def post(self, request):
@@ -1603,6 +1624,7 @@ class PayrollRunFinalizeAPIView(PayrollBaseAPIView):
 # =========================================================
 
 class PayrollRecordListAPIView(PayrollBaseAPIView):
+    required_perms = ("payroll.view_all", "payroll.generate", "payroll.finalize")
 
     def post(self, request):
         organization, err = self.get_organization(request)
@@ -1640,6 +1662,7 @@ class PayrollRecordListAPIView(PayrollBaseAPIView):
 
 
 class PayrollRecordUpdateDeductionsAPIView(PayrollBaseAPIView):
+    required_perms = ("payroll.generate",)
 
     @transaction.atomic
     def post(self, request):
@@ -1742,6 +1765,7 @@ class PayrollRecordUpdateDeductionsAPIView(PayrollBaseAPIView):
 # =========================================================
 
 class PaymentRecordAPIView(PayrollBaseAPIView):
+    required_perms = ("payroll.finalize",)
 
     @transaction.atomic
     def post(self, request):
@@ -1839,6 +1863,7 @@ class PaymentRecordAPIView(PayrollBaseAPIView):
 
 
 class PaymentBulkRecordForRunAPIView(PayrollBaseAPIView):
+    required_perms = ("payroll.finalize",)
 
     @transaction.atomic
     def post(self, request):
@@ -1948,6 +1973,7 @@ class PaymentBulkRecordForRunAPIView(PayrollBaseAPIView):
 
 
 class PaymentListAPIView(PayrollBaseAPIView):
+    required_perms = ("payroll.view_all", "payroll.generate", "payroll.finalize")
 
     def post(self, request):
         organization, err = self.get_organization(request)
@@ -1986,6 +2012,7 @@ class PaymentListAPIView(PayrollBaseAPIView):
 # =========================================================
 
 class PayrollPayslipDownloadAPIView(PayrollBaseAPIView):
+    required_perms = ("payroll.view_all", "payroll.generate", "payroll.finalize")
 
     def post(self, request):
         organization, err = self.get_organization(request)
@@ -2227,6 +2254,7 @@ class MyPayslipDownloadAPIView(PayrollBaseAPIView):
 # =========================================================
 
 class PayrollCalculatorAPIView(PayrollBaseAPIView):
+    required_perms = ("salary.assign", "payroll.generate")
     """
     POST /api/payroll/calculator/
 

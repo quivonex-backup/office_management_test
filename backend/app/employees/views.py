@@ -27,7 +27,7 @@ from common.services import get_user_organization, get_current_employee
 from common.s3_utils import upload_to_s3, delete_from_s3
 from app.audit.services import log_activity
 from .services import create_employee_user, resolve_org_assignments, apply_org_assignments
-from common.permissions import OrgAPIView, require_perm, has_perm
+from common.permissions import OrgAPIView, require_perm, has_perm, resolve_scope
 
 
 
@@ -455,6 +455,18 @@ class EmployeeListAPIView(APIView):
             "access_role", "reports_to",
         ).prefetch_related("documents")
 
+        # Scope (batch 2): all (employee.view_all) | team (employee.view_team)
+        # | self (own row).
+        scope, scope_error = resolve_scope(
+            request, organization, request.data.get("scope"),
+            team_code="employee.view_team", all_code="employee.view_all",
+        )
+
+        if scope_error:
+            return scope_error
+
+        employees = scope.filter(employees, "id")
+
         # -------------------------------------------------
         # FILTERS (batch 1)
         # -------------------------------------------------
@@ -521,6 +533,7 @@ class EmployeeListAPIView(APIView):
                 "status": True,
                 "message": "Employees fetched successfully.",
                 "data": serializer.data,
+                "scope_applied": scope.scope,
             },
             status=status.HTTP_200_OK,
         )
@@ -566,6 +579,20 @@ class EmployeeDetailAPIView(APIView):
                     "message": "Employee not found.",
                 },
                 status=status.HTTP_404_NOT_FOUND,
+            )
+
+        scope, _scope_error = resolve_scope(
+            request, organization,
+            team_code="employee.view_team", all_code="employee.view_all",
+        )
+
+        if scope is None or not scope.allows(employee.id):
+            return Response(
+                {
+                    "status": False,
+                    "message": "You do not have permission to view this employee.",
+                },
+                status=status.HTTP_403_FORBIDDEN,
             )
 
         # -------------------------------------------------
@@ -1131,6 +1158,10 @@ class EmployeeDocumentUploadAPIView(APIView):
         if error_response:
             return error_response
 
+        denied = require_perm(request, organization, "employee.update")
+        if denied:
+            return denied
+
         employee_id = request.data.get("employee_id")
 
         if not employee_id:
@@ -1268,6 +1299,10 @@ class EmployeeDocumentDeleteAPIView(APIView):
 
         if error_response:
             return error_response
+
+        denied = require_perm(request, organization, "employee.update")
+        if denied:
+            return denied
 
         document_id = request.data.get("document_id")
 

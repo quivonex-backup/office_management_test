@@ -738,3 +738,41 @@ KEY NOTES FOR FRONTEND / UI DESIGNER
     The admin panel uses it for: the balance initialize leave-type
     picker, the balance list filter, and the application list filter.
     The employee panel uses it for the apply-form dropdown.
+
+
+================================================================================
+SECTION — ACCESS + SCOPE (batch 2)
+================================================================================
+
+Permission codes come from the caller's access role (accounts/admin.txt,
+ORGANIZATION STRUCTURE + ACCESS). The organization owner has every code.
+Missing code -> 403 {"status": false, "message": "You do not have permission to perform this action."}
+
+SCOPE (list endpoints marked "scope" below)
+  Request : optional "scope": "self" | "team" | "all"
+  Default : the widest scope the caller has.
+  Clamp   : asking for more than allowed gives the next lower allowed scope
+            (never an error, never more than asked). Invalid value -> 400
+            "scope must be self, team or all."
+  Team    : the caller + everyone below them through reports_to (all levels).
+  Response: same body as before + top-level "scope_applied": "self"|"team"|"all"
+  Show a Mine / My team / Everyone switch with only the allowed options:
+  derive them from my-profile data.permissions.
+
+--------------------------------------------------------------------------------
+Endpoints
+--------------------------------------------------------------------------------
+  types/list/                             any member
+  types/create|update|deactivate/         settings.manage
+  balances/list/                          scope (leave.apply = self, leave.view_team, leave.view_all)
+  balances/initialize/, balances/adjust/  settings.manage
+  applications/list/                      scope (same codes)
+  applications/review/                    leave.approve + in scope + not own
+  applications/cancel/organization/       leave.approve + in scope + not own
+  transactions/list/                      leave.view_all | settings.manage
+
+Review / cancel errors (403):
+  "You cannot review your own request."
+  "This record is outside your team."
+A Department Manager (leave.view_team + leave.approve) approves only the
+people who report to them, directly or indirectly.

@@ -82,13 +82,45 @@ def calculate_distance_meters(lat1, lon1, lat2, lon2):
     return earth_radius * c
 
 
+def resolve_attendance_location(organization, attendance_settings, employee=None):
+    """
+    Geofence for a punch (batch 2):
+      1. the employee's active branch, when it has coordinates
+         (radius = branch.allowed_radius_meters or the attendance setting);
+      2. otherwise the organization's coordinates + attendance setting radius.
+    Returns (latitude, longitude, radius_meters, branch_or_None).
+    """
+    branch = getattr(employee, "branch", None) if employee is not None else None
+    if (
+        branch is not None
+        and branch.is_active
+        and branch.organization_id == organization.id
+        and branch.latitude is not None
+        and branch.longitude is not None
+    ):
+        radius = branch.allowed_radius_meters or attendance_settings.allowed_radius_meters
+        return branch.latitude, branch.longitude, radius, branch
+    return (
+        organization.latitude,
+        organization.longitude,
+        attendance_settings.allowed_radius_meters,
+        None,
+    )
+
+
 def verify_office_location(
     organization,
     latitude,
     longitude,
     gps_accuracy_meters,
     attendance_settings,
+    employee=None,
 ):
+    office_lat, office_lng, allowed_radius, branch = resolve_attendance_location(
+        organization, attendance_settings, employee,
+    )
+    branch_info = {"id": branch.id, "name": branch.name} if branch else None
+
     if not attendance_settings.location_required:
         return {
             "verified": True,
@@ -103,14 +135,12 @@ def verify_office_location(
             "message": "GPS coordinates are required.",
         }
 
-    if (
-        organization.latitude is None
-        or organization.longitude is None
-    ):
+    if office_lat is None or office_lng is None:
         return {
             "verified": False,
             "distance_meters": None,
             "message": "Company office coordinates are not configured.",
+            "branch": branch_info,
         }
 
     # Validate GPS accuracy only when provided.
@@ -126,17 +156,17 @@ def verify_office_location(
             }
 
     distance = calculate_distance_meters(
-        organization.latitude,
-        organization.longitude,
+        office_lat,
+        office_lng,
         latitude,
         longitude,
     )
 
-    allowed_radius = attendance_settings.allowed_radius_meters
-
     return {
         "verified": distance <= allowed_radius,
         "distance_meters": round(distance, 2),
+        "allowed_radius_meters": allowed_radius,
+        "branch": branch_info,
         "message": (
             "Location verified."
             if distance <= allowed_radius
@@ -487,6 +517,7 @@ def process_attendance_punch(
         longitude=longitude,
         gps_accuracy_meters=gps_accuracy_meters,
         attendance_settings=attendance_settings,
+        employee=employee,
     )
 
     if not location_result["verified"]:
@@ -602,6 +633,8 @@ def process_attendance_punch(
         verification_status="VERIFIED",
         verification_details={
             "location_message": location_result["message"],
+            "branch": location_result.get("branch"),
+            "allowed_radius_meters": location_result.get("allowed_radius_meters"),
             "photo_provided": bool(selfie_file),
             "face_verification": (
                 "Verified" if face_result["verified"] else "Skipped"

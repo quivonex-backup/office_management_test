@@ -28,6 +28,13 @@ RULES TO SHOW
   - Finalize is blocked by ERROR records and unresolved review flags; explain why.
   - Missing attendance days set requires_review: mark absent (attendance) then recompute.
   - Salary revision = close old assignment, create a new one.
+ACCESS (batch 2)
+  - Payroll menu: show when the user has any of payroll.view_all,
+    payroll.generate, payroll.finalize, salary.assign.
+  - Setup (settings, statutory): settings.manage or payroll.generate.
+  - Components, structures, assignments, calculator: salary.assign.
+  - Runs: generate / recompute = payroll.generate; finalize and salary
+    payments = payroll.finalize; view = payroll.view_all.
+  - Never team-scoped. Employees use the my/* endpoints.
 COMING
-  Batch 2: payroll.generate / payroll.finalize / salary.assign / payroll.view_all enforced.
   Batch 3: annual CTC / monthly gross on assignments and offers.

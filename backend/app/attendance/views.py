@@ -16,6 +16,9 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from common.services import get_user_organization
+from common.permissions import (
+    RequiredPermsMixin, has_perm, resolve_scope, own_request_denied, out_of_scope_denied,
+)
 from app.audit.services import log_activity
 
 from app.employees.models import Employee
@@ -63,7 +66,7 @@ from app.communications.notification_service import notify
 # SHARED HELPERS
 # =========================================================
 
-class AttendanceBaseAPIView(APIView):
+class AttendanceBaseAPIView(RequiredPermsMixin, APIView):
     permission_classes = [IsAuthenticated]
     parser_classes = [JSONParser, FormParser, MultiPartParser]
 
@@ -75,7 +78,7 @@ class AttendanceBaseAPIView(APIView):
 
         return organization, None
 
-    def success(self, message, data=None, http_status=status.HTTP_200_OK):
+    def success(self, message, data=None, http_status=status.HTTP_200_OK, extra=None):
         response_data = {
             "status": True,
             "message": message,
@@ -83,6 +86,9 @@ class AttendanceBaseAPIView(APIView):
 
         if data is not None:
             response_data["data"] = data
+
+        if extra:
+            response_data.update(extra)
 
         return Response(response_data, status=http_status)
 
@@ -119,12 +125,22 @@ class AttendanceBaseAPIView(APIView):
         except Exception:
             pass
 
+    def attendance_scope(self, request, organization, requested=None):
+        """self | team | all for attendance data (batch 2)."""
+        return resolve_scope(
+            request, organization, requested,
+            self_code="attendance.view_self",
+            team_code="attendance.view_team",
+            all_code="attendance.view_all",
+        )
+
 
 # =========================================================
 # ATTENDANCE SETTINGS
 # =========================================================
 
 class AttendanceSettingsAPIView(AttendanceBaseAPIView):
+    required_perms = ("settings.manage",)
 
     def post(self, request):
         organization, error_response = self.get_organization(request)
@@ -167,6 +183,7 @@ class AttendanceSettingsAPIView(AttendanceBaseAPIView):
 # =========================================================
 
 class ShiftListAPIView(AttendanceBaseAPIView):
+    required_perms = ("settings.manage", "attendance.view_all", "attendance.view_team", "attendance.correct")
 
     def post(self, request):
         organization, error_response = self.get_organization(request)
@@ -203,6 +220,7 @@ class ShiftListAPIView(AttendanceBaseAPIView):
 # =========================================================
 
 class ShiftCreateAPIView(AttendanceBaseAPIView):
+    required_perms = ("settings.manage",)
 
     def post(self, request):
         organization, error_response = self.get_organization(request)
@@ -255,6 +273,7 @@ class ShiftCreateAPIView(AttendanceBaseAPIView):
 # =========================================================
 
 class ShiftUpdateAPIView(AttendanceBaseAPIView):
+    required_perms = ("settings.manage",)
 
     def post(self, request):
         organization, error_response = self.get_organization(request)
@@ -319,6 +338,7 @@ class ShiftUpdateAPIView(AttendanceBaseAPIView):
 # =========================================================
 
 class ShiftDeactivateAPIView(AttendanceBaseAPIView):
+    required_perms = ("settings.manage",)
 
     def post(self, request):
         organization, error_response = self.get_organization(request)
@@ -384,6 +404,7 @@ class ShiftDeactivateAPIView(AttendanceBaseAPIView):
 # =========================================================
 
 class EmployeeShiftAssignmentListAPIView(AttendanceBaseAPIView):
+    required_perms = ("settings.manage", "attendance.view_all", "attendance.view_team", "attendance.correct")
 
     def post(self, request):
         organization, error_response = self.get_organization(request)
@@ -445,6 +466,7 @@ def models_q_assignment_active_on(target_date):
 # =========================================================
 
 class EmployeeShiftAssignmentCreateAPIView(AttendanceBaseAPIView):
+    required_perms = ("settings.manage",)
 
     def post(self, request):
         organization, error_response = self.get_organization(request)
@@ -520,6 +542,7 @@ class EmployeeShiftAssignmentCreateAPIView(AttendanceBaseAPIView):
 # =========================================================
 
 class EmployeeShiftAssignmentUpdateAPIView(AttendanceBaseAPIView):
+    required_perms = ("settings.manage",)
 
     def post(self, request):
         organization, error_response = self.get_organization(request)
@@ -594,6 +617,7 @@ class EmployeeShiftAssignmentUpdateAPIView(AttendanceBaseAPIView):
 # =========================================================
 
 class EmployeeShiftAssignmentBulkAPIView(AttendanceBaseAPIView):
+    required_perms = ("settings.manage",)
 
     @transaction.atomic
     def post(self, request):
@@ -697,6 +721,7 @@ class EmployeeShiftAssignmentBulkAPIView(AttendanceBaseAPIView):
 # =========================================================
 
 class EmployeeShiftAssignmentPatternAPIView(AttendanceBaseAPIView):
+    required_perms = ("settings.manage",)
 
     @transaction.atomic
     def post(self, request):
@@ -808,6 +833,7 @@ class EmployeeShiftAssignmentPatternAPIView(AttendanceBaseAPIView):
 # =========================================================
 
 class EmployeeShiftAssignmentBulkCloseAPIView(AttendanceBaseAPIView):
+    required_perms = ("settings.manage",)
 
     @transaction.atomic
     def post(self, request):
@@ -1050,12 +1076,19 @@ class AttendanceListAPIView(AttendanceBaseAPIView):
         if error_response:
             return error_response
 
-        queryset = AttendanceRecord.objects.filter(
+        scope, error_response = self.attendance_scope(
+            request, organization, request.data.get("scope"),
+        )
+
+        if error_response:
+            return error_response
+
+        queryset = scope.filter(AttendanceRecord.objects.filter(
             organization=organization,
         ).select_related(
             "employee",
             "shift",
-        ).prefetch_related("punches")
+        ).prefetch_related("punches"))
 
         employee_id = request.data.get("employee_id")
         status_filter = request.data.get("status")
@@ -1098,6 +1131,7 @@ class AttendanceListAPIView(AttendanceBaseAPIView):
         return self.success(
             "Attendance records fetched successfully.",
             serializer.data,
+            extra={"scope_applied": scope.scope},
         )
 
 
@@ -1226,13 +1260,11 @@ class AttendanceDetailAPIView(AttendanceBaseAPIView):
             organization=organization,
         )
 
-        employee = get_employee_for_user(
-            request.user,
-            organization,
-        )
+        # Own record, or a record inside the caller's team / organization
+        # scope (attendance.view_team / attendance.view_all).
+        scope, _error = self.attendance_scope(request, organization)
 
-        # A linked employee must not access another employee's record.
-        if employee and employee.id != attendance.employee_id:
+        if scope is None or not scope.allows(attendance.employee_id):
             return self.failure(
                 "You do not have permission to view this attendance record.",
                 status.HTTP_403_FORBIDDEN,
@@ -1278,9 +1310,13 @@ class AttendanceCorrectionCreateAPIView(AttendanceBaseAPIView):
             organization,
         )
 
-        # If this user is an employee, they can only request
-        # corrections to their own attendance.
-        if employee and attendance.employee_id != employee.id:
+        # Employees can only request corrections to their own attendance,
+        # unless they hold attendance.correct (HR).
+        if (
+            employee
+            and attendance.employee_id != employee.id
+            and not has_perm(request, organization, "attendance.correct")
+        ):
             return self.failure(
                 "You can only request corrections to your own attendance.",
                 status.HTTP_403_FORBIDDEN,
@@ -1404,12 +1440,20 @@ class AttendanceCorrectionListAPIView(AttendanceBaseAPIView):
         #     "punch",
         # )
 
+        scope, error_response = self.attendance_scope(
+            request, organization, request.data.get("scope"),
+        )
+
+        if error_response:
+            return error_response
+
         queryset = AttendanceCorrection.objects.filter(
             attendance__organization=organization,
         ).exclude(
             status="APPLIED",
             reviewed_by__isnull=True,
-        ).select_related(
+        )
+        queryset = scope.filter(queryset, "attendance__employee_id").select_related(
             "attendance",
             "attendance__employee",
             "punch",
@@ -1466,6 +1510,7 @@ class AttendanceCorrectionListAPIView(AttendanceBaseAPIView):
         return self.success(
             "Attendance corrections fetched successfully.",
             serializer.data,
+            extra={"scope_applied": scope.scope},
         )
 
 
@@ -1474,6 +1519,7 @@ class AttendanceCorrectionListAPIView(AttendanceBaseAPIView):
 # =========================================================
 
 class AttendanceCorrectionReviewAPIView(AttendanceBaseAPIView):
+    required_perms = ("attendance.approve_correction",)
 
     @transaction.atomic
     def post(self, request):
@@ -1502,6 +1548,17 @@ class AttendanceCorrectionReviewAPIView(AttendanceBaseAPIView):
             id=correction_id,
             attendance__organization=organization,
         )
+
+        scope, error_response = self.attendance_scope(request, organization)
+
+        if error_response:
+            return error_response
+
+        if scope.employee and correction.attendance.employee_id == scope.employee.id:
+            return own_request_denied()
+
+        if not scope.allows(correction.attendance.employee_id):
+            return out_of_scope_denied()
 
         try:
             correction = review_attendance_correction(
@@ -1572,6 +1629,7 @@ class AttendanceCorrectionReviewAPIView(AttendanceBaseAPIView):
 # =========================================================
 
 class AttendanceBulkMarkAbsentAPIView(AttendanceBaseAPIView):
+    required_perms = ("attendance.correct",)
 
     @transaction.atomic
     def post(self, request):

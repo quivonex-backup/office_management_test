@@ -739,3 +739,23 @@ KEY NOTES FOR FRONTEND — ADMIN SIDE
    /reimbursements/detail/ works for both admin and employee. Admin sees
    any claim in the org; employee sees only their own. Employee hitting
    someone else's claim → 404 (not 403) to avoid leaking existence.
+
+
+================================================================================
+SECTION — REIMBURSEMENT ACCESS (batch 2)
+================================================================================
+
+Permission codes: reimbursement.review, reimbursement.pay (owner has both).
+
+--------------------------------------------------------------------------------
+Endpoints
+--------------------------------------------------------------------------------
+  reimbursements/list/       reviewers/payers: all; anyone else: own only. Optional scope self|all,
+                             response + "scope_applied"
+  reimbursements/detail/     own, owner, or reimbursement.review / reimbursement.pay
+  reimbursements/review/     reimbursement.review + not own
+  reimbursements/mark-paid/  reimbursement.pay + not own
+
+Own claim -> 403 "You cannot review your own request."
+Company expenses / recurring expenses (create, list, ...) are NOT permission
+checked yet (any organization member). Planned with finance codes later.

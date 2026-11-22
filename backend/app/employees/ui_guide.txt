@@ -43,3 +43,10 @@ RULES TO SHOW IN UI
   - Send *_id fields; the text fields department/designation are filled by the server.
   - Blank *_id clears the link.
   - Use multipart for update/ (documents, photo). JSON body with remove_document_ids fails today.
+
+ACCESS (batch 2)
+  - Employee list: Mine / My team / Everyone switch from employee.view_team /
+    employee.view_all (a plain employee only sees their own row). Send
+    "scope"; read "scope_applied".
+  - Detail outside the caller's scope -> 403 with a message.
+  - Documents upload / delete: employee.update.

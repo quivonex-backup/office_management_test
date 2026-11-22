@@ -118,3 +118,120 @@ class OrgAPIView(APIView):
         if isinstance(value, bool):
             return value
         return str(value).strip().lower() in ("1", "true", "yes")
+
+
+# =========================================================
+# DECLARATIVE CHECK FOR CLASS-BASED VIEWS (batch 2)
+#
+#   class ShiftCreateAPIView(AttendanceBaseAPIView):
+#       required_perms = ("settings.manage",)     # caller needs ANY of these
+#
+# Runs before the handler; answers with the normal envelope
+# ({"status": false, "message": ...}) and status 403 / the organization
+# error from get_user_organization. Views without required_perms are untouched.
+# =========================================================
+class _EarlyResponse(Exception):
+    def __init__(self, response):
+        super().__init__("early response")
+        self.response = response
+
+
+class RequiredPermsMixin:
+    required_perms = ()
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        if not self.required_perms:
+            return
+        from common.services import get_user_organization
+
+        organization, error = get_user_organization(request)
+        if error is not None:
+            raise _EarlyResponse(error)
+        if not has_any_perm(request, organization, self.required_perms):
+            raise _EarlyResponse(permission_denied())
+
+    def handle_exception(self, exc):
+        if isinstance(exc, _EarlyResponse):
+            return exc.response
+        return super().handle_exception(exc)
+
+
+# =========================================================
+# SCOPE: self | team | all  (batch 2)
+# team = the caller + everyone below them via Employee.reports_to
+# =========================================================
+VALID_SCOPES = ("all", "team", "self")
+
+
+class ScopeResult:
+    """scope: 'all' | 'team' | 'self'; employee_ids: None (= everyone) or list."""
+
+    def __init__(self, scope, employee_ids, employee):
+        self.scope = scope
+        self.employee_ids = employee_ids
+        self.employee = employee
+
+    def allows(self, employee_id):
+        return self.employee_ids is None or employee_id in self.employee_ids
+
+    def filter(self, queryset, field="employee_id"):
+        if self.employee_ids is None:
+            return queryset
+        return queryset.filter(**{f"{field}__in": self.employee_ids})
+
+
+def resolve_scope(request, organization, requested=None, self_code=None, team_code=None, all_code=None):
+    """
+    Clamp the requested scope to what the caller may see.
+
+    - requested empty  -> the widest allowed scope
+    - requested higher than allowed -> the next lower allowed scope
+      (never higher than requested)
+    - 'self' needs an Employee row (and self_code when given)
+    - 'team' needs team_code and an Employee row
+    - 'all'  needs all_code (organization owner always has it)
+
+    Returns (ScopeResult, None) or (None, error Response).
+    """
+    from common.services import get_team_employee_ids
+
+    requested = (requested or "").strip().lower() if isinstance(requested, str) else requested
+    if requested and requested not in VALID_SCOPES:
+        return None, Response(
+            {"status": False, "message": "scope must be self, team or all."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    employee = get_user_employee(request.user, organization)
+    allowed = {
+        "all": bool(all_code) and has_perm(request, organization, all_code),
+        "team": bool(team_code) and employee is not None and has_perm(request, organization, team_code),
+        "self": employee is not None and (self_code is None or has_perm(request, organization, self_code)),
+    }
+
+    start = VALID_SCOPES.index(requested) if requested else 0
+    for scope in VALID_SCOPES[start:]:
+        if not allowed[scope]:
+            continue
+        if scope == "all":
+            return ScopeResult("all", None, employee), None
+        if scope == "team":
+            return ScopeResult("team", get_team_employee_ids(employee), employee), None
+        return ScopeResult("self", [employee.id], employee), None
+
+    return None, permission_denied()
+
+
+def own_request_denied():
+    return Response(
+        {"status": False, "message": "You cannot review your own request."},
+        status=status.HTTP_403_FORBIDDEN,
+    )
+
+
+def out_of_scope_denied():
+    return Response(
+        {"status": False, "message": "This record is outside your team."},
+        status=status.HTTP_403_FORBIDDEN,
+    )

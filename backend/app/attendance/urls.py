@@ -19,36 +19,36 @@ from .views import (
 # ---------------------------------------------------------------------------
 urlpatterns = [
     # Settings
-    path("settings/", AttendanceSettingsAPIView.as_view()),                                             #A
+    path("settings/", AttendanceSettingsAPIView.as_view()),                                             #A  perm: settings.manage
 
     # Shifts
-    path("shifts/list/", ShiftListAPIView.as_view()),                                                   #A
-    path("shifts/create/", ShiftCreateAPIView.as_view()),                                               #A
-    path("shifts/update/", ShiftUpdateAPIView.as_view()),                                               #A
-    path("shifts/deactivate/", ShiftDeactivateAPIView.as_view()),                                       #A
+    path("shifts/list/", ShiftListAPIView.as_view()),                                                   #A  perm: settings.manage, attendance.view_all, attendance.view_team, attendance.correct (any)
+    path("shifts/create/", ShiftCreateAPIView.as_view()),                                               #A  perm: settings.manage
+    path("shifts/update/", ShiftUpdateAPIView.as_view()),                                               #A  perm: settings.manage
+    path("shifts/deactivate/", ShiftDeactivateAPIView.as_view()),                                       #A  perm: settings.manage
 
     # Employee shift assignments
-    path("shift-assignments/list/", EmployeeShiftAssignmentListAPIView.as_view()),                      #A
-    path("shift-assignments/create/", EmployeeShiftAssignmentCreateAPIView.as_view()),                  #A
-    path("shift-assignments/update/", EmployeeShiftAssignmentUpdateAPIView.as_view()),                  #A
+    path("shift-assignments/list/", EmployeeShiftAssignmentListAPIView.as_view()),                      #A  perm: settings.manage, attendance.view_all, attendance.view_team, attendance.correct (any)
+    path("shift-assignments/create/", EmployeeShiftAssignmentCreateAPIView.as_view()),                  #A  perm: settings.manage
+    path("shift-assignments/update/", EmployeeShiftAssignmentUpdateAPIView.as_view()),                  #A  perm: settings.manage
 
     # Employee shift assignments
-    path("shift-assignments/bulk-assign/", EmployeeShiftAssignmentBulkAPIView.as_view()),               #A
-    path("shift-assignments/bulk-assign-pattern/", EmployeeShiftAssignmentPatternAPIView.as_view()),    #A
-    path("shift-assignments/bulk-close/", EmployeeShiftAssignmentBulkCloseAPIView.as_view()),           #A
+    path("shift-assignments/bulk-assign/", EmployeeShiftAssignmentBulkAPIView.as_view()),               #A  perm: settings.manage
+    path("shift-assignments/bulk-assign-pattern/", EmployeeShiftAssignmentPatternAPIView.as_view()),    #A  perm: settings.manage
+    path("shift-assignments/bulk-close/", EmployeeShiftAssignmentBulkCloseAPIView.as_view()),           #A  perm: settings.manage
 
     # Attendance
     path("punch/", AttendancePunchAPIView.as_view()),                                                   #E
-    path("list/", AttendanceListAPIView.as_view()),                                                     #A
+    path("list/", AttendanceListAPIView.as_view()),                                                     #A  scope: self|team|all (attendance.view_*)
     path("my-attendance/", MyAttendanceListAPIView.as_view()),                                          #E
     path("my-shifts/", MyShiftAssignmentListAPIView.as_view()),                                         #E
-    path("detail/", AttendanceDetailAPIView.as_view()),                                                 #E #A
-    path("bulk-mark-absent/", AttendanceBulkMarkAbsentAPIView.as_view()),                               #A
+    path("detail/", AttendanceDetailAPIView.as_view()),                                                 #E #A  own record, or in team/all scope
+    path("bulk-mark-absent/", AttendanceBulkMarkAbsentAPIView.as_view()),                               #A  perm: attendance.correct
 
     # Corrections
-    path("corrections/create/", AttendanceCorrectionCreateAPIView.as_view()),                           #E
-    path("corrections/list/", AttendanceCorrectionListAPIView.as_view()),                               #E #A
-    path("corrections/review/", AttendanceCorrectionReviewAPIView.as_view()),                           #A
+    path("corrections/create/", AttendanceCorrectionCreateAPIView.as_view()),                           #E  own record (attendance.correct for others)
+    path("corrections/list/", AttendanceCorrectionListAPIView.as_view()),                               #E #A  scope: self|team|all (attendance.view_*)
+    path("corrections/review/", AttendanceCorrectionReviewAPIView.as_view()),                           #A  perm: attendance.approve_correction  + record in caller's scope, not own
     path("my-attendance/correct/", MyAttendanceCorrectionAPIView.as_view()),                            #E
 
     # Face Recognize

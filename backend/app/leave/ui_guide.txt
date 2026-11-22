@@ -27,6 +27,10 @@ PROCESS
   Create types -> initialize balances for the year -> employees apply ->
   approver reviews -> approved leave appears as ON_LEAVE in attendance.
 
-COMING IN BATCH 2
-  scope = self | team | all (Department Manager sees own team), leave.approve
-  enforced, cannot approve own leave.
+ACCESS (batch 2)
+  - Requests and balances pages: Mine / My team / Everyone switch from
+    leave.apply / leave.view_team / leave.view_all; send "scope".
+  - Approve / reject / cancel buttons only with leave.approve. Hide them on
+    the user's own rows (the server refuses own requests and people outside
+    the team anyway).
+  - Leave types, initialize, adjust: settings.manage. History: leave.view_all.

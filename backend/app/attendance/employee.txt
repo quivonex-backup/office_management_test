@@ -598,3 +598,15 @@ KEY NOTES FOR FRONTEND — EMPLOYEE SIDE
     - Request corrections
     - Test face recognition
     Everything else is admin-only. Do NOT call those endpoints.
+
+
+================================================================================
+SECTION — CHANGES IN BATCH 2
+================================================================================
+
+- Employee endpoints are unchanged: punch/, my-attendance/, my-shifts/,
+  my-attendance/correct/, face-recognition/, corrections/create/.
+- corrections/list/ and detail/ return only your own records
+  (corrections/list/ also returns "scope_applied": "self").
+- Punch location is checked against your branch when your branch has a
+  map location, otherwise the office location. The same error messages apply.

@@ -30,16 +30,16 @@ urlpatterns = [
     # =====================================================
     path("create/", EmployeeCreateAPIView.as_view(), name="employee-create"),                                  #A  perm: employee.update (+ employee.create_user if create_user)
     path("create-user/", EmployeeUserCreateAPIView.as_view(), name="employee-create-user"),                    #A  perm: employee.create_user
-    path("list/", EmployeeListAPIView.as_view(), name="employee-list"),                                        #A
-    path("detail/", EmployeeDetailAPIView.as_view(), name="employee-detail"),                                  #A
+    path("list/", EmployeeListAPIView.as_view(), name="employee-list"),                                        #A  scope: self|team|all (employee.view_*)
+    path("detail/", EmployeeDetailAPIView.as_view(), name="employee-detail"),                                  #A  own, or in team/all scope
     path("update/", EmployeeUpdateAPIView.as_view(), name="employee-update"),                                  #A  perm: employee.update (access_role_id needs access.manage)
     path("deactivate/", EmployeeDeactivateAPIView.as_view(), name="employee-deactivate"),                      #A  perm: employee.update
 
     # =====================================================
     # EMPLOYEE DOCUMENTS
     # =====================================================
-    path("document/upload/", EmployeeDocumentUploadAPIView.as_view(), name="employee-document-upload"),        #A
-    path("document/delete/", EmployeeDocumentDeleteAPIView.as_view(), name="employee-document-delete"),        #A
+    path("document/upload/", EmployeeDocumentUploadAPIView.as_view(), name="employee-document-upload"),        #A  perm: employee.update
+    path("document/delete/", EmployeeDocumentDeleteAPIView.as_view(), name="employee-document-delete"),        #A  perm: employee.update
 
     # =====================================================
     # EMPLOYEE SELF-SERVICE

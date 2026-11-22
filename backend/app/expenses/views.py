@@ -23,6 +23,11 @@ from .serializers import (
     EmployeeReimbursementReviewSerializer, EmployeeReimbursementMarkPaidSerializer,
 )
 from common.services import get_user_organization, get_current_employee
+from common.permissions import (
+    RequiredPermsMixin, has_any_perm, get_user_employee, permission_denied, own_request_denied,
+)
+
+REIMBURSEMENT_ADMIN_PERMS = ("reimbursement.review", "reimbursement.pay")
 from common.s3_utils import upload_to_s3, delete_from_s3
 from common.code_generators import (
     generate_expense_code,
@@ -1322,6 +1327,7 @@ class EmployeeReimbursementDetailAPIView(APIView):
         is_admin = (
             request.user.is_superuser
             or organization.owner_id == request.user.id
+            or has_any_perm(request, organization, REIMBURSEMENT_ADMIN_PERMS)
         )
 
         if not is_admin:
@@ -1468,6 +1474,22 @@ class EmployeeReimbursementListAPIView(APIView):
             .order_by("-expense_date", "-created_at")
         )
 
+        # Scope (batch 2): reviewers / payers see all, others only their own.
+        requested_scope = (request.data.get("scope") or "").strip().lower()
+        if requested_scope and requested_scope not in ("self", "team", "all"):
+            return Response(
+                {"status": False, "message": "scope must be self, team or all."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        own_employee = get_user_employee(request.user, organization)
+        if has_any_perm(request, organization, REIMBURSEMENT_ADMIN_PERMS) and requested_scope in ("", "all"):
+            scope_applied = "all"
+        elif own_employee:
+            scope_applied = "self"
+            reimbursements = reimbursements.filter(employee=own_employee)
+        else:
+            return permission_denied()
+
         status_filter = request.data.get("status")
         expense_type = request.data.get("expense_type")
         employee_id = request.data.get("employee_id")
@@ -1522,6 +1544,7 @@ class EmployeeReimbursementListAPIView(APIView):
                 "status": True,
                 "message": "Reimbursements fetched successfully.",
                 "data": serializer.data,
+                "scope_applied": scope_applied,
             },
             status=status.HTTP_200_OK,
         )
@@ -1530,8 +1553,9 @@ class EmployeeReimbursementListAPIView(APIView):
 # =========================================================
 # REVIEW REIMBURSEMENT (ADMIN)
 # =========================================================
-class EmployeeReimbursementReviewAPIView(APIView):
+class EmployeeReimbursementReviewAPIView(RequiredPermsMixin, APIView):
     permission_classes = [IsAuthenticated]
+    required_perms = ("reimbursement.review",)
 
     @transaction.atomic
     def post(self, request):
@@ -1565,6 +1589,10 @@ class EmployeeReimbursementReviewAPIView(APIView):
                 {"status": False, "message": "Reimbursement not found."},
                 status=status.HTTP_404_NOT_FOUND,
             )
+
+        own_employee = get_user_employee(request.user, organization)
+        if own_employee and reimbursement.employee_id == own_employee.id:
+            return own_request_denied()
 
         if reimbursement.status != "PENDING":
             return Response(
@@ -1685,8 +1713,9 @@ class EmployeeReimbursementReviewAPIView(APIView):
 # =========================================================
 # MARK REIMBURSEMENT AS PAID (ADMIN)
 # =========================================================
-class EmployeeReimbursementMarkPaidAPIView(APIView):
+class EmployeeReimbursementMarkPaidAPIView(RequiredPermsMixin, APIView):
     permission_classes = [IsAuthenticated]
+    required_perms = ("reimbursement.pay",)
 
     @transaction.atomic
     def post(self, request):
@@ -1722,6 +1751,10 @@ class EmployeeReimbursementMarkPaidAPIView(APIView):
                 {"status": False, "message": "Reimbursement not found."},
                 status=status.HTTP_404_NOT_FOUND,
             )
+
+        own_employee = get_user_employee(request.user, organization)
+        if own_employee and reimbursement.employee_id == own_employee.id:
+            return own_request_denied()
 
         if reimbursement.status != "APPROVED":
             return Response(

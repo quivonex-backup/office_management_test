@@ -28,8 +28,8 @@ backend/staticfiles/
 media/
 
 # Ignore migration files, but keep __init__.py
-*/migrations/*.py
-!*/migrations/__init__.py
+# */migrations/*.py
+# !*/migrations/__init__.py
 
 # ==============================
 # ENVIRONMENT VARIABLES

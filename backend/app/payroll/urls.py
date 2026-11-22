@@ -88,65 +88,65 @@ urlpatterns = [
     # =========================================================
     # ORG ADMIN — SETTINGS
     # =========================================================
-    path("settings/", PayrollSettingsAPIView.as_view()),                                   #A
-    path("statutory-settings/", CompanyStatutorySettingsAPIView.as_view()),                #A
+    path("settings/", PayrollSettingsAPIView.as_view()),                                   #A  perm: settings.manage, payroll.generate (any)
+    path("statutory-settings/", CompanyStatutorySettingsAPIView.as_view()),                #A  perm: settings.manage, payroll.generate (any)
 
     # =========================================================
     # ORG ADMIN — SALARY COMPONENTS
     # =========================================================
-    path("components/list/", SalaryComponentListAPIView.as_view()),                        #A
-    path("components/create/", SalaryComponentCreateAPIView.as_view()),                    #A
+    path("components/list/", SalaryComponentListAPIView.as_view()),                        #A  perm: salary.assign, payroll.generate (any)
+    path("components/create/", SalaryComponentCreateAPIView.as_view()),                    #A  perm: salary.assign, payroll.generate (any)
 
     # =========================================================
     # ORG ADMIN — SALARY STRUCTURES
     # =========================================================
-    path("structures/list/", SalaryStructureListAPIView.as_view()),                        #A
-    path("structures/create/", SalaryStructureCreateAPIView.as_view()),                    #A
-    path("structures/detail/", SalaryStructureDetailAPIView.as_view()),                    #A
-    path("structures/update/", SalaryStructureUpdateAPIView.as_view()),                    #A
-    path("structures/deactivate/", SalaryStructureDeactivateAPIView.as_view()),            #A
+    path("structures/list/", SalaryStructureListAPIView.as_view()),                        #A  perm: salary.assign, payroll.generate (any)
+    path("structures/create/", SalaryStructureCreateAPIView.as_view()),                    #A  perm: salary.assign, payroll.generate (any)
+    path("structures/detail/", SalaryStructureDetailAPIView.as_view()),                    #A  perm: salary.assign, payroll.generate (any)
+    path("structures/update/", SalaryStructureUpdateAPIView.as_view()),                    #A  perm: salary.assign, payroll.generate (any)
+    path("structures/deactivate/", SalaryStructureDeactivateAPIView.as_view()),            #A  perm: salary.assign, payroll.generate (any)
 
     # =========================================================
     # ORG ADMIN — SALARY ASSIGNMENTS
     # =========================================================
-    path("assignments/list/", SalaryAssignmentListAPIView.as_view()),                      #A
-    path("assignments/create/", SalaryAssignmentCreateAPIView.as_view()),                  #A
-    path("assignments/update/", SalaryAssignmentUpdateAPIView.as_view()),                  #A
-    path("assignments/bulk-assign/", SalaryAssignmentBulkAssignAPIView.as_view()),         #A
-    path("assignments/bulk-close/", SalaryAssignmentBulkCloseAPIView.as_view()),           #A
+    path("assignments/list/", SalaryAssignmentListAPIView.as_view()),                      #A  perm: salary.assign, payroll.view_all (any)
+    path("assignments/create/", SalaryAssignmentCreateAPIView.as_view()),                  #A  perm: salary.assign
+    path("assignments/update/", SalaryAssignmentUpdateAPIView.as_view()),                  #A  perm: salary.assign
+    path("assignments/bulk-assign/", SalaryAssignmentBulkAssignAPIView.as_view()),         #A  perm: salary.assign
+    path("assignments/bulk-close/", SalaryAssignmentBulkCloseAPIView.as_view()),           #A  perm: salary.assign
 
     # =========================================================
     # ORG ADMIN — PAYROLL RUNS
     # =========================================================
-    path("runs/preview/", PayrollRunPreviewAPIView.as_view()),                             #A
-    path("runs/create/", PayrollRunCreateAPIView.as_view()),                               #A
-    path("runs/list/", PayrollRunListAPIView.as_view()),                                   #A
-    path("runs/detail/", PayrollRunDetailAPIView.as_view()),                               #A
-    path("runs/generate/", PayrollRunGenerateAPIView.as_view()),                           #A
-    path("runs/finalize/", PayrollRunFinalizeAPIView.as_view()),                           #A
+    path("runs/preview/", PayrollRunPreviewAPIView.as_view()),                             #A  perm: payroll.generate
+    path("runs/create/", PayrollRunCreateAPIView.as_view()),                               #A  perm: payroll.generate
+    path("runs/list/", PayrollRunListAPIView.as_view()),                                   #A  perm: payroll.view_all, payroll.generate, payroll.finalize (any)
+    path("runs/detail/", PayrollRunDetailAPIView.as_view()),                               #A  perm: payroll.view_all, payroll.generate, payroll.finalize (any)
+    path("runs/generate/", PayrollRunGenerateAPIView.as_view()),                           #A  perm: payroll.generate
+    path("runs/finalize/", PayrollRunFinalizeAPIView.as_view()),                           #A  perm: payroll.finalize
 
     # =========================================================
     # ORG ADMIN — PAYROLL RECORDS
     # =========================================================
-    path("records/list/", PayrollRecordListAPIView.as_view()),                             #A
-    path("records/update-deductions/", PayrollRecordUpdateDeductionsAPIView.as_view()),    #A
+    path("records/list/", PayrollRecordListAPIView.as_view()),                             #A  perm: payroll.view_all, payroll.generate, payroll.finalize (any)
+    path("records/update-deductions/", PayrollRecordUpdateDeductionsAPIView.as_view()),    #A  perm: payroll.generate
 
     # =========================================================
     # ORG ADMIN — PAYMENTS
     # =========================================================
-    path("payments/record/", PaymentRecordAPIView.as_view()),                              #A
-    path("payments/bulk-record/", PaymentBulkRecordForRunAPIView.as_view()),               #A
-    path("payments/list/", PaymentListAPIView.as_view()),                                  #A
+    path("payments/record/", PaymentRecordAPIView.as_view()),                              #A  perm: payroll.finalize
+    path("payments/bulk-record/", PaymentBulkRecordForRunAPIView.as_view()),               #A  perm: payroll.finalize
+    path("payments/list/", PaymentListAPIView.as_view()),                                  #A  perm: payroll.view_all, payroll.generate, payroll.finalize (any)
 
     # =========================================================
     # ORG ADMIN — PAYSLIP DOWNLOAD
     # =========================================================
-    path("payslips/download/", PayrollPayslipDownloadAPIView.as_view()),                   #A
+    path("payslips/download/", PayrollPayslipDownloadAPIView.as_view()),                   #A  perm: payroll.view_all, payroll.generate, payroll.finalize (any)
 
     # =========================================================
     # ORG ADMIN — Payroll Calculator
     # =========================================================
-    path("calculator/", PayrollCalculatorAPIView.as_view()),                               #A
+    path("calculator/", PayrollCalculatorAPIView.as_view()),                               #A  perm: salary.assign, payroll.generate (any)
 
     # =========================================================
     # EMPLOYEE

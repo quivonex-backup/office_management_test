@@ -377,3 +377,12 @@ KEY NOTES FOR FRONTEND — EMPLOYEE SIDE
 ================================================================================
 END OF EMPLOYEE LEAVE REFERENCE
 ================================================================================
+
+
+================================================================================
+SECTION — CHANGES IN BATCH 2
+================================================================================
+
+- No change to employee endpoints (balances/my/, applications/create|my|cancel/my/).
+- An approver never approves their own leave; their own requests go to a
+  person above them or to HR / the owner.

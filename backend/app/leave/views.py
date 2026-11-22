@@ -12,6 +12,9 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from common.services import get_user_organization
+from common.permissions import (
+    RequiredPermsMixin, resolve_scope, own_request_denied, out_of_scope_denied,
+)
 
 from app.employees.models import Employee
 
@@ -44,7 +47,7 @@ from app.communications.notification_service import notify
 # BASE VIEW
 # =========================================================
 
-class LeaveBaseAPIView(APIView):
+class LeaveBaseAPIView(RequiredPermsMixin, APIView):
 
     permission_classes = [IsAuthenticated]
     parser_classes = [JSONParser]
@@ -62,6 +65,7 @@ class LeaveBaseAPIView(APIView):
         message,
         data=None,
         http_status=status.HTTP_200_OK,
+        extra=None,
     ):
         response_data = {
             "status": True,
@@ -71,7 +75,30 @@ class LeaveBaseAPIView(APIView):
         if data is not None:
             response_data["data"] = data
 
+        if extra:
+            response_data.update(extra)
+
         return Response(response_data, status=http_status)
+
+    def leave_scope(self, request, organization, requested=None):
+        """self | team | all for leave data (batch 2)."""
+        return resolve_scope(
+            request, organization, requested,
+            self_code="leave.apply",
+            team_code="leave.view_team",
+            all_code="leave.view_all",
+        )
+
+    def check_review_target(self, request, organization, employee_id):
+        """None if the caller may act on this employee's request, else a 403."""
+        scope, error_response = self.leave_scope(request, organization)
+        if error_response:
+            return error_response
+        if scope.employee and scope.employee.id == employee_id:
+            return own_request_denied()
+        if not scope.allows(employee_id):
+            return out_of_scope_denied()
+        return None
 
     def failure(
         self,
@@ -144,6 +171,7 @@ class LeaveTypeListAPIView(LeaveBaseAPIView):
 # =========================================================
 
 class LeaveTypeCreateAPIView(LeaveBaseAPIView):
+    required_perms = ("settings.manage",)
 
     def post(self, request):
 
@@ -181,6 +209,7 @@ class LeaveTypeCreateAPIView(LeaveBaseAPIView):
 # =========================================================
 
 class LeaveTypeUpdateAPIView(LeaveBaseAPIView):
+    required_perms = ("settings.manage",)
 
     def post(self, request):
 
@@ -230,6 +259,7 @@ class LeaveTypeUpdateAPIView(LeaveBaseAPIView):
 # =========================================================
 
 class LeaveTypeDeactivateAPIView(LeaveBaseAPIView):
+    required_perms = ("settings.manage",)
 
     def post(self, request):
 
@@ -331,12 +361,19 @@ class OrganizationLeaveBalanceListAPIView(LeaveBaseAPIView):
         if error_response:
             return error_response
 
-        queryset = EmployeeLeaveBalance.objects.filter(
+        scope, error_response = self.leave_scope(
+            request, organization, request.data.get("scope"),
+        )
+
+        if error_response:
+            return error_response
+
+        queryset = scope.filter(EmployeeLeaveBalance.objects.filter(
             organization=organization,
         ).select_related(
             "employee",
             "leave_type",
-        )
+        ))
 
         employee_id = request.data.get("employee_id")
         leave_type_id = request.data.get("leave_type_id")
@@ -364,6 +401,7 @@ class OrganizationLeaveBalanceListAPIView(LeaveBaseAPIView):
         return self.success(
             "Organization leave balances fetched successfully.",
             serializer.data,
+            extra={"scope_applied": scope.scope},
         )
 
 
@@ -372,6 +410,7 @@ class OrganizationLeaveBalanceListAPIView(LeaveBaseAPIView):
 # =========================================================
 
 class LeaveBalanceInitializeAPIView(LeaveBaseAPIView):
+    required_perms = ("settings.manage",)
 
     def post(self, request):
 
@@ -438,6 +477,7 @@ class LeaveBalanceInitializeAPIView(LeaveBaseAPIView):
 # =========================================================
 
 class LeaveBalanceAdjustAPIView(LeaveBaseAPIView):
+    required_perms = ("settings.manage",)
 
     def post(self, request):
 
@@ -647,13 +687,20 @@ class OrganizationLeaveApplicationListAPIView(LeaveBaseAPIView):
         if error_response:
             return error_response
 
-        queryset = LeaveApplication.objects.filter(
+        scope, error_response = self.leave_scope(
+            request, organization, request.data.get("scope"),
+        )
+
+        if error_response:
+            return error_response
+
+        queryset = scope.filter(LeaveApplication.objects.filter(
             organization=organization,
         ).select_related(
             "employee",
             "leave_type",
             "reviewed_by",
-        )
+        ))
 
         application_status = request.data.get("status")
 
@@ -706,6 +753,7 @@ class OrganizationLeaveApplicationListAPIView(LeaveBaseAPIView):
         return self.success(
             "Leave applications fetched successfully.",
             serializer.data,
+            extra={"scope_applied": scope.scope},
         )
 
 
@@ -714,6 +762,7 @@ class OrganizationLeaveApplicationListAPIView(LeaveBaseAPIView):
 # =========================================================
 
 class LeaveApplicationReviewAPIView(LeaveBaseAPIView):
+    required_perms = ("leave.approve",)
 
     def post(self, request):
 
@@ -733,6 +782,16 @@ class LeaveApplicationReviewAPIView(LeaveBaseAPIView):
             return self.failure(
                 "decision must be APPROVED or REJECTED."
             )
+
+        target = LeaveApplication.objects.filter(
+            id=application_id,
+            organization=organization,
+        ).only("id", "employee_id").first()
+
+        if target:
+            denied = self.check_review_target(request, organization, target.employee_id)
+            if denied:
+                return denied
 
         try:
             application = review_leave_application(
@@ -844,6 +903,7 @@ class MyLeaveApplicationCancelAPIView(LeaveBaseAPIView):
 # =========================================================
 
 class OrganizationLeaveApplicationCancelAPIView(LeaveBaseAPIView):
+    required_perms = ("leave.approve",)
 
     def post(self, request):
 
@@ -856,6 +916,16 @@ class OrganizationLeaveApplicationCancelAPIView(LeaveBaseAPIView):
 
         if not application_id:
             return self.failure("application_id is required.")
+
+        target = LeaveApplication.objects.filter(
+            id=application_id,
+            organization=organization,
+        ).only("id", "employee_id").first()
+
+        if target:
+            denied = self.check_review_target(request, organization, target.employee_id)
+            if denied:
+                return denied
 
         try:
             application = cancel_leave_application(
@@ -882,6 +952,7 @@ class OrganizationLeaveApplicationCancelAPIView(LeaveBaseAPIView):
 # =========================================================
 
 class OrganizationLeaveTransactionListAPIView(LeaveBaseAPIView):
+    required_perms = ("leave.view_all", "settings.manage")
 
     def post(self, request):
 

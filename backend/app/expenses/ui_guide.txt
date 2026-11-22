@@ -19,5 +19,10 @@ SCREENS (employee)
 3. Cancel                    reimbursements/cancel/ (PENDING only)
 PROCESS
   Claim PENDING -> APPROVED / REJECTED -> PAID (payment method + reference).
-COMING IN BATCH 2
-  reimbursement.review / reimbursement.pay enforced; nobody approves their own claim; scope on list.
+ACCESS (batch 2)
+  - Requests page: reviewers (reimbursement.review) and payers
+    (reimbursement.pay) see everyone; others see only their own claims.
+  - Approve / reject: reimbursement.review. Mark paid: reimbursement.pay.
+    Nobody can act on their own claim; hide the buttons on own rows.
+  - Company expenses and recurring expenses: no permission code yet
+    (show them to the owner only until finance codes are added).
