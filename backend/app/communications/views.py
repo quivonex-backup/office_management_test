@@ -46,19 +46,15 @@ from .notification_service import notify
 # =========================================================
 # SHARED HELPERS
 # =========================================================
-def _is_super_admin(user):
-    return bool(user.is_superuser)
-
-
-def _is_org_owner(user, organization):
-    return organization is not None and organization.owner_id == user.id
-
-
 def _can_manage_announcements(request, organization):
-    return (
-        _is_super_admin(request.user)
-        or _is_org_owner(request.user, organization)
-    )
+    """
+    Same rule as the rest of the system: the organization owner, or an
+    access role with announcement.manage. The super admin has no access
+    inside an organization's data.
+    """
+    from common.permissions import has_perm
+
+    return has_perm(request, organization, "announcement.manage")
 
 
 def _active_announcements_qs(organization):
@@ -403,7 +399,7 @@ class AnnouncementCreateAPIView(APIView):
             return Response(
                 {
                     "status": False,
-                    "message": "Only the organization admin can create announcements.",
+                    "message": "You do not have permission to perform this action.",
                 },
                 status=status.HTTP_403_FORBIDDEN,
             )
@@ -541,7 +537,7 @@ class AnnouncementListAPIView(APIView):
             return Response(
                 {
                     "status": False,
-                    "message": "Only the organization admin can view this list.",
+                    "message": "You do not have permission to perform this action.",
                 },
                 status=status.HTTP_403_FORBIDDEN,
             )
@@ -609,7 +605,7 @@ class AnnouncementUpdateAPIView(APIView):
             return Response(
                 {
                     "status": False,
-                    "message": "Only the organization admin can update announcements.",
+                    "message": "You do not have permission to perform this action.",
                 },
                 status=status.HTTP_403_FORBIDDEN,
             )
@@ -771,10 +767,7 @@ class AnnouncementDeactivateAPIView(APIView):
             return Response(
                 {
                     "status": False,
-                    "message": (
-                        "Only the organization admin can deactivate "
-                        "announcements."
-                    ),
+                    "message": "You do not have permission to perform this action.",
                 },
                 status=status.HTTP_403_FORBIDDEN,
             )

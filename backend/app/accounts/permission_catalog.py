@@ -48,6 +48,7 @@ PERMISSIONS = [
     ("payment.manage", "Business", "Manage project payments and invoices"),
     ("expense.manage", "Business", "Manage company and recurring expenses"),
     ("calendar.manage", "Administration", "Manage holidays and weekly offs"),
+    ("announcement.manage", "Administration", "Create and manage announcements"),
 
     ("org.manage", "Administration", "Manage branches, departments, designations"),
     ("access.manage", "Administration", "Manage access roles and assign them"),
@@ -75,7 +76,7 @@ DEFAULT_ACCESS_ROLES = {
             "attendance.view_self", "attendance.view_all", "attendance.correct",
             "attendance.approve_correction", "leave.apply", "leave.view_all", "leave.approve",
             "reimbursement.review", "payroll.view_self", "salary.assign",
-            "calendar.manage",
+            "calendar.manage", "announcement.manage",
         ],
     },
     "HR Executive": {

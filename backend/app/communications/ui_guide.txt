@@ -19,3 +19,7 @@ SCREENS
                              project-chat/delete/, project-chat/settings/ (admin: who can post)
 DEV ONLY
   test-notification/ works only with DEBUG=True; do not show in UI.
+
+ACCESS
+  - Announcements admin screens: announcement.manage (default HR Manager;
+    owner always). Everyone keeps reading announcements/my/.

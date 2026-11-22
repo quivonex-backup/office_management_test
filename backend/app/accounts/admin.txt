@@ -600,3 +600,5 @@ No default role gets client / project / payment: create a role (e.g. "Accounts"
 or "Project Lead") with access-role/create and assign it.
 Existing organizations: run  python manage.py seed_org_access --update-defaults
 to add the new default codes to the roles with the default names.
+  announcement.manage  Create and manage announcements (communications app).
+                       Default: HR Manager. Run seed_org_access --update-defaults.

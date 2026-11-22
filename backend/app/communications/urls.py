@@ -42,10 +42,10 @@ urlpatterns = [
     path("notifications/delete/", NotificationDeleteAPIView.as_view(), name="notification-delete"),                       #E #A
 
     # Announcements
-    path("announcements/create/", AnnouncementCreateAPIView.as_view(), name="announcement-create"),                       #A
-    path("announcements/list/", AnnouncementListAPIView.as_view(), name="announcement-list"),                             #A
-    path("announcements/update/", AnnouncementUpdateAPIView.as_view(), name="announcement-update"),                       #A
-    path("announcements/deactivate/", AnnouncementDeactivateAPIView.as_view(), name="announcement-deactivate"),           #A
+    path("announcements/create/", AnnouncementCreateAPIView.as_view(), name="announcement-create"),                       #A  perm: announcement.manage
+    path("announcements/list/", AnnouncementListAPIView.as_view(), name="announcement-list"),                             #A  perm: announcement.manage
+    path("announcements/update/", AnnouncementUpdateAPIView.as_view(), name="announcement-update"),                       #A  perm: announcement.manage
+    path("announcements/deactivate/", AnnouncementDeactivateAPIView.as_view(), name="announcement-deactivate"),           #A  perm: announcement.manage
     path("announcements/my/", MyAnnouncementsAPIView.as_view(), name="announcement-my"),                                  #E #A
 
     # Project chat

@@ -12,12 +12,16 @@ Organization context:
   - Multi-org users: include organization_id in body
 
 Who uses this document:
-  - Super admin
   - Organization owner (Admin role)
+  - Users whose access role has announcement.manage (default: HR Manager)
 
-"Admin" in this document means:
-  - Super admin (is_superuser = true), OR
-  - The organization's owner (organization.owner == current user)
+Announcements (create / list / update / deactivate) need announcement.manage
+(the organization owner has every code). The super admin has NO access to an
+organization's announcements (same rule as every other module).
+Missing code -> 403 {"status": false, "message": "You do not have permission to perform this action."}
+
+"Admin" for project chat means: the organization owner, or a user with
+project.manage (ADMIN on every project), see projects/admin.txt.
 
 Admins are USERS, not EMPLOYEES. They do NOT have a row in the employees
 table. They can still post in chat, create announcements, and toggle
