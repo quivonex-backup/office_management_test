@@ -17,7 +17,6 @@ them or where they are an interviewer.
 """
 import json
 
-from django.contrib.auth import get_user_model
 from django.db.models import Count, Q
 
 from rest_framework import status
@@ -127,10 +126,9 @@ class ApplicantBaseAPIView(RequiredPermsMixin, OrgAPIView):
         if has_any_perm(request, organization, FULL_ACCESS_CODES):
             return qs
         employee = get_user_employee(request.user, organization)
-        q = Q(assigned_to=request.user)
-        if employee:
-            q |= Q(interviews__interviewer=employee)
-        return qs.filter(q).distinct()
+        if employee is None:
+            return qs.none()
+        return qs.filter(Q(assigned_to=employee) | Q(interviews__interviewer=employee)).distinct()
 
     def get_applicant(self, request, organization):
         applicant_id = request.data.get("applicant_id")
@@ -178,7 +176,7 @@ class ApplicantBaseAPIView(RequiredPermsMixin, OrgAPIView):
         return self.fail(str(exc))
 
     def resolve_people(self, data, organization):
-        """assigned_to_id (member user) and referred_by_id (employee)."""
+        """assigned_to_id and referred_by_id: both are employee ids."""
         from app.employees.models import Employee
 
         out, errors = {}, {}
@@ -187,14 +185,10 @@ class ApplicantBaseAPIView(RequiredPermsMixin, OrgAPIView):
             if value in (None, "", "null"):
                 out["assigned_to"] = None
             else:
-                user = get_user_model().objects.filter(
-                    pk=value, is_active=True,
-                    organization_memberships__organization=organization,
-                    organization_memberships__is_active=True,
-                ).first()
-                if user is None:
-                    errors["assigned_to_id"] = ["User is not an active member of this organization."]
-                out["assigned_to"] = user
+                emp = Employee.objects.filter(pk=value, organization=organization, is_active=True).first()
+                if emp is None:
+                    errors["assigned_to_id"] = ["Active employee not found."]
+                out["assigned_to"] = emp
         if "referred_by_id" in data:
             value = data.get("referred_by_id")
             if value in (None, "", "null"):
@@ -305,7 +299,7 @@ class ApplicantListAPIView(ApplicantBaseAPIView):
                 except (TypeError, ValueError):
                     return self.fail(f"{key} must be a number.")
         if self.parse_bool(request.data.get("assigned_to_me")):
-            qs = qs.filter(assigned_to=request.user)
+            qs = qs.filter(assigned_to__user=request.user)
         for key, lookup in (("applied_from", "applied_on__gte"), ("applied_to", "applied_on__lte")):
             value = request.data.get(key)
             if value:
@@ -462,6 +456,10 @@ class ApplicantVerificationAPIView(ApplicantBaseAPIView):
                 offer_action=data.get("offer_action"),
                 offer_note=data.get("offer_note"),
                 complete=bool(self.parse_bool(data.get("complete"))),
+                # SEND emails the letter + link (again while SENT = resend).
+                public_base_url=request.build_absolute_uri("/").rstrip("/"),
+                send_email=self.parse_bool(data.get("send_email")) is not False,
+                email_message=(data.get("email_message") or "").strip() or None,
             )
         except ValueError as exc:
             return self.handle_recruitment_error(exc)
@@ -558,3 +556,102 @@ class ApplicantConvertAPIView(ApplicantBaseAPIView):
         if account:
             message += " Account credentials will be sent by email."
         return self.ok(message, data, status.HTTP_201_CREATED)
+
+
+# =========================================================
+# OFFER LETTER DOWNLOAD (HR)                      batch 5
+# =========================================================
+class ApplicantOfferLetterDownloadAPIView(ApplicantBaseAPIView):
+    """{ applicant_id, offer_id? } -> PDF (current offer when offer_id is omitted)."""
+
+    required_perms = ("verification.update", "onboarding.complete")
+
+    def post(self, request):
+        from django.http import HttpResponse
+
+        from .services import offer_letter_filename, render_offer_letter_pdf
+
+        organization, error = get_user_organization(request)
+        if error:
+            return error
+        applicant, error = self.get_applicant(request, organization)
+        if error:
+            return error
+        offer_id = request.data.get("offer_id")
+        offer = applicant.offers.filter(pk=offer_id).first() if offer_id else current_offer(applicant)
+        if offer is None:
+            return self.fail("Offer not found.", http_status=status.HTTP_404_NOT_FOUND)
+
+        response = HttpResponse(render_offer_letter_pdf(offer), content_type="application/pdf")
+        response["Content-Disposition"] = f'attachment; filename="{offer_letter_filename(offer)}"'
+        return response
+
+
+# =========================================================
+# PUBLIC OFFER PAGES (candidate, no login)        batch 5
+# The token in the emailed link is the only key. Browser pages, so GET + form POST.
+# =========================================================
+from django.shortcuts import render  # noqa: E402
+from django.views import View  # noqa: E402
+
+from .models import ApplicantOffer  # noqa: E402
+
+
+def _public_offer(token):
+    return (
+        ApplicantOffer.objects
+        .select_related("applicant", "applicant__organization", "designation", "department", "branch")
+        .filter(response_token=token)
+        .first()
+    )
+
+
+def _public_context(request, offer, **extra):
+    from .services import offer_letter_context, offer_link_state
+
+    if offer is None:
+        return {"state": "CLOSED", "offer": None, **extra}
+    context = offer_letter_context(offer)
+    context.update({
+        "state": offer_link_state(offer),
+        "letter_url": request.build_absolute_uri(f"/recruitment/offer/{offer.response_token}/letter/"),
+        **extra,
+    })
+    return context
+
+
+class OfferResponsePublicView(View):
+    template_name = "offer_response.html"
+
+    def get(self, request, token):
+        offer = _public_offer(token)
+        return render(request, self.template_name, _public_context(request, offer),
+                      status=200 if offer else 404)
+
+    def post(self, request, token):
+        from .services import respond_to_offer
+
+        offer = _public_offer(token)
+        if offer is None:
+            return render(request, self.template_name, _public_context(request, None), status=404)
+        try:
+            offer = respond_to_offer(token, request.POST.get("action"), request.POST.get("note"))
+        except ValueError as exc:
+            offer = _public_offer(token)
+            return render(request, self.template_name,
+                          _public_context(request, offer, error=str(exc)), status=400)
+        return render(request, self.template_name, _public_context(request, _public_offer(token), just_done=True))
+
+
+class OfferLetterPublicPDFView(View):
+    def get(self, request, token):
+        from django.http import Http404, HttpResponse
+
+        from .services import offer_letter_filename, render_offer_letter_pdf
+
+        offer = _public_offer(token)
+        if offer is None or offer.status in ("REVOKED", "SUPERSEDED"):
+            raise Http404("Offer not found.")
+        response = HttpResponse(render_offer_letter_pdf(offer), content_type="application/pdf")
+        response["Content-Disposition"] = f'inline; filename="{offer_letter_filename(offer)}"'
+        return response

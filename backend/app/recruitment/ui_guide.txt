@@ -16,7 +16,7 @@ SCREENS
      button only with applicant.create.
 2. Add / edit applicant      applicant/create/, applicant/update/   (one form)
    - Sections: Personal | Position (designation, department, branch, source,
-     referred by, assigned HR) | Experience & education (repeatable rows) |
+     referred by, assigned to = employee picker from the employee list) | Experience & education (repeatable rows) |
      Documents (resume + other files with a type).
    - Send only changed fields on update.
 3. Applicant detail          applicant/detail/   ONE call fills the page
@@ -28,8 +28,15 @@ SCREENS
                      Main button: Update status (status-update/).
    b) Verification   checklist (system rows are read-only), offer card:
                      structure + Annual CTC or Monthly gross + joining date ->
+                     probation months + notice period days + respond-by date ->
                      "Create offer" (shows breakup), then Send / Accepted / Declined /
                      Revoke; older versions listed as superseded.
+                     "Send offer" dialog: message box (email_message) + "Send email"
+                     toggle (send_email). While SENT show "Resend email" (same call)
+                     and "Sent n times, last <last_emailed_at>".
+                     "Download letter" (applicant/offer-letter/download/, blob -> file).
+                     After an answer show "Accepted by candidate" / "Recorded by HR"
+                     (responded_via) + response_note; hide Accepted/Declined buttons.
                      Main button: Complete verification (verification/ complete=true).
    c) Onboarding     joining date, department, designation, branch, reports to,
                      access role (only with access.manage), PAN / UAN / bank fields,
@@ -49,4 +56,6 @@ RULES TO SHOW IN UI
   - Offers cannot be edited: "Revise offer" creates a new version.
   - The salary assignment starts on the payroll cycle start; days before the
     joining date are unpaid automatically. Explain this next to the joining date.
+  - The candidate answers from the email link (browser page, built by the backend,
+    nothing to build in the panel). The answer is final for both sides.
   - Duplicate email / mobile is refused with the existing applicant / employee code.

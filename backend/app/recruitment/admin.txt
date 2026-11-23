@@ -55,7 +55,7 @@ verification, onboarding and convert)
                     "to_date": "2024-06-30", "ctc": null, "reason_for_leaving": ""}],
     "remarks": null,
     "stage": "VERIFICATION", "status": "SELECTED",
-    "assigned_to": {"id": 4, "name": "Neha K"} | null,
+    "assigned_to": {"id", "employee_code", "full_name"} | null,   an employee
     "joining_date": "2026-12-10" | null,
     "reports_to": {...} | null, "access_role": {"id", "name"} | null,
     "onboarding_data": {"pan_number": "ABCDE1234F", ...},
@@ -77,7 +77,10 @@ verification, onboarding and convert)
 offer = {"id", "version", "status", "designation", "department", "branch",
          "joining_date", "salary_structure": {"id", "name"}, "annual_ctc",
          "monthly_gross", "breakup": {ctc_breakup, see payroll/admin.txt},
-         "notes", "created_at", "sent_at", "responded_at"}
+         "probation_months", "notice_period_days", "valid_until",
+         "notes", "created_at", "sent_at", "responded_at",
+         "responded_via": "HR" | "CANDIDATE" | null, "response_note",
+         "email_count", "last_emailed_at"}
 
 primary_action by stage: APPLICANT status_update | VERIFICATION verification |
 ONBOARDING convert | COMPLETED view_employee | CLOSED status_update
@@ -91,7 +94,7 @@ Optional: middle_name, alternate_mobile, date_of_birth, gender (MALE|FEMALE|OTHE
   address, city, state_id, pincode,
   designation_id, position_title (free text), department_id, branch_id,
   source (JOB_PORTAL|REFERRAL|WEBSITE|WALK_IN|CAMPUS|AGENCY|SOCIAL|OTHER),
-  referred_by_id (employee), assigned_to_id (organization user), applied_on (default today),
+  referred_by_id (employee), assigned_to_id (employee id, from the employee list), applied_on (default today),
   total_experience_years, current_company, current_designation, current_ctc,
   expected_ctc, notice_period_days, skills, remarks,
   education [ {degree, institution?, year?, score?} ],
@@ -148,8 +151,11 @@ Every part is optional; they run in this order: offer, offer_action, checks, com
   "applicant_id": 7,
   "offer": { "salary_structure_id": 2, "joining_date": "2026-12-10",
              "annual_ctc": "700000" | "monthly_gross": "52000",
-             "designation_id"?, "department_id"?, "branch_id"?, "notes"? },
+             "designation_id"?, "department_id"?, "branch_id"?, "notes"?,
+             "probation_months"? (0-36), "notice_period_days"? (0-365),
+             "valid_until"? (YYYY-MM-DD, today or later: last day to respond) },
   "offer_action": "SEND" | "ACCEPT" | "DECLINE" | "REVOKE", "offer_note"?,
+  "send_email"?: true (default) | false,  "email_message"?: "text shown in the mail",
   "checks": [ {"key": "IDENTITY", "status": "DONE"|"PENDING"|"REJECTED"|"WAIVED", "note"?},
               {"key": "POLICE", "label": "Police verification", "status": "DONE"} ],   new key + label = extra line
   "complete": true
@@ -161,6 +167,14 @@ Offer rules:
     the open one SUPERSEDED. The breakup snapshot is taken from the payroll calculator.
   - send annual_ctc or monthly_gross; the other is worked out (payroll/admin.txt CTC).
   - DRAFT -> SENT -> ACCEPTED | DECLINED ; DRAFT/SENT -> REVOKED.
+  - SEND emails the candidate: email_message + offer letter PDF attached + a link
+    to accept or decline in the browser (section 10). Reply-to = organization email.
+  - SEND again while SENT = resend the mail (same link); email_count goes up and
+    each mail is in history (OFFER_EMAILED). send_email=false: mark SENT, no mail.
+  - Mail errors -> 400 "Unable to send the offer email: ..." (candidate email missing, SMTP).
+  - ACCEPT / DECLINE here = HR records the answer for the candidate (responded_via HR).
+  - Once ACCEPTED or DECLINED (by HR or the candidate) the answer cannot be changed;
+    to change terms after a decline, create a new offer version.
 complete: needs the current offer ACCEPTED and every check DONE or WAIVED; moves to
 ONBOARDING, copies joining date / designation / department / branch from the offer and
 creates the onboarding checklist. Otherwise 400 "Verification is not complete: Identity documents, ..."
@@ -205,3 +219,35 @@ monthly_gross, salary_structure_id} + "user_account": {user_id, username, email}
 Errors 400: "Onboarding is not complete: ...", "The applicant has no accepted offer.",
 "This applicant is already an employee.", "Payroll settings are not configured; ...",
 user errors (email / mobile already used) under errors.
+
+--------------------------------------------------------------------------------
+9. POST /recruitment/applicant/offer-letter/download/   verification.update | onboarding.complete
+--------------------------------------------------------------------------------
+{ "applicant_id": 7, "offer_id"?: 12 }      default = current offer (any status, also DRAFT)
+200 -> application/pdf file (Content-Disposition attachment, Offer_Letter_<code>_V<n>.pdf).
+Errors use the JSON envelope (404 no offer, 403 no permission).
+Letter: organization logo, name, address, GSTIN, email, phone; candidate; reference
+<code>/OFFER/V<n>; position, department, branch, joining date, probation, notice
+period, respond-by date; CTC breakup (earnings, gross, employer contributions, CTC);
+notes. Template: app/recruitment/templates/offer_letter.html
+
+--------------------------------------------------------------------------------
+10. CANDIDATE PAGES (browser, no login)                 #PUB
+--------------------------------------------------------------------------------
+GET  /recruitment/offer/<token>/          page with the offer terms, PDF link and
+                                          Accept / Decline buttons (+ optional note)
+POST /recruitment/offer/<token>/          form: action=ACCEPT|DECLINE, note?  (CSRF form,
+                                          served by the same page; not a JSON API)
+GET  /recruitment/offer/<token>/letter/   offer letter PDF
+The link is in the offer email. Page states:
+  OPEN      buttons shown
+  ACCEPTED / DECLINED   the recorded answer, no buttons (final, cannot be changed)
+  EXPIRED   valid_until has passed
+  CLOSED    revoked or replaced by a newer version (PDF link also closed)
+Unknown token -> 404 page. A second answer -> 400 page "You have already accepted this offer."
+On answer: offer ACCEPTED/DECLINED (responded_via CANDIDATE, response_note), the
+OFFER_ACCEPTANCE check is set, history entry, and a notification (OFFER_ACCEPTED /
+OFFER_DECLINED) goes to the offer creator, the assigned employee, the owner and
+verification.update holders.
+Link host = the host HR used when sending (request host); behind a proxy forward
+the Host header so the link points to the public domain.

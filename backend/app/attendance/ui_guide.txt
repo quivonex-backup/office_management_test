@@ -13,6 +13,9 @@ SCREENS (employee)
 1. Punch                     punch/  (multipart: selfie, latitude, longitude, gps_accuracy)
    - One button; the server decides CHECK_IN / CHECK_OUT. Show the backend message
      on failure (face mismatch, outside location, GPS accuracy, shift ended).
+   - Remote employees (my-profile attendance_location_exempt = true) can punch
+     from anywhere; still send GPS when available. Admin attendance views can
+     show a "Remote" badge when verification_details.location_exempt is true.
 2. My attendance             my-attendance/ (month view), detail/
 3. My shifts                 my-shifts/ (current_shift + history)
 4. Correction request        my-attendance/correct/ or corrections/create/, list in corrections/list/

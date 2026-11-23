@@ -23,6 +23,8 @@ SCREENS
      Designation  <- designation/list/
      Reports to   <- list/ (search)         loops are rejected by the server
      Access role  <- accounts/access-role/list/   ONLY if user has access.manage
+     "Remote / work from home" switch -> attendance_location_exempt (true|false)
+       punches from any location; selfie / shift rules still apply
    - "Create login account" checkbox (create_user=true) needs employee.create_user.
 3. Employee detail           detail/ + document/upload|delete/
    - Header: name, code, designation, branch, manager. Three-dot menu:

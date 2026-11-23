@@ -616,6 +616,12 @@ radius are used when the branch has coordinates (radius empty = settings
 radius); otherwise the organization location. Each punch stores
 verification_details.branch {id, name} | null and allowed_radius_meters.
 
+Remote employees (employee.attendance_location_exempt = true): the location
+check is skipped (no radius, no GPS accuracy check, GPS optional). Latitude /
+longitude are still saved when sent and distance_meters is recorded.
+verification_details.location_exempt = true on those punches. Photo / face and
+shift rules are unchanged. Set the flag with employees/update/.
+
 
 ================================================================================
 SECTION — BATCH 4 CHANGES

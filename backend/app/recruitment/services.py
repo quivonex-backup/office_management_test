@@ -56,7 +56,7 @@ ONBOARDING_DATA_FIELDS = (
     "work_state_id", "district", "taluka", "pan_number", "pf_uan", "esi_ip_number",
     "tax_regime", "bank_account_number", "bank_ifsc", "bank_name", "bank_branch",
     "upi_id", "emergency_contact_name", "emergency_contact_number",
-    "emergency_contact_relation",
+    "emergency_contact_relation", "attendance_location_exempt",
 )
 
 OPEN_OFFER_STATUSES = ("DRAFT", "SENT")
@@ -360,6 +360,9 @@ def create_offer(applicant, terms, user):
         monthly_gross=monthly_gross,
         breakup=_jsonable(breakup),
         notes=terms.get("notes") or None,
+        probation_months=terms.get("probation_months"),
+        notice_period_days=terms.get("notice_period_days"),
+        valid_until=terms.get("valid_until"),
         created_by=user,
     )
     _set_system_check(applicant, "VERIFICATION", "SALARY_OFFER", "DONE", user, f"Offer v{offer.version}")
@@ -370,14 +373,14 @@ def create_offer(applicant, terms, user):
 
 OFFER_ACTIONS = {
     # action: (allowed from, new status)
-    "SEND": (("DRAFT",), "SENT"),
+    "SEND": (("DRAFT", "SENT"), "SENT"),       # SENT again = resend the email
     "ACCEPT": (("DRAFT", "SENT"), "ACCEPTED"),
     "DECLINE": (("DRAFT", "SENT"), "DECLINED"),
     "REVOKE": (("DRAFT", "SENT"), "REVOKED"),
 }
 
 
-def set_offer_status(applicant, action, user, note=None):
+def set_offer_status(applicant, action, user, note=None, via="HR"):
     action = str(action or "").strip().upper()
     if action not in OFFER_ACTIONS:
         raise RecruitmentError("Validation failed.", {"offer_action": ["Use SEND, ACCEPT, DECLINE or REVOKE."]})
@@ -388,14 +391,22 @@ def set_offer_status(applicant, action, user, note=None):
     if offer.status not in allowed_from:
         raise ValueError(f"Offer v{offer.version} is {offer.status}; it cannot be {new_status.lower()}.")
 
+    if action == "SEND" and offer.status == "SENT":
+        return offer  # already sent; the caller re-sends the email
+
     offer.status = new_status
     offer.status_changed_by = user
     now = timezone.now()
+    fields = ["status", "status_changed_by", "sent_at", "responded_at"]
     if new_status == "SENT":
         offer.sent_at = now
     else:
         offer.responded_at = now
-    offer.save(update_fields=["status", "status_changed_by", "sent_at", "responded_at"])
+        if new_status in ("ACCEPTED", "DECLINED"):
+            offer.responded_via = via
+            offer.response_note = note or None
+            fields += ["responded_via", "response_note"]
+    offer.save(update_fields=fields)
 
     if new_status == "ACCEPTED":
         _set_system_check(applicant, "VERIFICATION", "OFFER_ACCEPTANCE", "DONE", user, f"Offer v{offer.version}")
@@ -404,7 +415,9 @@ def set_offer_status(applicant, action, user, note=None):
     elif new_status == "REVOKED":
         _set_system_check(applicant, "VERIFICATION", "SALARY_OFFER", "PENDING", user, f"Offer v{offer.version} revoked")
         _set_system_check(applicant, "VERIFICATION", "OFFER_ACCEPTANCE", "PENDING", user)
-    _history(applicant, f"OFFER_{new_status}", user, note or f"Offer v{offer.version}")
+    who = "by the candidate (email link)" if via == "CANDIDATE" else ""
+    _history(applicant, f"OFFER_{new_status}", user,
+             " ".join(p for p in [f"Offer v{offer.version}", who, note or ""] if p))
     return offer
 
 
@@ -419,7 +432,8 @@ def _pending_checks(applicant, stage, exclude_keys=()):
 
 @transaction.atomic
 def update_verification(applicant, user, checks=None, offer_terms=None, offer_action=None,
-                        offer_note=None, complete=False):
+                        offer_note=None, complete=False, public_base_url=None, send_email=True,
+                        email_message=None):
     applicant = Applicant.objects.select_for_update().get(pk=applicant.pk)
     if applicant.stage != "VERIFICATION":
         raise ValueError(f"The applicant is in {applicant.stage}, not VERIFICATION.")
@@ -428,7 +442,9 @@ def update_verification(applicant, user, checks=None, offer_terms=None, offer_ac
     if offer_terms:
         create_offer(applicant, offer_terms, user)
     if offer_action:
-        set_offer_status(applicant, offer_action, user, offer_note)
+        offer = set_offer_status(applicant, offer_action, user, offer_note)
+        if str(offer_action).strip().upper() == "SEND" and send_email:
+            send_offer_email(offer, public_base_url, user, email_message)
     if checks:
         _apply_checks(applicant, "VERIFICATION", checks, user)
 
@@ -633,3 +649,223 @@ def allowed_actions(applicant, can):
     if primary not in actions:
         primary = actions[0] if actions else None
     return primary, actions
+
+
+# =========================================================
+# OFFER LETTER: PDF, EMAIL, CANDIDATE RESPONSE (batch 5)
+# Templates: recruitment/templates/offer_letter.html (PDF),
+#            offer_letter_email.html (email), offer_response.html (public page)
+# =========================================================
+def _money(value):
+    """'622500.00' -> '6,22,500.00' (Indian grouping)."""
+    from decimal import Decimal, InvalidOperation
+
+    try:
+        amount = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return value
+    sign = "-" if amount < 0 else ""
+    whole, _, frac = f"{abs(amount):.2f}".partition(".")
+    if len(whole) > 3:
+        head, tail = whole[:-3], whole[-3:]
+        groups = []
+        while len(head) > 2:
+            groups.insert(0, head[-2:])
+            head = head[:-2]
+        if head:
+            groups.insert(0, head)
+        whole = ",".join(groups + [tail])
+    return f"{sign}{whole}.{frac}"
+
+
+def offer_letter_context(offer):
+    """Everything the offer templates need (company data from the organization)."""
+    from common.branding import get_organization_branding, load_organization_logo
+
+    applicant = offer.applicant
+    organization = applicant.organization
+    branding = get_organization_branding(organization)
+    logo_data, _name, logo_mime = load_organization_logo(organization, as_base64=True)
+    breakup = offer.breakup or {}
+    employer = breakup.get("employer_contributions") or {}
+
+    earnings = [
+        {"name": row.get("name") or row.get("code"), "monthly": _money(row.get("monthly")),
+         "annual": _money(row.get("annual"))}
+        for row in breakup.get("earnings", [])
+    ]
+    from decimal import Decimal
+
+    employer_rows = [
+        {"name": label, "monthly": _money(employer.get(key)),
+         "annual": _money(Decimal(str(employer.get(key) or 0)) * 12)}
+        for key, label in (("pf_employer", "Employer PF"), ("edli", "EDLI"),
+                           ("esi_employer", "Employer ESI"), ("lwf_employer", "Employer LWF"))
+        if employer.get(key) not in (None, "0", "0.00", 0)
+    ]
+    return {
+        **branding,
+        "logo_data": logo_data,
+        "logo_mime": logo_mime or "image/png",
+        "applicant": applicant,
+        "offer": offer,
+        "designation": offer.designation.name if offer.designation_id else (applicant.position_title or ""),
+        "department": offer.department.name if offer.department_id else "",
+        "branch": offer.branch.name if offer.branch_id else "",
+        "annual_ctc": _money(offer.annual_ctc),
+        "monthly_gross": _money(offer.monthly_gross),
+        "monthly_ctc": _money(breakup.get("monthly_ctc")),
+        "annual_gross": _money(breakup.get("annual_gross")),
+        "earnings": earnings,
+        "employer_rows": employer_rows,
+        "ctc_includes_employer": breakup.get("ctc_includes_employer_contributions", True),
+        "letter_date": timezone.localdate(offer.sent_at) if offer.sent_at else timezone.localdate(),
+        "reference": f"{applicant.applicant_code}/OFFER/V{offer.version}",
+    }
+
+
+def render_offer_letter_pdf(offer):
+    """Offer letter PDF bytes (WeasyPrint, same engine as the project invoice)."""
+    from django.template.loader import render_to_string
+    from weasyprint import HTML
+
+    html = render_to_string("offer_letter.html", offer_letter_context(offer))
+    return HTML(string=html).write_pdf()
+
+
+def offer_letter_filename(offer):
+    return f"Offer_Letter_{offer.applicant.applicant_code}_v{offer.version}.pdf"
+
+
+def offer_response_url(offer, public_base_url):
+    base = (public_base_url or "").rstrip("/")
+    return f"{base}/recruitment/offer/{offer.response_token}/"
+
+
+def send_offer_email(offer, public_base_url, user=None, message=None):
+    """
+    Email the candidate: message + offer letter PDF + Accept / Decline link.
+    Can be called again while the offer is SENT (resend). The link stays the same.
+    """
+    import secrets
+
+    from django.conf import settings
+    from django.core.mail import EmailMultiAlternatives
+    from django.template.loader import render_to_string
+
+    if offer.status != "SENT":
+        raise ValueError("Only a sent offer can be emailed.")
+    applicant = offer.applicant
+    if not applicant.email:
+        raise ValueError("The applicant has no email address.")
+    if not public_base_url:
+        raise ValueError("Public link address is not available.")
+
+    if not offer.response_token:
+        offer.response_token = secrets.token_urlsafe(32)
+
+    context = offer_letter_context(offer)
+    context.update({"message": message, "response_url": offer_response_url(offer, public_base_url)})
+    html_body = render_to_string("offer_letter_email.html", context)
+    text_body = (
+        f"Dear {applicant.full_name},\n\n"
+        f"We are pleased to offer you the position of {context['designation']} at "
+        f"{context['company_name']}. Your offer letter is attached.\n\n"
+        + (f"{message}\n\n" if message else "")
+        + f"Please accept or decline the offer here: {context['response_url']}\n"
+        + (f"This offer is valid until {offer.valid_until:%d %b %Y}.\n" if offer.valid_until else "")
+        + f"\nRegards,\n{context['company_name']}"
+    )
+
+    email = EmailMultiAlternatives(
+        subject=f"Offer of employment - {context['designation']} - {context['company_name']}".strip(" -"),
+        body=text_body,
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        to=[applicant.email],
+        reply_to=[context["company_email"]] if context.get("company_email") else None,
+    )
+    email.attach_alternative(html_body, "text/html")
+    email.attach(offer_letter_filename(offer), render_offer_letter_pdf(offer), "application/pdf")
+    try:
+        email.send(fail_silently=False)
+    except Exception as exc:
+        raise ValueError(f"Unable to send the offer email: {exc}")
+
+    offer.email_count += 1
+    offer.last_emailed_at = timezone.now()
+    offer.save(update_fields=["response_token", "email_count", "last_emailed_at"])
+    _history(applicant, "OFFER_EMAILED", user,
+             f"Offer v{offer.version} emailed to {applicant.email} (#{offer.email_count})")
+    return offer
+
+
+def offer_link_state(offer):
+    """What the public page shows: OPEN, ACCEPTED, DECLINED, EXPIRED, CLOSED."""
+    if offer is None:
+        return "CLOSED"
+    if offer.status in ("ACCEPTED", "DECLINED"):
+        return offer.status
+    if offer.status != "SENT" or offer.applicant.stage != "VERIFICATION":
+        return "CLOSED"     # revoked, superseded, or the applicant moved on
+    if offer.valid_until and timezone.localdate() > offer.valid_until:
+        return "EXPIRED"
+    return "OPEN"
+
+
+def _offer_watchers(offer):
+    """HR users told about the candidate's answer."""
+    from app.employees.models import Employee
+
+    applicant = offer.applicant
+    users = {}
+    for user in (offer.created_by, getattr(applicant.assigned_to, "user", None), applicant.organization.owner):
+        if user is not None:
+            users[user.id] = user
+    holders = Employee.objects.filter(
+        organization=applicant.organization, is_active=True, user__isnull=False,
+        access_role__is_active=True, access_role__permissions__code="verification.update",
+    ).select_related("user").distinct()
+    for emp in holders:
+        users[emp.user.id] = emp.user
+    return list(users.values())
+
+
+@transaction.atomic
+def respond_to_offer(token, action, note=None):
+    """
+    Candidate's answer through the emailed link. Final: once accepted or
+    declined it cannot be changed (by the candidate or by HR).
+    """
+    action = str(action or "").strip().upper()
+    if action not in ("ACCEPT", "DECLINE"):
+        raise ValueError("Choose Accept or Decline.")
+    offer = (
+        ApplicantOffer.objects.select_for_update()
+        .select_related("applicant", "applicant__organization")
+        .filter(response_token=token).first()
+    )
+    state = offer_link_state(offer)
+    if state != "OPEN":
+        raise ValueError({
+            "ACCEPTED": "You have already accepted this offer.",
+            "DECLINED": "You have already declined this offer.",
+            "EXPIRED": "This offer has expired. Please contact the company.",
+        }.get(state, "This offer is no longer available."))
+
+    set_offer_status(offer.applicant, action, None, (note or "").strip()[:1000] or None, via="CANDIDATE")
+    offer.refresh_from_db()
+
+    from app.communications.notification_service import notify
+
+    watchers = _offer_watchers(offer)
+    verb = "accepted" if offer.status == "ACCEPTED" else "declined"
+    transaction.on_commit(lambda: notify(
+        users=watchers,
+        event_code=f"OFFER_{offer.status}",
+        title=f"Offer {verb}",
+        body=f"{offer.applicant.full_name} ({offer.applicant.applicant_code}) {verb} offer v{offer.version}.",
+        reference_type="applicant",
+        reference_id=offer.applicant_id,
+        priority="HIGH",
+    ))
+    return offer

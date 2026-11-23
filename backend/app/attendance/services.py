@@ -128,6 +128,21 @@ def verify_office_location(
             "message": "Location verification is disabled.",
         }
 
+    # Remote / work-from-home employee: any location is accepted. The
+    # distance is still worked out (for the record) when possible.
+    if employee is not None and getattr(employee, "attendance_location_exempt", False):
+        distance = None
+        if None not in (latitude, longitude, office_lat, office_lng):
+            distance = round(calculate_distance_meters(office_lat, office_lng, latitude, longitude), 2)
+        return {
+            "verified": True,
+            "distance_meters": distance,
+            "allowed_radius_meters": None,
+            "branch": branch_info,
+            "location_exempt": True,
+            "message": "Location check skipped: remote work allowed.",
+        }
+
     if latitude is None or longitude is None:
         return {
             "verified": False,
@@ -635,6 +650,7 @@ def process_attendance_punch(
             "location_message": location_result["message"],
             "branch": location_result.get("branch"),
             "allowed_radius_meters": location_result.get("allowed_radius_meters"),
+            "location_exempt": bool(location_result.get("location_exempt")),
             "photo_provided": bool(selfie_file),
             "face_verification": (
                 "Verified" if face_result["verified"] else "Skipped"

@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Offer Letter {{ reference }}</title>
+    <style>
+        /* Same base look as payments/templates/project_invoice.html */
+        @page {
+            size: A4;
+            margin: 1.8cm 1.8cm 2.2cm 1.8cm;
+            @bottom-center {
+                content: "Page " counter(page) " of " counter(pages);
+                font-size: 7.5pt;
+                color: #999999;
+            }
+        }
+        body {
+            font-family: 'Helvetica', 'Arial', sans-serif;
+            font-size: 10pt;
+            line-height: 1.55;
+            color: #222222;
+            margin: 0;
+        }
+        .text-right { text-align: right; }
+        .muted { color: #666666; }
+        .fw-bold { font-weight: 700; }
+        .mt-2 { margin-top: 10px; }
+        .mt-3 { margin-top: 18px; }
+
+        .header-table { width: 100%; border-collapse: collapse; border-bottom: 2px solid #222222; margin-bottom: 18px; }
+        .header-table td { vertical-align: top; padding: 0 0 10px 0; }
+        .logo { max-height: 55px; max-width: 180px; margin-bottom: 6px; }
+        .company-name { font-size: 15pt; font-weight: 700; margin-bottom: 4px; }
+        .company-details { font-size: 8.5pt; color: #555555; line-height: 1.45; }
+        .doc-label { font-size: 16pt; font-weight: 700; letter-spacing: 1px; text-align: right; }
+        .doc-sub { font-size: 8.5pt; color: #777777; text-align: right; }
+
+        .meta-table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 9pt; }
+        .meta-table td { vertical-align: top; }
+        .meta-label { color: #777777; display: inline-block; min-width: 70px; }
+
+        h2 { font-size: 11pt; margin: 18px 0 6px 0; border-bottom: 1px solid #dddddd; padding-bottom: 3px; }
+        p { margin: 0 0 8px 0; }
+
+        .terms-table, .pay-table { width: 100%; border-collapse: collapse; font-size: 9.5pt; }
+        .terms-table td { padding: 4px 6px; border-bottom: 1px solid #eeeeee; }
+        .terms-table td.label { width: 38%; color: #555555; }
+        .pay-table th { background: #f2f2f2; text-align: left; padding: 5px 6px; font-size: 8.5pt; text-transform: uppercase; color: #444444; }
+        .pay-table td { padding: 4px 6px; border-bottom: 1px solid #eeeeee; }
+        .pay-table th.num, .pay-table td.num { text-align: right; }
+        .pay-table tr.total td { font-weight: 700; border-top: 1.5px solid #222222; border-bottom: none; }
+
+        .sign-table { width: 100%; margin-top: 36px; font-size: 9.5pt; }
+        .sign-table td { vertical-align: bottom; width: 50%; }
+        .sign-line { border-top: 1px solid #222222; width: 70%; padding-top: 4px; }
+        .note { font-size: 8.5pt; color: #666666; margin-top: 18px; }
+    </style>
+</head>
+<body>
+
+<table class="header-table">
+    <tr>
+        <td>
+            {% if logo_data %}
+                <img src="data:{{ logo_mime }};base64,{{ logo_data }}" alt="Logo" class="logo">
+            {% endif %}
+            <div class="company-name">{{ company_name }}</div>
+            <div class="company-details">
+                {% if company_address %}{{ company_address }}<br>{% endif %}
+                {% if company_email %}{{ company_email }}{% endif %}{% if company_phone %} &middot; {{ company_phone }}{% endif %}<br>
+                {% if company_gst %}GSTIN: {{ company_gst }}{% endif %}
+                {% if company_website %} &middot; {{ company_website }}{% endif %}
+            </div>
+        </td>
+        <td>
+            <div class="doc-label">OFFER LETTER</div>
+            <div class="doc-sub">Private &amp; Confidential</div>
+        </td>
+    </tr>
+</table>
+
+<table class="meta-table">
+    <tr>
+        <td>
+            <div class="fw-bold">{{ applicant.full_name }}</div>
+            {% if applicant.address %}<div class="muted">{{ applicant.address }}{% if applicant.city %}, {{ applicant.city }}{% endif %}{% if applicant.pincode %} - {{ applicant.pincode }}{% endif %}</div>{% endif %}
+            <div class="muted">{{ applicant.email }} &middot; {{ applicant.mobile }}</div>
+        </td>
+        <td class="text-right">
+            <div><span class="meta-label">Date</span> {{ letter_date|date:"d M Y" }}</div>
+            <div><span class="meta-label">Ref.</span> {{ reference }}</div>
+        </td>
+    </tr>
+</table>
+
+<p>Dear {{ applicant.first_name }},</p>
+
+<p>
+    We are pleased to offer you the position of <span class="fw-bold">{{ designation }}</span>
+    at <span class="fw-bold">{{ company_name }}</span>{% if department %} in the {{ department }} department{% endif %}{% if branch %}, based at our {{ branch }} office{% endif %},
+    on the terms below.
+</p>
+
+<h2>Terms of employment</h2>
+<table class="terms-table">
+    <tr><td class="label">Position</td><td>{{ designation }}</td></tr>
+    {% if department %}<tr><td class="label">Department</td><td>{{ department }}</td></tr>{% endif %}
+    {% if branch %}<tr><td class="label">Work location</td><td>{{ branch }}</td></tr>{% endif %}
+    <tr><td class="label">Date of joining</td><td>{{ offer.joining_date|date:"d M Y" }}</td></tr>
+    <tr><td class="label">Annual CTC</td><td class="fw-bold">&#8377; {{ annual_ctc }}</td></tr>
+    <tr><td class="label">Monthly gross salary</td><td>&#8377; {{ monthly_gross }}</td></tr>
+    {% if offer.probation_months %}<tr><td class="label">Probation period</td><td>{{ offer.probation_months }} month{{ offer.probation_months|pluralize }}</td></tr>{% endif %}
+    {% if offer.notice_period_days %}<tr><td class="label">Notice period</td><td>{{ offer.notice_period_days }} day{{ offer.notice_period_days|pluralize }}</td></tr>{% endif %}
+    {% if offer.valid_until %}<tr><td class="label">Offer valid until</td><td>{{ offer.valid_until|date:"d M Y" }}</td></tr>{% endif %}
+</table>
+
+{% if earnings %}
+<h2>Compensation breakup</h2>
+<table class="pay-table">
+    <thead>
+        <tr><th>Component</th><th class="num">Monthly (&#8377;)</th><th class="num">Annual (&#8377;)</th></tr>
+    </thead>
+    <tbody>
+        {% for row in earnings %}
+        <tr><td>{{ row.name }}</td><td class="num">{{ row.monthly }}</td><td class="num">{{ row.annual }}</td></tr>
+        {% endfor %}
+        <tr class="total"><td>Gross salary</td><td class="num">{{ monthly_gross }}</td><td class="num">{{ annual_gross }}</td></tr>
+        {% if ctc_includes_employer %}
+            {% for row in employer_rows %}
+            <tr><td>{{ row.name }} (company contribution)</td><td class="num">{{ row.monthly }}</td><td class="num">{{ row.annual }}</td></tr>
+            {% endfor %}
+        {% endif %}
+        <tr class="total"><td>Cost to company (CTC)</td><td class="num">{{ monthly_ctc }}</td><td class="num">{{ annual_ctc }}</td></tr>
+    </tbody>
+</table>
+<p class="note">Statutory deductions (PF, ESI, professional tax, income tax) are applied to the gross salary as per law.</p>
+{% endif %}
+
+{% if offer.notes %}
+<h2>Additional terms</h2>
+<p>{{ offer.notes|linebreaksbr }}</p>
+{% endif %}
+
+<p class="mt-3">
+    This offer is subject to verification of the documents and details you have provided.
+    Please confirm your acceptance{% if offer.valid_until %} on or before {{ offer.valid_until|date:"d M Y" }}{% endif %}
+    using the link in the email you received with this letter.
+</p>
+
+<p>We look forward to welcoming you to {{ company_name }}.</p>
+
+<table class="sign-table">
+    <tr>
+        <td>
+            <div>For <span class="fw-bold">{{ company_name }}</span></div>
+            <div style="height: 40px;"></div>
+            <div class="sign-line">Authorised signatory</div>
+        </td>
+        <td class="text-right">
+            <div>Accepted by</div>
+            <div style="height: 40px;"></div>
+            <div class="sign-line" style="margin-left: auto;">{{ applicant.full_name }}</div>
+        </td>
+    </tr>
+</table>
+
+</body>
+</html>

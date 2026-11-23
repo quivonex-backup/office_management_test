@@ -66,6 +66,7 @@ Request :
   "esi_ip_number": null,
   "pan_number": "ABCDE1234F",
   "work_state": 12,
+  "attendance_location_exempt": false, // true = remote / WFH, punch from any location
   "tax_regime": "NEW",                  // OLD | NEW
   "bank_account_number": "1234567890",
   "bank_ifsc": "HDFC0001234",
@@ -195,6 +196,7 @@ Response 200:
       "pan_number": "ABCDE1234F",
       "work_state": 12,
       "work_state_name": "Karnataka",
+      "attendance_location_exempt": false,
       "tax_regime": "NEW",
       "bank_account_number": "1234567890",
       "bank_ifsc": "HDFC0001234",

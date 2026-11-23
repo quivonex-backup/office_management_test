@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Offer of employment{% if company_name %} - {{ company_name }}{% endif %}</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { margin: 0; background: #f4f5f7; font-family: Helvetica, Arial, sans-serif; color: #222222; }
+        .wrap { max-width: 640px; margin: 32px auto; padding: 0 16px; }
+        .card { background: #ffffff; border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); overflow: hidden; }
+        .head { padding: 22px 26px; border-bottom: 2px solid #222222; display: flex; align-items: center; gap: 14px; }
+        .head img { max-height: 44px; max-width: 140px; }
+        .company { font-size: 18px; font-weight: 700; }
+        .muted { color: #666666; font-size: 13px; }
+        .body { padding: 22px 26px; font-size: 15px; line-height: 1.6; }
+        table.terms { width: 100%; border-collapse: collapse; margin: 14px 0 18px 0; font-size: 14px; }
+        table.terms td { padding: 8px 0; border-bottom: 1px solid #eeeeee; }
+        table.terms td.l { color: #666666; width: 45%; }
+        .actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 18px; }
+        button { font-size: 15px; font-weight: 700; padding: 12px 24px; border-radius: 6px; cursor: pointer; border: 1px solid #222222; }
+        .accept { background: #1f7a3a; border-color: #1f7a3a; color: #ffffff; }
+        .decline { background: #ffffff; color: #b42318; border-color: #b42318; }
+        textarea { width: 100%; min-height: 70px; margin-top: 6px; padding: 8px; font: inherit; font-size: 14px; border: 1px solid #cccccc; border-radius: 6px; }
+        label { font-size: 13px; color: #555555; }
+        .notice { padding: 14px 16px; border-radius: 6px; margin-bottom: 14px; font-size: 14px; }
+        .ok { background: #ecf7ef; color: #1f5c32; }
+        .bad { background: #fdecea; color: #8a1c13; }
+        .info { background: #f1f3f5; color: #333333; }
+        a.pdf { color: #222222; font-weight: 700; }
+        .foot { padding: 12px 26px; background: #fafafa; font-size: 12px; color: #888888; }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <div class="card">
+        <div class="head">
+            {% if logo_data %}<img src="data:{{ logo_mime }};base64,{{ logo_data }}" alt="">{% endif %}
+            <div>
+                <div class="company">{{ company_name|default:"Offer of employment" }}</div>
+                {% if company_address %}<div class="muted">{{ company_address }}</div>{% endif %}
+            </div>
+        </div>
+
+        <div class="body">
+            {% if error %}<div class="notice bad">{{ error }}</div>{% endif %}
+
+            {% if state == "CLOSED" and not offer %}
+                <div class="notice info">This link is not valid. Please check the link in your email or contact the company.</div>
+            {% else %}
+                {% if just_done %}
+                    <div class="notice {% if state == 'ACCEPTED' %}ok{% else %}info{% endif %}">
+                        {% if state == "ACCEPTED" %}Thank you. You have accepted the offer. The HR team will contact you about the next steps.
+                        {% else %}Your response has been recorded. You have declined the offer.{% endif %}
+                    </div>
+                {% elif state == "ACCEPTED" %}
+                    <div class="notice ok">You accepted this offer on {{ offer.responded_at|date:"d M Y, h:i A" }}.</div>
+                {% elif state == "DECLINED" %}
+                    <div class="notice info">You declined this offer on {{ offer.responded_at|date:"d M Y, h:i A" }}.</div>
+                {% elif state == "EXPIRED" %}
+                    <div class="notice bad">This offer expired on {{ offer.valid_until|date:"d M Y" }}. Please contact the company.</div>
+                {% elif state == "CLOSED" %}
+                    <div class="notice info">This offer is no longer available. If you received a newer offer, please use the link in that email.</div>
+                {% endif %}
+
+                <p>Dear {{ applicant.first_name }},</p>
+                <p>Offer for the position of <strong>{{ designation }}</strong>{% if department %}, {{ department }}{% endif %}.</p>
+
+                <table class="terms">
+                    <tr><td class="l">Date of joining</td><td>{{ offer.joining_date|date:"d M Y" }}</td></tr>
+                    <tr><td class="l">Annual CTC</td><td><strong>&#8377; {{ annual_ctc }}</strong></td></tr>
+                    <tr><td class="l">Monthly gross</td><td>&#8377; {{ monthly_gross }}</td></tr>
+                    {% if branch %}<tr><td class="l">Work location</td><td>{{ branch }}</td></tr>{% endif %}
+                    {% if offer.probation_months %}<tr><td class="l">Probation</td><td>{{ offer.probation_months }} month{{ offer.probation_months|pluralize }}</td></tr>{% endif %}
+                    {% if offer.notice_period_days %}<tr><td class="l">Notice period</td><td>{{ offer.notice_period_days }} day{{ offer.notice_period_days|pluralize }}</td></tr>{% endif %}
+                    {% if offer.valid_until %}<tr><td class="l">Respond by</td><td>{{ offer.valid_until|date:"d M Y" }}</td></tr>{% endif %}
+                </table>
+
+                <p><a class="pdf" href="{{ letter_url }}" target="_blank" rel="noopener">Open the offer letter (PDF)</a></p>
+
+                {% if state == "OPEN" %}
+                <form method="post" onsubmit="return confirm('Your answer is final and cannot be changed. Continue?');">
+                    {% csrf_token %}
+                    <label for="note">Message to HR (optional)</label>
+                    <textarea id="note" name="note" maxlength="1000"></textarea>
+                    <div class="actions">
+                        <button class="accept" type="submit" name="action" value="ACCEPT">Accept offer</button>
+                        <button class="decline" type="submit" name="action" value="DECLINE">Decline offer</button>
+                    </div>
+                </form>
+                <p class="muted" style="margin-top:14px;">Your answer is final once submitted.</p>
+                {% endif %}
+            {% endif %}
+        </div>
+        <div class="foot">{% if company_email %}Questions? Write to {{ company_email }}.{% endif %}</div>
+    </div>
+</div>
+</body>
+</html>

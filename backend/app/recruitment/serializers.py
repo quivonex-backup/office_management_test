@@ -116,10 +116,18 @@ class OfferInputSerializer(serializers.Serializer):
     department_id = serializers.IntegerField(required=False, allow_null=True)
     branch_id = serializers.IntegerField(required=False, allow_null=True)
     notes = serializers.CharField(required=False, allow_blank=True)
+    probation_months = serializers.IntegerField(required=False, allow_null=True, min_value=0, max_value=36)
+    notice_period_days = serializers.IntegerField(required=False, allow_null=True, min_value=0, max_value=365)
+    valid_until = serializers.DateField(required=False, allow_null=True)
 
     def validate(self, attrs):
+        from django.utils import timezone
+
         if attrs.get("annual_ctc") is None and attrs.get("monthly_gross") is None:
             raise serializers.ValidationError({"annual_ctc": "Send annual_ctc or monthly_gross."})
+        valid_until = attrs.get("valid_until")
+        if valid_until and valid_until < timezone.localdate():
+            raise serializers.ValidationError({"valid_until": "Must be today or later."})
         return attrs
 
 
@@ -152,7 +160,7 @@ class ApplicantListSerializer(serializers.ModelSerializer):
         return _ref(obj.branch)
 
     def get_assigned_to(self, obj):
-        return _user_ref(obj.assigned_to)
+        return _emp_ref(obj.assigned_to)
 
 
 class ApplicantDocumentSerializer(serializers.ModelSerializer):
@@ -194,6 +202,8 @@ class ApplicantOfferSerializer(serializers.ModelSerializer):
         fields = [
             "id", "version", "status", "designation", "department", "branch", "joining_date",
             "salary_structure", "annual_ctc", "monthly_gross", "breakup", "notes",
+            "probation_months", "notice_period_days", "valid_until",
+            "responded_via", "response_note", "email_count", "last_emailed_at",
             "created_at", "sent_at", "responded_at",
         ]
 

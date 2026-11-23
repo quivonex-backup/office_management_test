@@ -112,6 +112,10 @@ class Employee(models.Model):
 
     work_state = models.ForeignKey("location_master.StateMaster", on_delete=models.SET_NULL, null=True, blank=True, related_name="employees_working_here")
 
+    # Remote / work from home: punches are accepted from any location
+    # (the GPS position is still recorded when the device sends it).
+    attendance_location_exempt = models.BooleanField(default=False)
+
     tax_regime = models.CharField(max_length=10, choices=[("OLD", "Old Regime"), ("NEW", "New Regime")], default="NEW", blank=True, null=True)
 
     bank_account_number = models.CharField(max_length=30, blank=True, null=True)

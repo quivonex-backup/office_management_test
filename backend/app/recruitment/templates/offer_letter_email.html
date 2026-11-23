@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Offer of employment</title>
+</head>
+<body style="margin:0; padding:0; background:#f4f5f7; font-family:Helvetica, Arial, sans-serif; color:#222222;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f5f7; padding:24px 0;">
+    <tr>
+        <td align="center">
+            <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px; background:#ffffff; border-radius:8px; overflow:hidden;">
+                <tr>
+                    <td style="padding:24px 28px; border-bottom:2px solid #222222;">
+                        <div style="font-size:18px; font-weight:700;">{{ company_name }}</div>
+                        {% if company_address %}<div style="font-size:12px; color:#666666;">{{ company_address }}</div>{% endif %}
+                    </td>
+                </tr>
+                <tr>
+                    <td style="padding:24px 28px; font-size:14px; line-height:1.6;">
+                        <p style="margin:0 0 12px 0;">Dear {{ applicant.first_name }},</p>
+                        <p style="margin:0 0 12px 0;">
+                            We are pleased to offer you the position of <strong>{{ designation }}</strong>
+                            at <strong>{{ company_name }}</strong>. Your offer letter is attached to this email.
+                        </p>
+                        {% if message %}
+                        <p style="margin:0 0 12px 0;">{{ message|linebreaksbr }}</p>
+                        {% endif %}
+
+                        <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%; margin:12px 0 18px 0; font-size:13px; border-collapse:collapse;">
+                            <tr><td style="padding:6px 0; color:#666666; width:45%;">Date of joining</td><td style="padding:6px 0;">{{ offer.joining_date|date:"d M Y" }}</td></tr>
+                            <tr><td style="padding:6px 0; color:#666666;">Annual CTC</td><td style="padding:6px 0;"><strong>&#8377; {{ annual_ctc }}</strong></td></tr>
+                            {% if offer.valid_until %}<tr><td style="padding:6px 0; color:#666666;">Please respond by</td><td style="padding:6px 0;">{{ offer.valid_until|date:"d M Y" }}</td></tr>{% endif %}
+                        </table>
+
+                        <p style="margin:0 0 18px 0;">Please review the letter and accept or decline the offer:</p>
+                        <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 18px 0;">
+                            <tr>
+                                <td style="background:#222222; border-radius:6px;">
+                                    <a href="{{ response_url }}" style="display:inline-block; padding:12px 26px; color:#ffffff; font-weight:700; text-decoration:none;">View and respond to the offer</a>
+                                </td>
+                            </tr>
+                        </table>
+                        <p style="margin:0 0 12px 0; font-size:12px; color:#666666;">
+                            If the button does not work, open this link: <br>
+                            <a href="{{ response_url }}" style="color:#222222; word-break:break-all;">{{ response_url }}</a>
+                        </p>
+                        <p style="margin:0 0 12px 0; font-size:12px; color:#666666;">
+                            Your answer is final once submitted. This link is personal; please do not forward it.
+                        </p>
+                        <p style="margin:18px 0 0 0;">Regards,<br>{{ company_name }}</p>
+                    </td>
+                </tr>
+                <tr>
+                    <td style="padding:14px 28px; background:#fafafa; font-size:11px; color:#888888;">
+                        {% if company_email %}Questions? Reply to this email or write to {{ company_email }}.{% endif %}
+                    </td>
+                </tr>
+            </table>
+        </td>
+    </tr>
+</table>
+</body>
+</html>

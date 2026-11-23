@@ -84,7 +84,8 @@ class Applicant(models.Model):
     # ---- Workflow ----
     stage = models.CharField(max_length=20, choices=STAGE_CHOICES, default="APPLICANT", db_index=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="PENDING", db_index=True)
-    assigned_to = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="assigned_applicants")
+    # HR person who owns this applicant (an Employee, so the employee list can be used to pick one).
+    assigned_to = models.ForeignKey("employees.Employee", on_delete=models.SET_NULL, null=True, blank=True, related_name="assigned_applicants")
 
     # ---- Onboarding details (become Employee fields on convert) ----
     joining_date = models.DateField(null=True, blank=True)
@@ -214,7 +215,9 @@ class ApplicantOffer(models.Model):
     TERM_FIELDS = (
         "designation_id", "department_id", "branch_id", "joining_date",
         "salary_structure_id", "annual_ctc", "monthly_gross", "breakup", "notes",
+        "probation_months", "notice_period_days", "valid_until",
     )
+    RESPONDED_VIA_CHOICES = [("HR", "Recorded by HR"), ("CANDIDATE", "Candidate (email link)")]
 
     applicant = models.ForeignKey(Applicant, on_delete=models.CASCADE, related_name="offers")
     version = models.PositiveIntegerField()
@@ -229,6 +232,16 @@ class ApplicantOffer(models.Model):
     monthly_gross = models.DecimalField(max_digits=12, decimal_places=2)
     breakup = models.JSONField(default=dict, blank=True)    # snapshot from the payroll calculator
     notes = models.TextField(blank=True, null=True)
+    probation_months = models.PositiveSmallIntegerField(null=True, blank=True)
+    notice_period_days = models.PositiveIntegerField(null=True, blank=True)    # after confirmation
+    valid_until = models.DateField(null=True, blank=True)                     # last day to respond
+
+    # Candidate response through the emailed link (not part of the terms).
+    response_token = models.CharField(max_length=64, unique=True, null=True, blank=True)
+    responded_via = models.CharField(max_length=10, choices=RESPONDED_VIA_CHOICES, null=True, blank=True)
+    response_note = models.TextField(blank=True, null=True)
+    email_count = models.PositiveIntegerField(default=0)
+    last_emailed_at = models.DateTimeField(null=True, blank=True)
 
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
