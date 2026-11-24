@@ -614,17 +614,29 @@ Response 403 (project not in caller's org):
 Response 404 (no projects found):
 { "status": false, "message": "No accessible active projects were found." }
 
-Response 500 (all sends failed):
+Response 400 (nothing sent because of the data, batch 9):
 {
   "status": false,
-  "message": "No payment reminder emails were sent successfully.",
+  "message": "No payment reminder emails were sent: check the reasons below.",
   "data": {
-    "total_clients": 2,
+    "total_clients": 1,
     "total_emails_sent": 0,
     "successful_clients": [],
-    "failed_clients": [ { ...reasons... } ]
+    "failed_clients": [ { "client_id": 1, "client_name": "ABC Technologies",
+        "email": "contact@abctech.com", "project_ids": [1],
+        "reason": "No active payment plans found for the selected projects.",
+        "failure_type": "DATA" } ]
   }
 }
+  failure_type DATA        = client has no email / no active, non-cancelled
+                             payment rows (advance / installments) for the projects
+  failure_type SEND_ERROR  = the mail server refused or failed
+
+Response 502 (nothing sent and at least one SEND_ERROR):
+{ "status": false, "message": "Payment reminder emails could not be sent.",
+  "data": { ...same shape... } }
+
+Response 500 only for an unexpected error while preparing the emails.
 
 Notes:
   - Emails are grouped by (organization, client). One email per client

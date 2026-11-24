@@ -1013,10 +1013,19 @@ class ProjectPaymentReminderAPIView(RequiredPermsMixin, APIView):
             )
 
         if result["total_emails_sent"] == 0 and result["total_clients"] > 0:
+            # Nothing to send because of the data (no email, no payment rows)
+            # -> 400; the mail server failed for at least one client -> 502.
+            send_errors = any(
+                f.get("failure_type") == "SEND_ERROR" for f in result["failed_clients"]
+            )
             return Response(
                 {
                     "status": False,
-                    "message": "No payment reminder emails were sent successfully.",
+                    "message": (
+                        "Payment reminder emails could not be sent."
+                        if send_errors
+                        else "No payment reminder emails were sent: check the reasons below."
+                    ),
                     "data": {
                         "total_clients": result["total_clients"],
                         "total_emails_sent": 0,
@@ -1024,7 +1033,7 @@ class ProjectPaymentReminderAPIView(RequiredPermsMixin, APIView):
                         "failed_clients": result["failed_clients"],
                     },
                 },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status=status.HTTP_502_BAD_GATEWAY if send_errors else status.HTTP_400_BAD_REQUEST,
             )
 
         message = (

@@ -320,7 +320,7 @@ SECTION — TASK MANAGEMENT
 ================================================================================
 
 Permission matrix for this section:
-  ADMIN  — super admin, org owner (full access)
+  ADMIN  — org owner or access role with project.manage (full access)
   HEAD   — active project head (full access on their project)
   MEMBER — active team member (only their own tasks, limited transitions)
 

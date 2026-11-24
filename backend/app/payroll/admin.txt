@@ -2345,3 +2345,13 @@ Both payslip modes list every line of the record (no totals-only view):
               both modes), Late Deduction, Loss of Pay; then Total Deductions
   Employer Statutory Contributions: FULL only
 Lines with 0 are not written (no OT line when there is no overtime, etc.).
+
+
+================================================================================
+MISSING ATTENDANCE — "ABSENT" (batch 9)
+================================================================================
+missing_attendance_action = "ABSENT": a past working day with no attendance
+record is deducted as absent and listed in breakdown.attendance_notes
+("No attendance record on <date>; treated as absent."). It no longer sets
+requires_review, so finalize is not blocked by it.
+"REVIEW" and "SKIP" still set requires_review (REVIEW holds the day, SKIP pays it).

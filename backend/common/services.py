@@ -106,7 +106,6 @@ def get_project_permission(request, project_id):
     from rest_framework.response import Response
 
     from app.projects.models import Project, ProjectTeamAllocation
-    from app.accounts.services import is_super_admin
 
     if not project_id:
         return None, None, None, Response(
@@ -129,9 +128,8 @@ def get_project_permission(request, project_id):
 
     user = request.user
 
-    # Super admin — treat as ADMIN on any project.
-    if is_super_admin(user):
-        return "ADMIN", project, None, None
+    # The platform super admin manages organizations, not their project data:
+    # no special access here (batch 9). Same rules as everyone else below.
 
     # Organization owner — ADMIN on all projects in their org.
     if project.organization_id and project.organization.owner_id == user.id:
@@ -176,15 +174,11 @@ def get_accessible_projects(request):
     from rest_framework.response import Response
 
     from app.projects.models import Project, ProjectTeamAllocation
-    from app.accounts.services import is_super_admin
 
     user = request.user
 
-    # Super admin — all active projects.
-    if is_super_admin(user):
-        projects = Project.objects.filter(is_active=True)
-        permission_map = {p.id: "ADMIN" for p in projects}
-        return projects, permission_map, None
+    # The platform super admin gets no projects here (batch 9): projects, tasks
+    # and project chat belong to the organization.
 
     # Build scope: orgs the user owns + orgs they are active members of.
     from app.accounts.models import OrganizationMembership

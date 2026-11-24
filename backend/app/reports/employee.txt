@@ -1,0 +1,45 @@
+================================================================================
+REPORTS APP — EMPLOYEE (self-service) API REFERENCE
+================================================================================
+
+Base URL   : /reports/
+Method     : POST, Bearer token, envelope { status, message, data }
+Who        : every logged-in employee (no access code needed)
+
+--------------------------------------------------------------------------------
+POST /reports/dashboard/
+--------------------------------------------------------------------------------
+{ "month"?: "2026-11", "widgets"?: ["my_today", "celebrations"] }
+An employee without an access role gets:
+  my_today            today's shift, check-in / check-out, status, late minutes
+  my_month            month counts (present, half, absent, leave, late) + worked-hours chart
+  my_leave_balance    balance per leave type (this year)
+  my_recent_leaves    last 5 leave requests
+  my_work             open tickets, tasks due in 7 days / overdue, assets held
+  celebrations        today's birthdays and work anniversaries in the organization
+  upcoming_holidays   next 5 holidays
+  announcements       latest 5
+Employees with access roles get more widgets (see admin.txt); the response says
+which in "available_widgets".
+
+Example:
+{ "status": true, "message": "Dashboard fetched.",
+  "data": {
+    "generated_at": "2026-11-24T19:50:00+05:30", "month": "2026-11",
+    "available_widgets": ["my_today", "my_month", "my_leave_balance", "my_recent_leaves",
+                          "my_work", "celebrations", "upcoming_holidays", "announcements"],
+    "widgets": {
+      "my_today": {"date": "2026-11-24", "day_type": "WORKING_DAY",
+                   "shift": {"name": "General", "start": "09:30", "end": "18:30"},
+                   "check_in": "09:42", "check_out": null, "status": "INCOMPLETE",
+                   "late_minutes": 2, "worked_hours": 0, "remote": false},
+      "celebrations": {"date": "2026-11-24",
+                       "birthdays": [{"employee_id": 12, "employee_code": "EMP-12", "name": "Rahul P",
+                                      "department": "IT", "designation": "Developer", "photo": null}],
+                       "anniversaries": [{"employee_id": 7, "name": "Neha K", "years": 3, "...": "..."}]}
+    },
+    "failed_widgets": [] } }
+
+POST /reports/list/  returns an empty list for employees without report codes;
+their own data is on the dashboard and in the "My" screens (my attendance,
+my leave, my payslips).

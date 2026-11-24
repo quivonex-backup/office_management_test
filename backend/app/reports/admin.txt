@@ -1,0 +1,194 @@
+================================================================================
+REPORTS APP — ADMIN API REFERENCE (dashboard + reports)
+================================================================================
+
+Base URL   : /reports/
+Method     : All endpoints are POST
+Auth       : Bearer token
+Envelope   : { "status": true|false, "message": "...", "data": {...}?, "errors": {...}? }
+Org        : single-org users omit organization_id; multi-org users send it.
+Models     : none. The app only reads data from the other apps.
+Permissions: existing view codes only (no new codes). Whoever may view a report
+             may also download it. *_team codes get only their reportees
+             (reports_to tree); *_all codes get everyone.
+
+--------------------------------------------------------------------------------
+1. POST /reports/dashboard/          everyone (owner + employees)
+--------------------------------------------------------------------------------
+{ "month"?: "2026-11",                  month for the month widgets (default: now)
+  "widgets"?: ["headcount", "celebrations"] }   only these (lazy loading)
+200 {
+  "generated_at": "...", "month": "2026-11",
+  "available_widgets": ["my_today", ...],    what this user may see (draw these)
+  "widgets": { "<key>": {...}, ... },
+  "failed_widgets": []                       a widget that errored (logged), others still load
+}
+Unknown widget name -> 400. A widget the user may not see is simply left out.
+
+WIDGETS                      WHO                                     CONTENT
+my_today                     employee profile                        date, day_type, shift {name,start,end},
+                                                                     check_in, check_out (HH:MM), status
+                                                                     (NOT_PUNCHED if none), late_minutes,
+                                                                     worked_hours, remote
+my_month                     employee profile                        present, half_days, absent, on_leave,
+                                                                     late_days, late_minutes, overtime_hours,
+                                                                     chart (worked hours per day)
+my_leave_balance             employee profile                        [{leave_type, code, allocated, used,
+                                                                     pending, available}] (this year)
+my_recent_leaves             employee profile                        last 5 [{id, leave_type, from, to, days, status}]
+my_work                      employee profile                        open_tickets, assigned_tickets,
+                                                                     tasks_due (next 7 days + overdue, 5),
+                                                                     assets_held
+celebrations                 everyone                                today only: {date, birthdays [...],
+                                                                     anniversaries [... + years]}; whole
+                                                                     organization, active employees; person =
+                                                                     {employee_id, employee_code, name,
+                                                                     department, designation, photo}. No birth
+                                                                     year / age. 29 Feb shows on 28 Feb in
+                                                                     non-leap years. Joined this year = no
+                                                                     anniversary.
+upcoming_holidays            everyone                                next 5 [{date, name, holiday_type, is_optional}]
+announcements                everyone                                latest 5 active (pinned first)
+team_today                   attendance.view_team (+ profile)        team_size, total, present, late, on_leave,
+                                                                     absent, day_off, not_punched
+pending_approvals            leave.approve / attendance.approve_correction
+                                                                     {leave: {count, latest 5},
+                                                                      attendance_corrections: {count, latest 5}}
+                                                                     view_all = everyone, else own team; own
+                                                                     requests excluded
+org_today                    attendance.view_all                     same counts for the organization +
+                                                                     recent_punches (last 5 check-in / out today)
+attendance_trend             attendance.view_all                     chart: last 30 days Present / Absent /
+                                                                     On leave / Late
+recent_leave_requests        leave.view_all                          pending count + latest 5
+headcount                    employee.view_all                       total, joined_this_month, exited_this_month,
+                                                                     remote, by_department / by_branch charts
+                                                                     (only when the organization has them)
+payroll_summary              payroll.view_all                        last_run {period, status, employees, gross,
+                                                                     deductions, net} + trend chart (6 runs)
+recruitment_pipeline         applicant.view                          open_applicants, funnel chart,
+                                                                     offers_this_month {created, accepted,
+                                                                     declined}, joining_this_month (view-only
+                                                                     users: own applicants only)
+helpdesk                     ticket.manage / ticket.handle           open, unassigned, by_status, open_by_category
+                                                                     (handlers: own department only)
+assets                       asset.view / asset.manage               total, by_status, warranty_ending_30_days
+visitors_today               visitor.manage                          total, inside, latest 5
+projects                     project.manage                          by_status, open_tasks, overdue_tasks,
+                                                                     due_this_week
+receivables                  payment.manage                          billed, received, outstanding, overdue,
+                                                                     collection_trend (6 months)
+expenses                     expense.manage                          month total, unpaid, by_category chart
+
+CHART SHAPE (all widgets and reports)
+{ "type": "line" | "bar", "labels": ["01 Nov", ...],
+  "series": [ {"name": "Present", "data": [42, 40, ...]}, ... ] }
+
+--------------------------------------------------------------------------------
+2. POST /reports/list/               everyone
+--------------------------------------------------------------------------------
+{} -> { "reports": [ { "key": "attendance", "title": "Attendance", "group": "People",
+                       "url": "/reports/attendance/", "formats": ["json", "xlsx"],
+                       "filters": [ {"key": "from_date", "type": "date", "default": "..."},
+                                    {"key": "branch_id", "type": "branch"}, ... ] } ],
+        "organization_features": {has_branches, has_departments, has_designations, payslip_mode} }
+Only reports the caller may open; only filters that apply to the organization
+(no branch filter without branches, no OT filter when overtime is off, ...).
+filter types: date, month, text, bool, choice (+ options), employee, department,
+branch, designation, leave_type, payroll_run (ids from the usual list APIs).
+
+--------------------------------------------------------------------------------
+3. REPORTS — common request / response
+--------------------------------------------------------------------------------
+Request: { "from_date"?: "2026-11-01", "to_date"?: "2026-11-30",   default = this month,
+           max range 366 days
+           "employee_id"?, "department_id"?, "branch_id"?, "designation_id"?, "search"?,
+           ...report filters...,
+           "format"?: "json" (default) | "xlsx",
+           "page"?: 1, "page_size"?: 50 (max 500; json only) }
+JSON 200 data:
+{ "report": "attendance", "title": "Attendance summary 01 Nov 2026 - 30 Nov 2026",
+  "filters": {... what was applied, incl. "scope": "all" | "team"},
+  "columns": [ {"key": "present", "label": "Present", "type": "number"}, ... ],
+  "rows": [ {...one object per row, keys = columns...} ],
+  "totals": { "present": 812, ... },     numeric columns
+  "chart": {chart shape},
+  "summary"?: {...},                     some reports
+  "pagination": {page, page_size, total_rows, total_pages} }
+column types: text | number | money | date | time | bool
+xlsx: file download (Content-Disposition attachment) with ALL rows, same columns,
+title + filters + generated time on top, totals row, header filter + frozen header.
+
+COLUMNS FOLLOW THE ORGANIZATION
+  - Department / Branch / Remote only when the organization has them.
+  - Payroll SIMPLE mode: no PF / ESI / PT / LWF / employer columns; FULL: only the
+    schemes switched on; VPF only with contribution type VPF; late deduction only
+    when enabled; OT only when overtime is on. A column whose setting is off still
+    appears when the data has values (e.g. an older run).
+  - Columns marked "when used" appear only if some row has a value.
+  - Filters that do not apply (branch_id without branches) are ignored.
+
+Errors: 400 bad filter / dates, 403 no permission ("You do not have permission to
+view this report."), 404 (payroll: no run).
+
+--------------------------------------------------------------------------------
+4. POST /reports/attendance/         attendance.view_all | attendance.view_team
+--------------------------------------------------------------------------------
+Filters: view "summary" (default, one row per employee) | "daily" (one row per day)
+         status PRESENT | HALF_DAY | ABSENT | ON_LEAVE | INCOMPLETE | PENDING_REVIEW |
+                HOLIDAY | WEEKLY_OFF
+           daily: rows with that status;  summary: employees with at least one such day
+                  (ABSENT / HALF_DAY / ON_LEAVE)
+         late_only, early_only, overtime_only (true)
+  Absent report        { "view": "daily", "status": "ABSENT" }
+  Late comers (month)  { "late_only": true }
+Summary columns: employee_code, name, department, branch, present, half_days, absent,
+  on_leave, incomplete (when used), late_days, late_minutes, early_minutes,
+  overtime_hours, worked_hours, remote
+Daily columns: work_date, employee_code, name, department, branch, shift, check_in,
+  check_out, status, late_minutes, early_minutes, overtime_minutes, worked_hours, remote
+Summary lists every active employee in scope (also with no records). Days without
+any attendance record are not "absent" rows (absent = records marked ABSENT).
+Chart: summary bar (present / half / absent / leave); daily line (records, late).
+
+--------------------------------------------------------------------------------
+5. POST /reports/leave/              leave.view_all | leave.view_team
+--------------------------------------------------------------------------------
+Filters: view "taken" (default) | "balance", leave_type_id,
+         status PENDING | APPROVED | REJECTED | CANCELLED
+taken: applications overlapping the period (full application days)
+  columns: employee_code, name, department, branch, leave_type, paid, from, to, days,
+           status, applied_on, reviewed_by, reason
+  summary: {applications, approved_days, pending}; chart: approved days per type
+balance: leave year = year of to_date; one row per active employee; per leave type
+  "<CODE>_allocated", "<CODE>_used", "<CODE>_pending" (when used), "<CODE>_available"
+
+--------------------------------------------------------------------------------
+6. POST /reports/payroll/            payroll.view_all
+--------------------------------------------------------------------------------
+Filters: payroll_run_id | month ("2026-11" = the run that ends in that month);
+         default = latest run. payment_status UNPAID | PARTIALLY_PAID | PAID,
+         requires_review (true). No date range.
+Columns: employee_code, name, department, branch, monthly_salary, paid_days, absent_days,
+  half_days, unpaid_leave_days, late_minutes, overtime_hours, overtime_amount, gross, lop,
+  late_deduction, pf, vpf, esi, pt, lwf, tds, other_deductions, total_deductions, net,
+  pf_employer (incl. EPS + EDLI), esi_employer, lwf_employer, employer_cost,
+  payment_status, paid_amount, requires_review   (see "columns follow the organization")
+filters also has period_start, period_end, run_status. Extra: "runs" (last 24 runs
+for the run dropdown), "payslip_mode". Chart: gross / deductions / net of the last 6 runs.
+404 "No payroll runs yet." / "No payroll run ends in <month>."
+
+--------------------------------------------------------------------------------
+7. POST /reports/recruitment/        applicant.view
+--------------------------------------------------------------------------------
+Period = applied_on. Filters: view "applicants" (default) | "funnel", stage, status,
+  source, designation_id, department_id, assigned_to_id, search
+Visibility: applicant.create / update / status_update / verification.update /
+  onboarding.complete see all; applicant.view alone sees applicants assigned to them
+  or that they interview (same as the recruitment app).
+applicants columns: applicant_code, name, applied_on, position, department, source,
+  assigned_to, stage, status, interviews_done, last_interview_result, offer_status,
+  offered_ctc, joining_date, days_in_pipeline; chart: applications per week
+funnel rows: stage, current (now in stage), reached (got at least this far),
+  percent_of_applied; summary {applied, offers_sent, offers_accepted, offers_declined,
+  hired, average_days_to_hire}

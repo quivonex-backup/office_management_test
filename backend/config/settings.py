@@ -50,6 +50,7 @@ INSTALLED_APPS = [
     'app.helpdesk',
     'app.assets',
     'app.visitors',
+    'app.reports',
 ]
 
 # Middleware

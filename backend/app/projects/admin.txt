@@ -12,9 +12,9 @@ Organization context:
   - Multi-org users: include organization_id in body
 
 Who uses this document:
-  - Super admin
   - Organization owner (Admin role)
-  - Any org member with Admin-level access
+  - Any org member whose access role has project.manage
+  (The platform super admin has no access to projects, tasks or project chat.)
 
 
 ================================================================================
@@ -798,7 +798,7 @@ SECTION 3 — TASK MANAGEMENT
 ================================================================================
 
 Permission matrix for this section:
-  ADMIN  — super admin, org owner (full access)
+  ADMIN  — org owner or access role with project.manage (full access)
   HEAD   — active project head (full access on their project)
   MEMBER — active team member (only their own tasks, limited transitions)
 

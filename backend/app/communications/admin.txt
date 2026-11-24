@@ -355,7 +355,7 @@ SECTION 2 — PROJECT CHAT (ADMIN)
 
 Chat permissions at a glance:
 
-  ADMIN (super admin or org owner):
+  ADMIN (org owner or access role with project.manage; not the super admin):
     - Can read any project's chat
     - Can post in any project's chat regardless of posting_permission
     - Can delete any message

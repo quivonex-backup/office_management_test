@@ -149,9 +149,11 @@ def classify_period(
                 f"No attendance record on {day}; skipped (no deduction)."
             )
         elif missing_action == "ABSENT":
+            # HR chose "treat as absent": deducted, shown as a note only
+            # (does not set requires_review / block finalize).
             counts["absent_days"] += ONE
             sources["missing_record_absent"] += ONE
-            warnings.append(
+            notes.append(
                 f"No attendance record on {day}; treated as absent."
             )
         else:

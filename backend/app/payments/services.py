@@ -75,6 +75,7 @@ def send_project_payment_reminder_emails(projects, include_transaction_history=F
                 "client_name": client.client_name,
                 "email": None,
                 "reason": "Client does not have an email address.",
+                "failure_type": "DATA",
                 "project_ids": [p.id for p in client_projects],
             })
             continue
@@ -207,6 +208,7 @@ def send_project_payment_reminder_emails(projects, include_transaction_history=F
                 "client_name": client.client_name,
                 "email": client.email,
                 "reason": "No active payment plans found for the selected projects.",
+                "failure_type": "DATA",
                 "project_ids": [p.id for p in client_projects],
             })
             continue
@@ -323,6 +325,7 @@ Regards,
                 "client_name": client.client_name,
                 "email": client.email,
                 "reason": str(exc),
+                "failure_type": "SEND_ERROR",
                 "project_ids": [p["id"] for p in project_data],
             })
 

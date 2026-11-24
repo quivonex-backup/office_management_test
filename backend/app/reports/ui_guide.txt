@@ -1,0 +1,44 @@
+================================================================================
+REPORTS + DASHBOARD — UI GUIDE (for the UI designer / frontend)
+================================================================================
+Who      : everyone (dashboard), staff with view codes (reports)
+Apps     : Web panel (dashboard home + Reports menu), Employee app (dashboard)
+Details  : request/response fields are in admin.txt and employee.txt
+Tags     : urls.py marks each endpoint  #A admin side, #E employee, perm: <code>.
+
+DASHBOARD (home page)
+  - One call: reports/dashboard/. Draw a card for each key in available_widgets;
+    the backend never sends data the user may not see.
+  - Optional lazy loading: first call with widgets=[cheap ones], then the rest.
+  - failed_widgets: show "Could not load" on that card only.
+  - Suggested layout:
+      Row 1  my_today (punch card) | celebrations (hide when both lists empty)
+      Row 2  my_month (chart) | my_leave_balance | my_work
+      Row 3  team_today / org_today | pending_approvals (link to approve screens)
+      Row 4  attendance_trend (line) | headcount (bars) | payroll_summary
+      Row 5  recruitment_pipeline | helpdesk | assets | visitors_today
+      Row 6  projects | receivables | expenses
+      Side   upcoming_holidays, announcements, recent_leave_requests
+  - Celebrations: today only; "Wish" button can open chat / email (no API needed).
+  - Month picker (optional) sends month=YYYY-MM for my_month / headcount / expenses.
+
+REPORTS (own sidebar item "Reports")
+  - Show the menu only when reports/list/ returns at least one report.
+  - Group the menu by "group" (People, Payroll, Recruitment ...).
+  - Report page = filter bar (built from the report's "filters" list: date pickers,
+    dropdowns from the usual list APIs, choices, toggles) + chart (if any) + table
+    (from "columns" / "rows", totals row from "totals") + "Download Excel" button
+    (same request with "format": "xlsx", save the blob with the Content-Disposition name).
+  - Render cells by column type: money (2 decimals, thousands separator), number,
+    date, time, bool (Yes / No).
+  - Columns change with the organization's setup (no Branch column without branches,
+    no PF in SIMPLE payroll, ...): always build the table from "columns".
+  - Paging: page / page_size (max 500); Excel always has all rows.
+  - Shortcuts: a "Report" button on module pages can open the report with filters
+    pre-filled (e.g. Attendance page -> reports/attendance with today's dates).
+  - Handy presets:
+      Absent this month    attendance {view: "daily", status: "ABSENT"}
+      Late comers          attendance {late_only: true}
+      Leave balance        leave {view: "balance"}
+      Salary register      payroll {month: "2026-11"}
+      Hiring funnel        recruitment {view: "funnel"}

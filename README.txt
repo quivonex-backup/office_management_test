@@ -146,8 +146,8 @@ Check container status	                docker compose ps
 
 
 
->> mkdir app\visitors 
->> python manage.py startapp visitors app\visitors  
+>> mkdir app\reports 
+>> python manage.py startapp reports app\reports  
 
 celery -A config worker -l info --pool=solo
 celery -A config beat -l info
