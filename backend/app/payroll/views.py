@@ -2395,3 +2395,213 @@ class PayrollCalculatorAPIView(PayrollBaseAPIView):
             return self.failure(str(exc))
 
         return self.success("Calculation complete.", result)
+
+
+# =========================================================
+# =========================================================
+# ORG ADMIN — SALARY COMPONENTS: detail / update / deactivate (batch 13)
+# Only the organization's own components; global ones are read-only.
+# =========================================================
+# =========================================================
+
+# Fields that decide how a component is calculated. Locked once any salary
+# structure uses the component (changing them would break saved amounts).
+COMPONENT_LOCKED_FIELDS = (
+    "code", "component_type", "calculation_type", "component_role", "percentage_of_component",
+)
+COMPONENT_EDITABLE_FIELDS = (
+    "name", "description", "display_order", "is_taxable", "is_pf_eligible", "is_esi_eligible",
+)
+
+
+class SalaryComponentBaseAPIView(PayrollBaseAPIView):
+    required_perms = ("salary.assign", "payroll.generate")
+
+    def get_component(self, request, organization, own_only=True):
+        try:
+            component_id = self.parse_int(request.data.get("component_id"), "component_id")
+        except ValueError as exc:
+            return None, self.failure(str(exc))
+        component = (
+            SalaryComponent.objects.filter(
+                Q(organization__isnull=True) | Q(organization=organization), id=component_id,
+            ).select_related("organization", "percentage_of_component").first()
+        )
+        if component is None:
+            return None, self.failure("Salary component not found.", status.HTTP_404_NOT_FOUND)
+        if own_only and component.organization_id is None:
+            return None, self.failure(
+                "Global components are managed by the platform and cannot be changed here.",
+                status.HTTP_403_FORBIDDEN,
+            )
+        return component, None
+
+    def usage(self, component, organization):
+        structures = (
+            SalaryStructure.objects.filter(organization=organization, components__salary_component=component)
+            .distinct().order_by("name")
+        )
+        dependents = SalaryComponent.objects.filter(
+            Q(organization__isnull=True) | Q(organization=organization),
+            percentage_of_component=component, is_active=True,
+        ).order_by("name")
+        return {
+            "used_in_structures": [
+                {"id": s.id, "name": s.name, "code": s.code, "is_active": s.is_active} for s in structures
+            ],
+            "percentage_dependents": [{"id": c.id, "name": c.name, "code": c.code} for c in dependents],
+        }
+
+    def payload(self, component, organization):
+        data = SalaryComponentSerializer(component, context={"organization": organization}).data
+        usage = self.usage(component, organization)
+        data.update(usage)
+        data["is_global"] = component.organization_id is None
+        data["is_locked"] = bool(usage["used_in_structures"])
+        data["locked_fields"] = list(COMPONENT_LOCKED_FIELDS) if data["is_locked"] else []
+        return data
+
+
+class SalaryComponentDetailAPIView(SalaryComponentBaseAPIView):
+
+    def post(self, request):
+        organization, err = self.get_organization(request)
+        if err:
+            return err
+        component, err = self.get_component(request, organization, own_only=False)
+        if err:
+            return err
+        return self.success("Salary component fetched.", self.payload(component, organization))
+
+
+class SalaryComponentUpdateAPIView(SalaryComponentBaseAPIView):
+
+    @transaction.atomic
+    def post(self, request):
+        organization, err = self.get_organization(request)
+        if err:
+            return err
+        component, err = self.get_component(request, organization)
+        if err:
+            return err
+
+        data = request.data
+        used = SalaryStructureComponent.objects.filter(salary_component=component).exists()
+
+        # Locked fields: refuse a real change once the component is in use.
+        if used:
+            blocked = []
+            for field in COMPONENT_LOCKED_FIELDS:
+                if field not in data:
+                    continue
+                new = data.get(field)
+                new = None if new in (None, "", "null") else str(new).strip()
+                if field == "percentage_of_component":
+                    current = component.percentage_of_component_id
+                elif field == "code":
+                    current, new = component.code, (new or "").upper()
+                else:
+                    current = getattr(component, field)
+                if new != (None if current is None else str(current)):
+                    blocked.append(field)
+            if blocked:
+                return self.failure(
+                    "This component is used in a salary structure; these fields cannot change.",
+                    errors={f: ["Locked: the component is used in a salary structure."] for f in blocked},
+                )
+
+        allowed = set(COMPONENT_EDITABLE_FIELDS) | (set() if used else set(COMPONENT_LOCKED_FIELDS))
+        changes = {k: data.get(k) for k in allowed if k in data}
+
+        reactivate = False
+        if "is_active" in data:
+            try:
+                wanted = self.parse_bool(data.get("is_active"), "is_active")
+            except ValueError as exc:
+                return self.failure(str(exc))
+            if wanted is False and component.is_active:
+                return self.failure("Use components/deactivate/ to deactivate a component.")
+            reactivate = wanted is True and not component.is_active
+
+        if not changes and not reactivate:
+            return self.failure("Nothing to update.")
+
+        if "percentage_of_component" in changes and changes["percentage_of_component"] not in (None, "", "null"):
+            parent = SalaryComponent.objects.filter(
+                Q(organization__isnull=True) | Q(organization=organization),
+                id=changes["percentage_of_component"], is_active=True,
+            ).first()
+            if parent is None:
+                return self.failure(
+                    "Invalid salary component.",
+                    errors={"percentage_of_component": ["Active component of this organization not found."]},
+                )
+        elif "percentage_of_component" in changes:
+            changes["percentage_of_component"] = None
+
+        if reactivate and component.percentage_of_component_id and not component.percentage_of_component.is_active \
+                and "percentage_of_component" not in changes:
+            return self.failure(
+                f"Reactivate '{component.percentage_of_component.name}' first: this component is a percentage of it."
+            )
+
+        old = SalaryComponentSerializer(component, context={"organization": organization}).data
+        serializer = SalaryComponentSerializer(
+            component, data=changes, partial=True, context={"organization": organization, "request": request},
+        )
+        if not serializer.is_valid():
+            return self.failure("Invalid salary component.", errors=serializer.errors)
+        extra = {"updated_by": request.user}
+        if reactivate:
+            extra["is_active"] = True
+        component = serializer.save(**extra)
+
+        self.audit(
+            request=request, user=request.user, action="UPDATE", module="PAYROLL",
+            object_type="SalaryComponent", object_id=component.id,
+            description=f"Salary component updated: {component.name} ({component.code})"
+                        + (" and reactivated." if reactivate else "."),
+            old_data=old,
+            new_data=SalaryComponentSerializer(component, context={"organization": organization}).data,
+        )
+        return self.success("Salary component updated.", self.payload(component, organization))
+
+
+class SalaryComponentDeactivateAPIView(SalaryComponentBaseAPIView):
+
+    @transaction.atomic
+    def post(self, request):
+        organization, err = self.get_organization(request)
+        if err:
+            return err
+        component, err = self.get_component(request, organization)
+        if err:
+            return err
+        if not component.is_active:
+            return self.failure("Salary component is already inactive.")
+
+        usage = self.usage(component, organization)
+        active_structures = [s for s in usage["used_in_structures"] if s["is_active"]]
+        if active_structures:
+            names = ", ".join(s["name"] for s in active_structures)
+            return self.failure(
+                f"Used in active salary structure(s): {names}. Remove it from them or deactivate them first.",
+                errors={"used_in_structures": active_structures},
+            )
+        if usage["percentage_dependents"]:
+            names = ", ".join(c["name"] for c in usage["percentage_dependents"])
+            return self.failure(
+                f"Active component(s) are a percentage of this one: {names}. Deactivate or change them first.",
+                errors={"percentage_dependents": usage["percentage_dependents"]},
+            )
+
+        component.is_active = False
+        component.updated_by = request.user
+        component.save(update_fields=["is_active", "updated_by", "updated_at"])
+        self.audit(
+            request=request, user=request.user, action="UPDATE", module="PAYROLL",
+            object_type="SalaryComponent", object_id=component.id,
+            description=f"Salary component deactivated: {component.name} ({component.code}).",
+            new_data={"is_active": False},
+        )
+        return self.success("Salary component deactivated.")

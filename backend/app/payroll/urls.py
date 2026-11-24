@@ -18,6 +18,9 @@ from .views import (
     # Org Admin — Salary Components
     SalaryComponentListAPIView,
     SalaryComponentCreateAPIView,
+    SalaryComponentDetailAPIView,
+    SalaryComponentUpdateAPIView,
+    SalaryComponentDeactivateAPIView,
 
     # Org Admin — Salary Structures
     SalaryStructureListAPIView,
@@ -96,6 +99,9 @@ urlpatterns = [
     # =========================================================
     path("components/list/", SalaryComponentListAPIView.as_view()),                        #A  perm: salary.assign, payroll.generate (any)
     path("components/create/", SalaryComponentCreateAPIView.as_view()),                    #A  perm: salary.assign, payroll.generate (any)
+    path("components/detail/", SalaryComponentDetailAPIView.as_view()),                    #A  perm: salary.assign, payroll.generate (any)  global too (read-only)
+    path("components/update/", SalaryComponentUpdateAPIView.as_view()),                    #A  perm: salary.assign, payroll.generate (any)  own components only
+    path("components/deactivate/", SalaryComponentDeactivateAPIView.as_view()),            #A  perm: salary.assign, payroll.generate (any)  own components only
 
     # =========================================================
     # ORG ADMIN — SALARY STRUCTURES

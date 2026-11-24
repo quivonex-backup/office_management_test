@@ -336,7 +336,8 @@ Notes:
   - Returns global (organization=null, from super admin) PLUS this org's
     own components.
   - Sort: display_order, name.
-  - Global components cannot be edited/deactivated from this app — they're
+  - Global components cannot be edited/deactivated from this app (detail is
+    readable; update / deactivate -> 403) — they're
     super-admin owned. Only listed here.
 
 Enums:
@@ -2355,3 +2356,49 @@ record is deducted as absent and listed in breakdown.attendance_notes
 ("No attendance record on <date>; treated as absent."). It no longer sets
 requires_review, so finalize is not blocked by it.
 "REVIEW" and "SKIP" still set requires_review (REVIEW holds the day, SKIP pays it).
+
+
+================================================================================
+SECTION — SALARY COMPONENTS: DETAIL / UPDATE / DEACTIVATE (batch 13)
+perm: salary.assign or payroll.generate (same as list / create)
+================================================================================
+
+POST /payroll/components/detail/      { "component_id": 5 }
+  Own or global component. 200 -> component +
+    "is_global": false,
+    "is_locked": true,                      // used in any salary structure
+    "locked_fields": ["code", "component_type", "calculation_type",
+                      "component_role", "percentage_of_component"],
+    "used_in_structures": [{"id": 2, "name": "Engineer", "code": "ENG", "is_active": true}],
+    "percentage_dependents": [{"id": 7, "name": "HRA", "code": "HRA"}]   // active components that are a % of this one
+  404 not found in this organization (or global).
+
+POST /payroll/components/update/      { "component_id": 5, ...only changed fields }
+  Own components only (global -> 403).
+  Always editable: name, description, display_order, is_taxable,
+                   is_pf_eligible, is_esi_eligible
+  Editable only while NOT used in any structure (active or inactive):
+                   code, component_type, calculation_type, component_role,
+                   percentage_of_component
+  Sending a locked field with its current value is fine; a different value ->
+    400 "This component is used in a salary structure; these fields cannot change."
+        errors: { "<field>": ["Locked: the component is used in a salary structure."] }
+  "is_active": true  reactivates (400 if it is a % of an inactive component:
+                     reactivate that one first).
+  "is_active": false -> 400 "Use components/deactivate/ to deactivate a component."
+  Same validation as create: code unique per organization (stored upper-case),
+  PERCENTAGE needs percentage_of_component (active, own or global, not itself),
+  FIXED must not have one.
+  200 -> same object as detail.
+  Flag changes (taxable / PF / ESI) apply to future payroll runs and the
+  calculator; finalized payslips keep their saved lines.
+
+POST /payroll/components/deactivate/  { "component_id": 5 }
+  Own components only (global -> 403).
+  400 "Used in active salary structure(s): Engineer. Remove it from them or deactivate them first."
+      errors: { "used_in_structures": [...] }
+  400 "Active component(s) are a percentage of this one: HRA. Deactivate or change them first."
+  400 "Salary component is already inactive."
+  200 "Salary component deactivated."
+  Inactive components stay in list/ (filter is_active) and cannot be added to
+  new structures.

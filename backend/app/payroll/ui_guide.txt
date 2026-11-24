@@ -13,7 +13,7 @@ SETUP ORDER (show as a checklist on the Payroll page)
   1. Settings                settings/ (cycle start day, salary basis, overtime,
                              late deduction on/off + multiplier, payslip mode)
   2. Statutory settings      statutory-settings/ (PF / ESI / PT / LWF flags)
-  3. Components              components/list|create/
+  3. Components              components/list|create|detail|update|deactivate/
   4. Structures              structures/list|create|detail|update|deactivate/
   5. Salary assignments      assignments/list|create|update|bulk-assign|bulk-close/
                              (effective_from must be a payroll cycle start date)
@@ -60,3 +60,15 @@ PF CONTRIBUTION TYPE + VPF (batch 8)
   - Employee form (HR): "Voluntary PF %" number field (vpf_percentage, 0-88),
     shown when the organization's type is VPF.
   - Payslip / record views: a "VPF" deduction row appears like any other line.
+
+SALARY COMPONENTS — EDIT / DEACTIVATE (batch 13)
+  - Row actions on components/list for the organization's own components
+    (organization != null): Edit, Deactivate / Reactivate. Global rows:
+    view only (no actions).
+  - Edit form: call components/detail first. When is_locked, disable the
+    fields in locked_fields and show "Used in: Engineer, ..." from
+    used_in_structures.
+  - Deactivate: confirm dialog; on 400 show the message (lists the
+    structures / dependent components to fix first).
+  - Reactivate: components/update with "is_active": true.
+  - Hide inactive components in the structure builder's component picker.
