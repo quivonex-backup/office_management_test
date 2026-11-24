@@ -18,6 +18,8 @@ class LeaveTypeSerializer(serializers.ModelSerializer):
             "code",
             "description",
             "annual_allocation",
+            "carry_forward_enabled",
+            "max_carry_forward_days",
             "is_paid",
             "is_active",
             "created_at",

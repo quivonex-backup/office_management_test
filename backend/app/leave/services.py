@@ -732,3 +732,155 @@ def adjust_leave_balance(
     )
 
     return balance
+
+
+# =========================================================
+# YEAR-END CARRY FORWARD (batch 15)
+# =========================================================
+
+def carry_forward_amount(balance, leave_type):
+    """Unused days of a year that may move to the next year."""
+    available = (
+        balance.opening_balance + balance.allocated_days - balance.used_days - balance.pending_days
+    )
+    if available <= ZERO:
+        return ZERO, max(available, ZERO)
+    carry = available
+    if leave_type.max_carry_forward_days is not None:
+        carry = min(carry, leave_type.max_carry_forward_days)
+    return carry, available
+
+
+def carry_forward_leave_balances(
+    organization,
+    from_year,
+    leave_type_ids=None,
+    dry_run=False,
+    recalculate=False,
+    created_by=None,
+):
+    """
+    Move unused days of `from_year` into the `from_year + 1` opening_balance
+    for leave types with carry_forward_enabled.
+
+    - The new year's balance is created when missing (with its normal annual
+      allocation), so this can run before or after balances/initialize.
+    - Already carried (a CARRY_FORWARD transaction exists on the new
+      balance): skipped, unless recalculate=True (opening_balance is set to
+      the new amount; the difference is logged as CARRY_FORWARD).
+    - The old year's balance is never changed (lapsed days are reported).
+    - dry_run=True computes everything and saves nothing.
+    """
+    to_year = from_year + 1
+    types = LeaveType.objects.filter(organization=organization, is_active=True, carry_forward_enabled=True)
+    if leave_type_ids:
+        types = types.filter(id__in=leave_type_ids)
+    types = list(types.order_by("name"))
+
+    rows = []
+    summary = {"carried": 0, "updated": 0, "skipped_already_done": 0, "nothing_to_carry": 0,
+               "errors": 0, "total_days_carried": ZERO, "total_days_lapsed": ZERO}
+
+    old_balances = (
+        EmployeeLeaveBalance.objects.filter(
+            organization=organization, leave_year=from_year, leave_type__in=types,
+            employee__is_active=True, employee__employment_status="ACTIVE",
+        )
+        .select_related("employee", "leave_type")
+        .order_by("employee__employee_code", "leave_type__name")
+    )
+
+    for old in old_balances:
+        lt = old.leave_type
+        carry, available = carry_forward_amount(old, lt)
+        lapsed = max(available - carry, ZERO)
+        row = {
+            "employee_id": old.employee_id,
+            "employee_code": old.employee.employee_code,
+            "leave_type_id": lt.id,
+            "leave_type": lt.name,
+            "unused_days": str(available),
+            "carry_forward_days": str(carry),
+            "lapsed_days": str(lapsed),
+            "result": None,
+        }
+
+        new = EmployeeLeaveBalance.objects.filter(
+            employee=old.employee, leave_type=lt, leave_year=to_year,
+        ).first()
+        already = bool(new) and new.transactions.filter(transaction_type="CARRY_FORWARD").exists()
+
+        if already and not recalculate:
+            row["result"] = "ALREADY_DONE"
+            row["current_opening_balance"] = str(new.opening_balance)
+            summary["skipped_already_done"] += 1
+            rows.append(row)
+            continue
+
+        if already:
+            delta = carry - new.opening_balance
+            if delta == ZERO:
+                row["result"] = "ALREADY_DONE"
+                summary["skipped_already_done"] += 1
+                rows.append(row)
+                continue
+            if new.opening_balance + delta + new.allocated_days - new.used_days - new.pending_days < ZERO:
+                row["result"] = "ERROR"
+                row["error"] = "Lowering the carried days would make the new year's balance negative."
+                summary["errors"] += 1
+                rows.append(row)
+                continue
+            row["result"] = "UPDATED"
+            row["change_days"] = str(delta)
+            summary["updated"] += 1
+            if not dry_run:
+                with transaction.atomic():
+                    locked = EmployeeLeaveBalance.objects.select_for_update().get(pk=new.pk)
+                    locked.opening_balance = locked.opening_balance + delta
+                    locked.save(update_fields=["opening_balance", "updated_at"])
+                    create_leave_transaction(
+                        balance=locked, transaction_type="CARRY_FORWARD", days=delta, created_by=created_by,
+                        remarks=f"Carry forward from {from_year} recalculated ({available} unused).",
+                    )
+            summary["total_days_carried"] += delta
+            rows.append(row)
+            continue
+
+        if carry <= ZERO:
+            row["result"] = "NOTHING_TO_CARRY"
+            summary["nothing_to_carry"] += 1
+            summary["total_days_lapsed"] += lapsed
+            rows.append(row)
+            continue
+
+        row["result"] = "CARRIED"
+        summary["carried"] += 1
+        summary["total_days_carried"] += carry
+        summary["total_days_lapsed"] += lapsed
+        if not dry_run:
+            with transaction.atomic():
+                balance, _ = get_or_create_leave_balance(
+                    employee=old.employee, leave_type=lt, leave_year=to_year, created_by=created_by,
+                )
+                balance = EmployeeLeaveBalance.objects.select_for_update().get(pk=balance.pk)
+                balance.opening_balance = balance.opening_balance + carry
+                balance.save(update_fields=["opening_balance", "updated_at"])
+                create_leave_transaction(
+                    balance=balance, transaction_type="CARRY_FORWARD", days=carry, created_by=created_by,
+                    remarks=(f"Carried forward from {from_year}: {available} unused"
+                             + (f", {lapsed} lapsed (max {lt.max_carry_forward_days})." if lapsed > ZERO else ".")),
+                )
+        rows.append(row)
+
+    summary["total_days_carried"] = str(summary["total_days_carried"])
+    summary["total_days_lapsed"] = str(summary["total_days_lapsed"])
+    return {
+        "from_year": from_year,
+        "to_year": to_year,
+        "dry_run": bool(dry_run),
+        "leave_types": [{"id": t.id, "name": t.name, "max_carry_forward_days":
+                         None if t.max_carry_forward_days is None else str(t.max_carry_forward_days)} for t in types],
+        "summary": summary,
+        "rows": rows,
+    }
+

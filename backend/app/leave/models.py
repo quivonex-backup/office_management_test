@@ -18,6 +18,12 @@ class LeaveType(models.Model):
 
     annual_allocation = models.DecimalField(max_digits=6, decimal_places=2, default=0, validators=[MinValueValidator(0)])
 
+    # Batch 15: year-end carry forward (leave/balances/carry-forward/).
+    # Unused days of the old year go to the new year's opening_balance,
+    # up to max_carry_forward_days (null = no limit).
+    carry_forward_enabled = models.BooleanField(default=False)
+    max_carry_forward_days = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True, validators=[MinValueValidator(0)])
+
     is_paid = models.BooleanField(default=True)
     is_active = models.BooleanField(default=True, db_index=True)
 
@@ -139,6 +145,7 @@ class LeaveBalanceTransaction(models.Model):
         ("REJECTION", "Rejection"),
         ("CANCELLATION", "Cancellation"),
         ("ADJUSTMENT", "Adjustment"),
+        ("CARRY_FORWARD", "Carry Forward"),
     ]
 
     organization = models.ForeignKey("accounts.Organization", on_delete=models.CASCADE, related_name="leave_transactions")

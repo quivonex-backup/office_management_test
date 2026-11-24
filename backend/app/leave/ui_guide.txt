@@ -34,3 +34,11 @@ ACCESS (batch 2)
     the user's own rows (the server refuses own requests and people outside
     the team anyway).
   - Leave types, initialize, adjust: settings.manage. History: leave.view_all.
+
+CARRY FORWARD (batch 15, settings.manage)
+  - Leave type form: "Carry forward unused days" toggle + "Max days" (empty = no limit).
+  - Balances page: "Year-end carry forward" button -> pick year -> Preview
+    (dry_run) table: employee, type, unused, carried, lapsed, result ->
+    "Confirm" runs it (enabled from 1 January). "Recalculate" option for
+    late changes.
+  - Employee balances: show opening_balance as "Carried forward".

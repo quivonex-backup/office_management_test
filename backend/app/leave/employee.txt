@@ -147,7 +147,7 @@ Balance math:
   available_days = opening_balance + allocated_days - used_days - pending_days
 
 Meaning of each field:
-  opening_balance  — carry-forward from previous year (usually 0)
+  opening_balance  — days carried forward from the previous year (batch 15: set by HR at year end; 0 when the leave type has no carry forward)
   allocated_days   — total days granted for this year (from leave_type
                      annual_allocation + any admin adjustments)
   used_days        — days consumed by APPROVED applications

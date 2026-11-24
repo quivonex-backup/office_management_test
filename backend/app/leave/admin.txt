@@ -793,3 +793,60 @@ New requests notify the people who can act on them, not only the owner:
   the reporting line (leave.view_team) and leave.view_all holders (HR Manager).
 The requester is never notified about their own request. If nobody qualifies,
 the organization owner is notified.
+
+
+================================================================================
+SECTION — YEAR-END CARRY FORWARD (batch 15)   perm: settings.manage
+================================================================================
+
+LEAVE TYPE — two new fields (types/create/, types/update/, types/list/):
+  "carry_forward_enabled": false     // default false
+  "max_carry_forward_days": "10.00"  // null = no limit; >= 0
+
+POST /leave/balances/carry-forward/
+{
+  "from_year": 2026,             // required; carried into from_year + 1
+  "dry_run": true,               // optional (default false): preview, saves nothing
+  "leave_type_ids": [1],         // optional; only types with carry forward on
+  "recalculate": false           // optional: redo rows already carried
+}
+Rules
+  - Only active leave types with carry_forward_enabled; only ACTIVE employees
+    with a from_year balance.
+  - Unused = opening + allocated - used - pending of from_year (pending days
+    are not carried). Carried = min(unused, max_carry_forward_days); the rest
+    lapses (reported, the old balance is NOT changed).
+  - The from_year+1 balance is created if missing (with its normal annual
+    allocation, like balances/initialize), then opening_balance += carried.
+    Works before or after balances/initialize for the new year.
+  - CARRY_FORWARD transaction on the new balance (shown in transactions/list).
+  - Running again skips rows already carried (result ALREADY_DONE).
+    recalculate=true sets the opening to the new amount (e.g. an old-year leave
+    was cancelled in January) and logs the difference; a change that would
+    make the new year's available balance negative is refused for that row
+    (result ERROR, nothing changed).
+  - A real run only after the year has ended (from 1 January); dry_run any time.
+
+Response 200:
+{
+  "status": true,
+  "message": "Carry forward completed.",            // "Carry forward preview." for dry_run
+  "data": {
+    "from_year": 2026, "to_year": 2027, "dry_run": false,
+    "leave_types": [{"id": 1, "name": "Earned Leave", "max_carry_forward_days": "10.00"}],
+    "summary": {"carried": 40, "updated": 0, "skipped_already_done": 0, "nothing_to_carry": 5,
+                "errors": 0, "total_days_carried": "312.50", "total_days_lapsed": "41.00"},
+    "rows": [
+      {"employee_id": 25, "employee_code": "EMP-25", "leave_type_id": 1, "leave_type": "Earned Leave",
+       "unused_days": "13.00", "carry_forward_days": "10.00", "lapsed_days": "3.00",
+       "result": "CARRIED"}            // CARRIED | NOTHING_TO_CARRY | ALREADY_DONE | UPDATED (+ change_days) | ERROR (+ error)
+    ]
+  }
+}
+400 "A valid from_year is required." / "2027 has not ended yet. Use dry_run=true to preview; ..."
+    / "No active leave type has carry forward enabled (leave/types/update/)."
+    / "One or more leave types are invalid, inactive or have carry forward off."
+
+Year-end steps: set carry forward on the leave types -> in December preview
+(dry_run) -> from 1 January run it (and balances/initialize for the new year,
+either order) -> employees see opening_balance in balances/my/.

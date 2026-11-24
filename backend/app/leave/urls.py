@@ -13,6 +13,7 @@ from .views import (
     OrganizationLeaveBalanceListAPIView,
     LeaveBalanceInitializeAPIView,
     LeaveBalanceAdjustAPIView,
+    LeaveBalanceCarryForwardAPIView,
 
     LeaveApplicationCreateAPIView,
     MyLeaveApplicationListAPIView,
@@ -45,6 +46,7 @@ urlpatterns = [
     path("balances/list/", OrganizationLeaveBalanceListAPIView.as_view()),                             #A  scope: self|team|all (leave.view_*)
     path("balances/initialize/", LeaveBalanceInitializeAPIView.as_view()),                             #A  perm: settings.manage
     path("balances/adjust/", LeaveBalanceAdjustAPIView.as_view()),                                     #A  perm: settings.manage
+    path("balances/carry-forward/", LeaveBalanceCarryForwardAPIView.as_view()),                        #A  perm: settings.manage  year end, dry_run preview
 
     # Leave Applications
     path("applications/create/", LeaveApplicationCreateAPIView.as_view()),                             #E

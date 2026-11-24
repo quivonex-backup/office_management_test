@@ -1045,3 +1045,64 @@ class OrganizationLeaveTransactionListAPIView(LeaveBaseAPIView):
             "Leave balance transactions fetched successfully.",
             serializer.data,
         )
+
+
+# =========================================================
+# 15. YEAR-END CARRY FORWARD (batch 15)
+# perm: settings.manage (same as balances/initialize)
+# =========================================================
+
+class LeaveBalanceCarryForwardAPIView(LeaveBaseAPIView):
+    audit_action = ("UPDATE", "EmployeeLeaveBalance")
+    required_perms = ("settings.manage",)
+
+    def post(self, request):
+        from .services import carry_forward_leave_balances
+
+        organization, error_response = self.get_organization(request)
+        if error_response:
+            return error_response
+        data = request.data
+
+        try:
+            from_year = int(data.get("from_year"))
+            if from_year < 1900 or from_year > 9998:
+                raise ValueError
+        except (TypeError, ValueError):
+            return self.failure("A valid from_year is required.")
+
+        def as_bool(value):
+            return value is True or str(value).lower() in ("true", "1", "yes")
+
+        dry_run = as_bool(data.get("dry_run", False))
+        recalculate = as_bool(data.get("recalculate", False))
+
+        if not dry_run and from_year >= timezone.localdate().year:
+            return self.failure(
+                f"{from_year} has not ended yet. Use dry_run=true to preview; "
+                f"carry forward can run from 1 January {from_year + 1}."
+            )
+
+        leave_type_ids = data.get("leave_type_ids")
+        if leave_type_ids is not None and not isinstance(leave_type_ids, list):
+            return self.failure("leave_type_ids must be a list.")
+        if leave_type_ids:
+            valid = LeaveType.objects.filter(
+                organization=organization, is_active=True, carry_forward_enabled=True, id__in=leave_type_ids,
+            ).count()
+            if valid != len(set(leave_type_ids)):
+                return self.failure("One or more leave types are invalid, inactive or have carry forward off.")
+
+        if not LeaveType.objects.filter(organization=organization, is_active=True,
+                                        carry_forward_enabled=True).exists():
+            return self.failure("No active leave type has carry forward enabled (leave/types/update/).")
+
+        result = carry_forward_leave_balances(
+            organization=organization, from_year=from_year, leave_type_ids=leave_type_ids or None,
+            dry_run=dry_run, recalculate=recalculate, created_by=request.user,
+        )
+        return self.success(
+            "Carry forward preview." if dry_run else "Carry forward completed.",
+            result,
+        )
+
