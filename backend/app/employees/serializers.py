@@ -134,6 +134,7 @@ class EmployeeCreateSerializer(serializers.ModelSerializer):
             "emergency_contact_number",
             "emergency_contact_relation",
             "pf_uan",
+            "vpf_percentage",
             "esi_ip_number",
             "pan_number",
             "work_state",
@@ -155,6 +156,15 @@ class EmployeeCreateSerializer(serializers.ModelSerializer):
 # =========================================================
 # EMPLOYEE LIST SERIALIZER
 # =========================================================
+
+    def validate_vpf_percentage(self, value):
+        if value is None:
+            return 0
+        if value < 0 or value > 88:
+            raise serializers.ValidationError("VPF must be between 0 and 88 percent.")
+        return value
+
+
 class EmployeeListSerializer(EmployeeOrgLinksMixin, serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
     work_state_name = serializers.CharField(source="work_state.state_name", read_only=True, allow_null=True)
@@ -190,6 +200,7 @@ class EmployeeListSerializer(EmployeeOrgLinksMixin, serializers.ModelSerializer)
             'emergency_contact_relation',
             'profile_photo',
             "pf_uan",
+            "vpf_percentage",
             "esi_ip_number",
             "pan_number",
             "work_state",
@@ -254,6 +265,7 @@ class EmployeeDetailSerializer(EmployeeOrgLinksMixin, serializers.ModelSerialize
             'emergency_contact_relation',
             'profile_photo',
             "pf_uan",
+            "vpf_percentage",
             "esi_ip_number",
             "pan_number",
             "work_state",
@@ -310,6 +322,7 @@ class EmployeeUpdateSerializer(serializers.ModelSerializer):
             'emergency_contact_number',
             'emergency_contact_relation',
             "pf_uan",
+            "vpf_percentage",
             "esi_ip_number",
             "pan_number",
             "work_state",
@@ -331,6 +344,15 @@ class EmployeeUpdateSerializer(serializers.ModelSerializer):
 # =========================================================
 # EMPLOYEE SELF-SERVICE PROFILE SERIALIZER
 # =========================================================
+
+    def validate_vpf_percentage(self, value):
+        if value is None:
+            return 0
+        if value < 0 or value > 88:
+            raise serializers.ValidationError("VPF must be between 0 and 88 percent.")
+        return value
+
+
 class MyEmployeeProfileSerializer(EmployeeOrgLinksMixin, serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
     work_state_name = serializers.CharField(
@@ -375,6 +397,7 @@ class MyEmployeeProfileSerializer(EmployeeOrgLinksMixin, serializers.ModelSerial
             "emergency_contact_relation",
             "profile_photo",
             "pf_uan",
+            "vpf_percentage",
             "esi_ip_number",
             "pan_number",
             "work_state",

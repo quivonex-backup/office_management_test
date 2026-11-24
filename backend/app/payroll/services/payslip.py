@@ -36,6 +36,17 @@ TENS = [
 ]
 
 
+
+def format_minutes(minutes):
+    """80 -> "1 h 20 min", 45 -> "45 min", 0 -> "0 min"."""
+    minutes = int(minutes or 0)
+    hours, rest = divmod(minutes, 60)
+    if hours and rest:
+        return f"{hours} h {rest} min"
+    if hours:
+        return f"{hours} h"
+    return f"{rest} min"
+
 def _two_digit_words(number):
     if number < 10:
         return ONES[number]
@@ -156,22 +167,24 @@ def generate_payslip_pdf(payroll_record):
     deductions = []
     lop_items = []
 
-    if payslip_mode == "FULL":
-        for item in line_items:
-            item_data = {
-                "name": item.component_name,
-                "code": item.component_code,
-                "amount": format_amount(item.amount),
-            }
+    # Every line is shown in both modes (SIMPLE has one "Gross Salary" earning
+    # plus overtime / LOP / late / manual deductions; FULL has each component
+    # and the statutory lines).
+    for item in line_items:
+        item_data = {
+            "name": item.component_name,
+            "code": item.component_code,
+            "amount": format_amount(item.amount),
+        }
 
-            if item.component_type == "EARNING":
-                earnings.append(item_data)
+        if item.component_type == "EARNING":
+            earnings.append(item_data)
 
-            elif item.component_type == "DEDUCTION":
-                deductions.append(item_data)
+        elif item.component_type == "DEDUCTION":
+            deductions.append(item_data)
 
-            elif item.component_type == "LOP":
-                lop_items.append(item_data)
+        elif item.component_type == "LOP":
+            lop_items.append(item_data)
 
     employer_contributions = []
 
@@ -237,6 +250,8 @@ def generate_payslip_pdf(payroll_record):
             "holiday_days": payroll_record.holiday_days,
             "weekly_off_days": payroll_record.weekly_off_days,
             "overtime_hours": payroll_record.overtime_hours,
+            "late_minutes": getattr(payroll_record, "late_minutes", 0) or 0,
+            "late_time": format_minutes(getattr(payroll_record, "late_minutes", 0) or 0),
         },
 
         "monthly_salary": format_amount(

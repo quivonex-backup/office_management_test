@@ -52,3 +52,11 @@ LATE DEDUCTION (batch 7)
   - Preview / record tables: add a "Late (min)" column (late_minutes).
   - Payslip: LATE line is a normal deduction row ("Late Deduction").
   - Calculator: "Late minutes" number input -> late_minutes.
+
+PF CONTRIBUTION TYPE + VPF (batch 8)
+  - Statutory settings: "PF contribution type" dropdown (Standard / Company
+    specific / Voluntary PF). Show pf_rate_info.note under it (e.g. warns when
+    Company specific is chosen but no company rates exist yet).
+  - Employee form (HR): "Voluntary PF %" number field (vpf_percentage, 0-88),
+    shown when the organization's type is VPF.
+  - Payslip / record views: a "VPF" deduction row appears like any other line.

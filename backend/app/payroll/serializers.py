@@ -153,6 +153,55 @@ class CompanyStatutorySettingsSerializer(serializers.ModelSerializer):
         read_only=True,
         allow_null=True,
     )
+    pf_rate_info = serializers.SerializerMethodField()
+
+    def get_pf_rate_info(self, obj):
+        """What the PF contribution type means for this organization right now."""
+        from django.db.models import Q
+        from django.utils import timezone
+
+        from app.employees.models import Employee
+        from .models import StatutoryRateConfig
+
+        today = timezone.localdate()
+        live = StatutoryRateConfig.objects.filter(
+            component_code__in=["PF_EMPLOYEE", "PF_EMPLOYER", "EPS", "EDLI"],
+            effective_from__lte=today,
+        ).filter(Q(effective_to__isnull=True) | Q(effective_to__gte=today))
+        company_rates = live.filter(organization=obj.organization).count()
+        standard_rates = live.filter(organization__isnull=True).count()
+        vpf_employees = Employee.objects.filter(
+            organization=obj.organization, is_active=True, vpf_percentage__gt=0,
+        ).count()
+
+        ptype = obj.pf_contribution_type
+        if ptype == "COMPANY_SPECIFIC":
+            note = (
+                "Company-specific PF rates are used."
+                if company_rates else
+                "No company-specific PF rates yet: standard rates are used until "
+                "the platform admin adds them for this organization."
+            )
+        elif ptype == "VPF":
+            note = (
+                f"Standard PF rates + voluntary PF for {vpf_employees} employee(s) "
+                f"with a VPF percentage."
+            )
+        else:
+            note = "Standard PF rates are used."
+        if ptype != "COMPANY_SPECIFIC" and not standard_rates and company_rates:
+            note += " (No standard rates exist, so this organization's own rates are used.)"
+        if ptype == "COMPANY_SPECIFIC":
+            rates_used = "COMPANY" if company_rates else "STANDARD"
+        else:
+            rates_used = "STANDARD" if standard_rates or not company_rates else "COMPANY"
+        return {
+            "rates_used": rates_used,
+            "standard_rate_configs": standard_rates,
+            "company_rate_configs": company_rates,
+            "vpf_employees": vpf_employees,
+            "note": note,
+        }
 
     class Meta:
         model = CompanyStatutorySettings
@@ -163,6 +212,7 @@ class CompanyStatutorySettingsSerializer(serializers.ModelSerializer):
             "pf_establishment_code",
             "pf_org_name",
             "pf_contribution_type",
+            "pf_rate_info",
             "is_esi_applicable",
             "esi_employer_code",
             "esi_org_name",
@@ -1123,6 +1173,7 @@ class PayrollRecordSerializer(serializers.ModelSerializer):
             "monthly_salary",
             "per_day_rate",
             "pf_employee",
+            "vpf_employee",
             "pf_employer",
             "eps",
             "edli",

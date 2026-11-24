@@ -47,6 +47,29 @@ def _require_rate(component_code, as_of_date, organization, scheme_label):
     return cfg
 
 
+def _pf_rate(component_code, as_of_date, statutory_settings, scheme_label):
+    """
+    PF rate config by the organization's pf_contribution_type:
+      COMPANY_SPECIFIC  this organization's config first, standard otherwise
+      STATUTORY / VPF   standard config first; this organization's config only
+                        when no standard one exists (keeps older setups working)
+    """
+    org = statutory_settings.organization
+    if statutory_settings.pf_contribution_type == "COMPANY_SPECIFIC":
+        cfg = get_statutory_rate(component_code, as_of_date, organization=org)
+    else:
+        cfg = (
+            get_statutory_rate(component_code, as_of_date, organization=None)
+            or get_statutory_rate(component_code, as_of_date, organization=org)
+        )
+    if cfg is None:
+        raise ValueError(
+            f"{scheme_label} is enabled for this organization but no rate "
+            f"is configured for {as_of_date}. Contact your administrator."
+        )
+    return cfg
+
+
 def _compute_pf(statutory_settings, pf_eligible_earned, as_of_date):
     """
     PF / EPS / EDLI computed on the earned PF-eligible wage.
@@ -62,22 +85,22 @@ def _compute_pf(statutory_settings, pf_eligible_earned, as_of_date):
     if statutory_settings is None or not statutory_settings.is_pf_applicable:
         return result
 
-    org = statutory_settings.organization
     base = pf_eligible_earned
 
-    emp_cfg = _require_rate("PF_EMPLOYEE", as_of_date, org, "PF")
+    emp_cfg = _pf_rate("PF_EMPLOYEE", as_of_date, statutory_settings, "PF")
     wage = base if emp_cfg.wage_ceiling is None else min(base, emp_cfg.wage_ceiling)
     result["pf_employee"] = q2(wage * emp_cfg.rate_percentage / HUNDRED)
+    result["pf_wage"] = q2(wage)
 
-    er_cfg = _require_rate("PF_EMPLOYER", as_of_date, org, "PF")
+    er_cfg = _pf_rate("PF_EMPLOYER", as_of_date, statutory_settings, "PF")
     wage = base if er_cfg.wage_ceiling is None else min(base, er_cfg.wage_ceiling)
     result["pf_employer"] = q2(wage * er_cfg.rate_percentage / HUNDRED)
 
-    eps_cfg = _require_rate("EPS", as_of_date, org, "EPS")
+    eps_cfg = _pf_rate("EPS", as_of_date, statutory_settings, "EPS")
     wage = base if eps_cfg.wage_ceiling is None else min(base, eps_cfg.wage_ceiling)
     result["eps"] = q2(wage * eps_cfg.rate_percentage / HUNDRED)
 
-    edli_cfg = _require_rate("EDLI", as_of_date, org, "EDLI")
+    edli_cfg = _pf_rate("EDLI", as_of_date, statutory_settings, "EDLI")
     wage = base if edli_cfg.wage_ceiling is None else min(base, edli_cfg.wage_ceiling)
     result["edli"] = q2(wage * edli_cfg.rate_percentage / HUNDRED)
 
@@ -306,6 +329,39 @@ def gross_package_warning(structure, monthly_gross, component_amounts, entries):
 # =========================================================
 # PAYSLIP COMPUTATION
 # =========================================================
+
+def compute_vpf(statutory_settings, employee, pf_result):
+    """
+    Voluntary PF (employee only): employee.vpf_percentage x the wage used for
+    employee PF. Only when PF is on and the organization's contribution type
+    is VPF. The employer share does not change.
+    """
+    if (
+        statutory_settings is None
+        or not statutory_settings.is_pf_applicable
+        or statutory_settings.pf_contribution_type != "VPF"
+        or employee is None
+    ):
+        return ZERO
+    pct = Decimal(str(getattr(employee, "vpf_percentage", 0) or 0))
+    wage = pf_result.get("pf_wage") or ZERO
+    if pct <= ZERO or wage <= ZERO:
+        return ZERO
+    return q2(wage * pct / HUNDRED)
+
+
+def vpf_line_item(vpf_amount, employee, pf_result):
+    return {
+        "component_code": "VPF",
+        "component_name": "Voluntary PF (Employee)",
+        "component_type": "DEDUCTION",
+        "amount": vpf_amount,
+        "calculation_details": {
+            "vpf_percentage": str(getattr(employee, "vpf_percentage", 0)),
+            "pf_wage": str(pf_result.get("pf_wage") or ZERO),
+        },
+    }
+
 
 def apply_late_deduction(line_items, settings, per_day_rate, late_minutes):
     """
@@ -539,6 +595,7 @@ def compute_payslip_data(employee, organization, period_start, period_end):
     }
     esi_result = {"esi_employee": ZERO, "esi_employer": ZERO}
     lwf_result = {"lwf_employee": ZERO, "lwf_employer": ZERO}
+    vpf_amount = ZERO
     pt_amount = ZERO
     pf_eligible_earned = ZERO
     esi_eligible_earned = ZERO
@@ -564,6 +621,7 @@ def compute_payslip_data(employee, organization, period_start, period_end):
         pf_result = _compute_pf(
             statutory_settings, pf_eligible_earned, period_end,
         )
+        vpf_amount = compute_vpf(statutory_settings, employee, pf_result)
         esi_result = _compute_esi(
             statutory_settings, esi_eligible_earned, period_end,
         )
@@ -663,6 +721,9 @@ def compute_payslip_data(employee, organization, period_start, period_end):
                     "pf_eligible_earned": str(pf_eligible_earned),
                 },
             })
+
+        if vpf_amount > ZERO:
+            line_items.append(vpf_line_item(vpf_amount, employee, pf_result))
 
         if esi_result["esi_employee"] > ZERO:
             line_items.append({
@@ -798,6 +859,7 @@ def compute_payslip_data(employee, organization, period_start, period_end):
 
         # Statutory snapshot
         "pf_employee": pf_result["pf_employee"],
+        "vpf_employee": vpf_amount,
         "pf_employer": pf_result["pf_employer"],
         "eps": pf_result["eps"],
         "edli": pf_result["edli"],

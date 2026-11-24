@@ -53,7 +53,7 @@ FINISHED_CHECK = ("DONE", "WAIVED")
 
 # Employee fields an HR user may fill during onboarding (copied on convert).
 ONBOARDING_DATA_FIELDS = (
-    "work_state_id", "district", "taluka", "pan_number", "pf_uan", "esi_ip_number",
+    "work_state_id", "district", "taluka", "pan_number", "pf_uan", "vpf_percentage", "esi_ip_number",
     "tax_regime", "bank_account_number", "bank_ifsc", "bank_name", "bank_branch",
     "upi_id", "emergency_contact_name", "emergency_contact_number",
     "emergency_contact_relation", "attendance_location_exempt",

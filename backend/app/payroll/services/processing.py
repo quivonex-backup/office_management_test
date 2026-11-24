@@ -57,6 +57,7 @@ def _persist_payroll_record(payroll_run, employee, data):
         monthly_salary=data["monthly_salary"],
         per_day_rate=data["per_day_rate"],
         pf_employee=data["pf_employee"],
+        vpf_employee=data.get("vpf_employee", ZERO),
         pf_employer=data["pf_employer"],
         eps=data["eps"],
         edli=data["edli"],
@@ -456,6 +457,7 @@ def recompute_payroll_record(record, recomputed_by=None):
     record.monthly_salary = data["monthly_salary"]
     record.per_day_rate = data["per_day_rate"]
     record.pf_employee = data["pf_employee"]
+    record.vpf_employee = data.get("vpf_employee", ZERO)
     record.pf_employer = data["pf_employer"]
     record.eps = data["eps"]
     record.edli = data["edli"]

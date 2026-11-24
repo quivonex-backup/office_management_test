@@ -107,6 +107,9 @@ class Employee(models.Model):
 
     # ---- Payroll/Statutory (used by payroll app) ----
     pf_uan = models.CharField(max_length=12, blank=True, null=True)
+    # Voluntary PF: extra employee PF % (on the PF wage), used only when the
+    # organization's PF contribution type is VPF. 0 = no VPF.
+    vpf_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     esi_ip_number = models.CharField(max_length=17, blank=True, null=True)
     pan_number = models.CharField(max_length=10, blank=True, null=True)
 

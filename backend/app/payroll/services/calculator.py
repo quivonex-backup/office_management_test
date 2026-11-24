@@ -39,6 +39,8 @@ from .computation import (
     _compute_pt,
     _compute_lwf,
     apply_late_deduction,
+    compute_vpf,
+    vpf_line_item,
 )
 
 COUNT_FIELDS = (
@@ -356,6 +358,7 @@ def _build_payslip(
     }
     esi_result = {"esi_employee": ZERO, "esi_employer": ZERO}
     lwf_result = {"lwf_employee": ZERO, "lwf_employer": ZERO}
+    vpf_amount = ZERO
     pt_amount = ZERO
     pf_eligible_earned = ZERO
     esi_eligible_earned = ZERO
@@ -381,6 +384,7 @@ def _build_payslip(
         pf_result = _compute_pf(
             statutory_settings, pf_eligible_earned, period_end,
         )
+        vpf_amount = compute_vpf(statutory_settings, employee, pf_result)
         esi_result = _compute_esi(
             statutory_settings, esi_eligible_earned, period_end,
         )
@@ -480,6 +484,9 @@ def _build_payslip(
                     "pf_eligible_earned": str(pf_eligible_earned),
                 },
             })
+
+        if vpf_amount > ZERO:
+            line_items.append(vpf_line_item(vpf_amount, employee, pf_result))
 
         if esi_result["esi_employee"] > ZERO:
             line_items.append({
@@ -615,6 +622,7 @@ def _build_payslip(
 
         # Statutory snapshot
         "pf_employee": pf_result["pf_employee"],
+        "vpf_employee": vpf_amount,
         "pf_employer": pf_result["pf_employer"],
         "eps": pf_result["eps"],
         "edli": pf_result["edli"],

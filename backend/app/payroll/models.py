@@ -110,6 +110,10 @@ class CompanyStatutorySettings(models.Model):
     is_pf_applicable = models.BooleanField(default=False)
     pf_establishment_code = models.CharField(max_length=50, blank=True, null=True)
     pf_org_name = models.CharField(max_length=200, blank=True, null=True)
+    # STATUTORY: standard (default) PF rates only.
+    # COMPANY_SPECIFIC: this organization's own PF rate configs (set by the
+    #   super admin) are used first, standard rates where none exist.
+    # VPF: standard rates + each employee's vpf_percentage as extra employee PF.
     pf_contribution_type = models.CharField(max_length=20, choices=PF_CONTRIBUTION_TYPE_CHOICES, default="STATUTORY")
 
     # ESI
@@ -500,6 +504,7 @@ class PayrollRecord(models.Model):
 
     # ---- Statutory snapshot ----
     pf_employee = models.DecimalField(max_digits=12, decimal_places=2, default=ZERO)
+    vpf_employee = models.DecimalField(max_digits=12, decimal_places=2, default=ZERO)
     pf_employer = models.DecimalField(max_digits=12, decimal_places=2, default=ZERO)
     eps = models.DecimalField(max_digits=12, decimal_places=2, default=ZERO)
     edli = models.DecimalField(max_digits=12, decimal_places=2, default=ZERO)

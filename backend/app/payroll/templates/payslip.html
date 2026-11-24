@@ -244,11 +244,20 @@
             <td>{{ attendance.weekly_off_days }}</td>
             <td>{{ attendance.overtime_hours }}</td>
         </tr>
+
+        <tr>
+            <th>Late Time</th>
+            <th colspan="3"></th>
+        </tr>
+
+        <tr>
+            <td>{{ attendance.late_time }}</td>
+            <td colspan="3"></td>
+        </tr>
     </table>
 
-    <!-- FULL MODE -->
+    <!-- EARNINGS / DEDUCTIONS (both modes; SIMPLE shows one Gross Salary line) -->
 
-    {% if payslip_mode == "FULL" %}
 
         <div class="section-title">
             Earnings
@@ -307,7 +316,7 @@
             </tr>
         </table>
 
-        {% if employer_contributions %}
+        {% if payslip_mode == "FULL" and employer_contributions %}
             <div class="section-title">
                 Employer Statutory Contributions
             </div>
@@ -327,32 +336,6 @@
             </table>
         {% endif %}
 
-    {% else %}
-
-        <!-- SIMPLE MODE -->
-
-        <div class="section-title">
-            Salary Summary
-        </div>
-
-        <table>
-            <tr>
-                <th>Gross Earnings</th>
-                <td class="right">{{ gross_earnings }}</td>
-            </tr>
-
-            <tr>
-                <th>Total Deductions</th>
-                <td class="right">{{ total_deductions }}</td>
-            </tr>
-
-            <tr class="total-row">
-                <th>Net Salary</th>
-                <td class="right">{{ net_salary }}</td>
-            </tr>
-        </table>
-
-    {% endif %}
 
     <!-- NET SALARY -->
 

@@ -264,6 +264,27 @@ Notes:
 Enums:
   pf_contribution_type : STATUTORY | VPF | COMPANY_SPECIFIC
 
+PF CONTRIBUTION TYPE (batch 8)
+  STATUTORY         standard PF rates (rate configs with no organization, set by
+                    the platform admin). Organization-specific configs are used
+                    only if no standard config exists.
+  COMPANY_SPECIFIC  this organization's own PF rate configs first (platform admin
+                    creates them in statutory-rate-configs/create/ with
+                    "organization": <id>, e.g. wage_ceiling null = PF on full
+                    basic); standard rates for any code without one.
+  VPF               standard rates + Voluntary PF: each employee's
+                    vpf_percentage (employees/update/, 0-88) x the wage used for
+                    employee PF -> extra employee deduction line "VPF"
+                    ("Voluntary PF (Employee)"), stored in record.vpf_employee.
+                    Employer PF / EPS / EDLI do not change. Employees with 0%
+                    get no VPF line. VPF % is ignored for other types.
+  Read-only "pf_rate_info" in the response:
+    { "rates_used": "STANDARD" | "COMPANY", "standard_rate_configs": 4,
+      "company_rate_configs": 0, "vpf_employees": 3,
+      "note": "No company-specific PF rates yet: standard rates are used ..." }
+  PF / ESI / PT / LWF are deducted only in payslip_mode FULL, for schemes switched
+  on here, on salary components marked is_pf_eligible / is_esi_eligible.
+
 
 ================================================================================
 SECTION 3 — SALARY COMPONENTS
@@ -2107,6 +2128,8 @@ json
         "monthly_salary": "30000.00",
         "per_day_rate": "1200.00",
         "pf_employee": "0.00",
+      "vpf_employee": "0.00",
+        "vpf_employee": "0.00",
         "pf_employer": "0.00",
         "eps": "0.00",
         "edli": "0.00",
@@ -2308,3 +2331,17 @@ POST /payroll/calculator/               + optional "monthly_gross" or "annual_ct
      }
      With annual_ctc the gross is solved back (to the paisa). Near the ESI
      ceiling an exact match can be impossible; the offer stores the closest.
+
+
+================================================================================
+PAYSLIP PDF (batch 8)
+================================================================================
+Both payslip modes list every line of the record (no totals-only view):
+  Attendance  present, half days, absent, paid / unpaid leave, holidays,
+              weekly offs, overtime hours, Late Time ("1 h 20 min" from late_minutes)
+  Earnings    FULL: each salary component + Overtime
+              SIMPLE: "Gross Salary" + Overtime (if any)
+  Deductions  PF, VPF, ESI, PT, LWF (FULL only), TDS / other deductions (manual,
+              both modes), Late Deduction, Loss of Pay; then Total Deductions
+  Employer Statutory Contributions: FULL only
+Lines with 0 are not written (no OT line when there is no overtime, etc.).

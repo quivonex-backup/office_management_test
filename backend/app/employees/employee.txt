@@ -65,6 +65,7 @@ Response 200:
     "emergency_contact_relation": "Spouse",
     "profile_photo": "employees/profile/rahul.jpg",
     "pf_uan": "123456789012",
+    "vpf_percentage": "0.00",       // voluntary PF %, read-only (set by HR)
     "esi_ip_number": null,
     "pan_number": "ABCDE1234F",
     "work_state": 12,
