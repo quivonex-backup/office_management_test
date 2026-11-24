@@ -12,6 +12,7 @@ from .views import (
     AttendanceDeviceResetPasswordAPIView, AttendanceDeviceDeactivateAPIView,
     KioskLoginAPIView, KioskPunchAPIView,
     AttendanceMissedDayRequestAPIView, AttendanceCorrectionCancelAPIView,
+    MyAttendanceMissedDayAPIView,
 )
 
 # ---------------------------------------------------------------------------
@@ -57,6 +58,7 @@ urlpatterns = [
     path("corrections/missed-day/", AttendanceMissedDayRequestAPIView.as_view()),                      #E  own day with no punches (employee_id: attendance.correct)
     path("corrections/cancel/", AttendanceCorrectionCancelAPIView.as_view()),                           #E  requester withdraws own PENDING request
     path("my-attendance/correct/", MyAttendanceCorrectionAPIView.as_view()),                            #E
+    path("my-attendance/missed-day/", MyAttendanceMissedDayAPIView.as_view()),                          #E  own day with no punches, applied at once (no approval, no notification)
 
     # Face Recognize
     path("face-recognition/", FaceRecognitionAPIView.as_view()),                                        #E

@@ -2653,3 +2653,150 @@ class AttendanceCorrectionCancelAPIView(AttendanceBaseAPIView):
         )
         return self.success("Request withdrawn.", {"withdrawn_correction_ids": removed,
                                                     "attendance_record_removed": record_removed})
+
+
+# =========================================================
+# BATCH 16 — EMPLOYEE FILLS OWN MISSED DAY DIRECTLY
+# (no approval, no notification; like my-attendance/correct)
+# Self-contained: no other code uses this class. To remove it, delete this
+# class and its line in urls.py (path + import); nothing else changes.
+# =========================================================
+
+class MyAttendanceMissedDayAPIView(AttendanceBaseAPIView):
+
+    @staticmethod
+    def _aware(value, field):
+        if isinstance(value, datetime):
+            parsed = value
+        else:
+            try:
+                parsed = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"{field} must be an ISO 8601 datetime, e.g. 2026-11-20T09:30:00.") from exc
+        if timezone.is_naive(parsed):
+            parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
+        return parsed
+
+    def _validate(self, employee, organization, work_date, check_in, check_out, reason):
+        from datetime import timedelta
+
+        if not reason or not str(reason).strip():
+            raise ValueError("reason is required.")
+        if work_date > timezone.localdate():
+            raise ValueError("work_date cannot be in the future.")
+        joining = getattr(employee, "joining_date", None)
+        if joining and work_date < joining:
+            raise ValueError("work_date is before the employee's joining date.")
+
+        check_in = self._aware(check_in, "check_in")
+        check_out = self._aware(check_out, "check_out")
+        if timezone.localdate(check_in) != work_date:
+            raise ValueError("check_in must be on work_date.")
+        if check_out <= check_in:
+            raise ValueError("check_out must be after check_in.")
+        if timezone.localdate(check_out) > work_date + timedelta(days=1):
+            raise ValueError("check_out can be at most the next day (overnight shift).")
+        if check_out > timezone.now():
+            raise ValueError("check_out cannot be in the future.")
+
+        existing = (
+            AttendanceRecord.objects.select_for_update()
+            .filter(organization=organization, employee=employee, work_date=work_date).first()
+        )
+        if existing and (existing.check_in or existing.check_out):
+            raise ValueError(
+                "Attendance already has a check-in or check-out for this day. "
+                "Use corrections/create/ to change it."
+            )
+        if existing and existing.corrections.filter(status="PENDING").exists():
+            raise ValueError("A correction request for this day is already pending.")
+        return existing, check_in, check_out
+
+    def _apply(self, employee, organization, work_date, check_in, check_out, reason, user):
+        from .services import calculate_attendance, get_or_create_attendance
+
+        existing, check_in, check_out = self._validate(
+            employee, organization, work_date, check_in, check_out, reason,
+        )
+        attendance = existing or get_or_create_attendance(employee, organization, work_date)
+        reason = str(reason).strip()
+
+        corrections = []
+        for field, model_field, value in (("CHECK_IN", "check_in", check_in),
+                                          ("CHECK_OUT", "check_out", check_out)):
+            correction = AttendanceCorrection.objects.create(
+                attendance=attendance, field_name=field, old_value=None, new_value=value.isoformat(),
+                reason=reason, status="APPLIED", requested_by=user,
+            )
+            punch, _ = AttendancePunch.objects.update_or_create(
+                attendance=attendance,
+                punch_type=field,
+                defaults={
+                    "punched_at": value,
+                    "recorded_by": user,
+                    "is_manual": True,
+                    "verification_status": "MANUAL",
+                    "verification_details": {
+                        "source": "employee_direct_missed_day",
+                        "correction_id": correction.id,
+                        "reason": reason,
+                    },
+                },
+            )
+            correction.punch = punch
+            correction.save(update_fields=["punch", "updated_at"])
+            setattr(attendance, model_field, value)
+            corrections.append(correction)
+
+        if attendance.status in ("ABSENT", "PENDING_REVIEW"):
+            attendance.status = "INCOMPLETE"
+        attendance.updated_by = user
+        attendance.save()
+        calculate_attendance(attendance)
+        attendance.refresh_from_db()
+        return attendance, corrections
+
+    @transaction.atomic
+    def post(self, request):
+        organization, error_response = self.get_organization(request)
+        if error_response:
+            return error_response
+        employee = get_employee_for_user(request.user, organization)
+        if not employee:
+            return self.failure("No active employee profile is linked to this user.", status.HTTP_404_NOT_FOUND)
+
+        data = request.data
+        missing = [f for f in ("work_date", "check_in", "check_out", "reason") if not data.get(f)]
+        if missing:
+            return Response(
+                {"status": False, "message": "Validation failed.",
+                 "errors": {f: ["This field is required."] for f in missing}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            work_date = self.parse_date(data.get("work_date"), "work_date")
+            attendance, corrections = self._apply(
+                employee, organization, work_date,
+                data.get("check_in"), data.get("check_out"), data.get("reason"), request.user,
+            )
+        except ValueError as exc:
+            return self.failure(str(exc))
+
+        self.audit(
+            request=request, user=request.user, action="UPDATE", module="ATTENDANCE",
+            object_type="AttendanceRecord", object_id=attendance.id,
+            description=f"Employee {employee.employee_code} directly filled missed day {work_date}.",
+            new_data={"check_in": corrections[0].new_value, "check_out": corrections[1].new_value,
+                      "correction_ids": [c.id for c in corrections]},
+        )
+        return self.success(
+            "Attendance recorded successfully.",
+            {
+                "attendance": AttendanceRecordSerializer(attendance, context={"request": request}).data,
+                "corrections": [
+                    {"field": c.field_name, "old_value": None, "new_value": c.new_value, "correction_id": c.id}
+                    for c in corrections
+                ],
+            },
+        )
+
