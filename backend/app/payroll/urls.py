@@ -21,6 +21,8 @@ from .views import (
     SalaryComponentDetailAPIView,
     SalaryComponentUpdateAPIView,
     SalaryComponentDeactivateAPIView,
+    PayrollRunReopenAPIView,
+    PayrollPaymentVoidAPIView,
 
     # Org Admin — Salary Structures
     SalaryStructureListAPIView,
@@ -130,6 +132,7 @@ urlpatterns = [
     path("runs/detail/", PayrollRunDetailAPIView.as_view()),                               #A  perm: payroll.view_all, payroll.generate, payroll.finalize (any)
     path("runs/generate/", PayrollRunGenerateAPIView.as_view()),                           #A  perm: payroll.generate
     path("runs/finalize/", PayrollRunFinalizeAPIView.as_view()),                           #A  perm: payroll.finalize
+    path("runs/reopen/", PayrollRunReopenAPIView.as_view()),                               #A  perm: payroll.finalize  FINALIZED -> GENERATED, only with no payments
 
     # =========================================================
     # ORG ADMIN — PAYROLL RECORDS
@@ -141,6 +144,7 @@ urlpatterns = [
     # ORG ADMIN — PAYMENTS
     # =========================================================
     path("payments/record/", PaymentRecordAPIView.as_view()),                              #A  perm: payroll.finalize
+    path("payments/void/", PayrollPaymentVoidAPIView.as_view()),                           #A  perm: payroll.finalize  remove a wrong payment (reason required)
     path("payments/bulk-record/", PaymentBulkRecordForRunAPIView.as_view()),               #A  perm: payroll.finalize
     path("payments/list/", PaymentListAPIView.as_view()),                                  #A  perm: payroll.view_all, payroll.generate, payroll.finalize (any)
 

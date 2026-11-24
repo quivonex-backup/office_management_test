@@ -2605,3 +2605,120 @@ class SalaryComponentDeactivateAPIView(SalaryComponentBaseAPIView):
             new_data={"is_active": False},
         )
         return self.success("Salary component deactivated.")
+
+
+# =========================================================
+# =========================================================
+# BATCH 14 — REOPEN A FINALIZED RUN / VOID A SALARY PAYMENT
+# perm: payroll.finalize (same as finalize and payments/record)
+# =========================================================
+# =========================================================
+
+class PayrollRunReopenAPIView(PayrollBaseAPIView):
+    """
+    FINALIZED -> GENERATED, only while no payment is recorded on the run.
+    Payslips disappear from the employees' app until the run is finalized
+    again; deductions can be edited / the run regenerated in between.
+    """
+    required_perms = ("payroll.finalize",)
+
+    @transaction.atomic
+    def post(self, request):
+        organization, err = self.get_organization(request)
+        if err:
+            return err
+        try:
+            run_id = self.parse_int(request.data.get("payroll_run_id"), "payroll_run_id")
+        except ValueError as exc:
+            return self.failure(str(exc))
+        reason = (request.data.get("reason") or "").strip()
+        if not reason:
+            return self.failure("reason is required.")
+
+        run = PayrollRun.objects.select_for_update().filter(id=run_id, organization=organization).first()
+        if not run:
+            return self.failure("Payroll run not found.", status.HTTP_404_NOT_FOUND)
+        if run.status != "FINALIZED":
+            return self.failure(f"Only FINALIZED runs can be reopened. This run is {run.status}.")
+
+        payments = PayrollPayment.objects.filter(payroll_record__payroll_run=run)
+        payment_count = payments.count()
+        if payment_count:
+            return self.failure(
+                f"Cannot reopen: {payment_count} salary payment(s) are recorded on this run. "
+                f"Void them first (payments/void/).",
+                errors={"payment_ids": list(payments.values_list("id", flat=True)[:50])},
+            )
+
+        old = {"status": run.status, "finalized_by": run.finalized_by_id,
+               "finalized_at": run.finalized_at.isoformat() if run.finalized_at else None}
+        run.status = "GENERATED"
+        run.finalized_by = None
+        run.finalized_at = None
+        run.save(update_fields=["status", "finalized_by", "finalized_at", "updated_at"])
+
+        self.audit(
+            request=request, user=request.user, action="UPDATE", module="PAYROLL",
+            object_type="PayrollRun", object_id=run.id,
+            description=f"Payroll run {run.period_start} - {run.period_end} reopened. Reason: {reason}",
+            old_data=old, new_data={"status": "GENERATED", "reason": reason},
+        )
+        return self.success(
+            "Payroll run reopened. Fix the records, then finalize it again.",
+            PayrollRunSerializer(run).data,
+        )
+
+
+class PayrollPaymentVoidAPIView(PayrollBaseAPIView):
+    """
+    Remove a wrongly recorded salary payment. The record's paid amount and
+    payment status are recomputed; the removed payment is kept in the
+    activity log (old_data) with the reason.
+    """
+    required_perms = ("payroll.finalize",)
+
+    @transaction.atomic
+    def post(self, request):
+        from .services.payments import update_payment_status
+
+        organization, err = self.get_organization(request)
+        if err:
+            return err
+        try:
+            payment_id = self.parse_int(request.data.get("payment_id"), "payment_id")
+        except ValueError as exc:
+            return self.failure(str(exc))
+        reason = (request.data.get("reason") or "").strip()
+        if not reason:
+            return self.failure("reason is required.")
+
+        payment = (
+            PayrollPayment.objects.select_for_update()
+            .filter(id=payment_id, organization=organization)
+            .select_related("payroll_record__employee", "payroll_record__payroll_run")
+            .first()
+        )
+        if not payment:
+            return self.failure("Payment not found.", status.HTTP_404_NOT_FOUND)
+
+        record = payment.payroll_record
+        old = PayrollPaymentSerializer(payment).data
+        payment.delete()
+        record.refresh_from_db()
+        update_payment_status(record)
+
+        self.audit(
+            request=request, user=request.user, action="DELETE", module="PAYROLL",
+            object_type="PayrollPayment", object_id=payment_id,
+            description=(
+                f"Salary payment {old.get('amount')} for {record.employee.employee_code} "
+                f"({record.payroll_run.period_start} - {record.payroll_run.period_end}) voided. Reason: {reason}"
+            ),
+            old_data=old, new_data={"voided": True, "reason": reason},
+        )
+        return self.success("Payment voided.", {
+            "voided_payment_id": payment_id,
+            "payroll_record_id": record.id,
+            "paid_amount": str(record.paid_amount),
+            "payment_status": record.payment_status,
+        })

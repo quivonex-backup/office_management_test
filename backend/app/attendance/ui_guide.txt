@@ -66,3 +66,13 @@ KIOSK (batch 12)
     On 401 go back to the Login screen.
   Employee QR: build it in the employee app / ID card from employee_code;
   no API is needed.
+
+MISSED DAY / WITHDRAW (batch 14)
+  - Employee app: "Request attendance" on a calendar day with no punches
+    (or from My corrections): date + in time + out time + reason ->
+    corrections/missed-day/. Days with a punch: use the existing correction form.
+  - My corrections (send "scope": "self"): PENDING rows get a "Withdraw"
+    button -> corrections/cancel/. Show missed-day pairs as one row
+    (same attendance, CHECK_IN + CHECK_OUT, both PENDING).
+  - Approver screen: show a missed-day pair as one item; one Approve /
+    Reject call handles both (response has paired_correction_id).

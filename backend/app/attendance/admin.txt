@@ -725,3 +725,39 @@ SECTION — KIOSK APIs (batch 12)  — no user token
    source "KIOSK", device_id, device_name, device_code. recorded_by is null.
    The employee sees it in my-attendance like any other punch.
    No logout API: the app just forgets the token.
+
+
+================================================================================
+SECTION — MISSED DAY REQUEST / WITHDRAW (batch 14)
+================================================================================
+
+POST /attendance/corrections/missed-day/        (#E; employee_id for others: attendance.correct)
+  { "work_date": "2026-11-20",
+    "check_in": "2026-11-20T09:05:00",       // ISO datetime, on work_date
+    "check_out": "2026-11-20T18:10:00",      // after check_in, at most next day, not future
+    "reason": "Forgot phone",
+    "employee_id"?: 25 }
+  For a day with NO check-in and NO check-out (no record, or an ABSENT /
+  empty record). Creates the record if missing (INCOMPLETE) and two PENDING
+  corrections: CHECK_IN + CHECK_OUT. Approvers are notified
+  (ATTENDANCE_CORRECTION_SUBMITTED).
+  201 { "attendance_id": 900, "work_date": "2026-11-20", "corrections": [ {..CHECK_IN..}, {..CHECK_OUT..} ] }
+  400 missing fields (errors per field), future day, before joining date,
+      times invalid, "Attendance already has a check-in or check-out for this
+      day. Use corrections/create/ to change it.", "A correction request for
+      this day is already pending."
+  403 for someone else without attendance.correct.
+
+POST /attendance/corrections/review/   (unchanged request)
+  A missed-day pair is reviewed together: approving or rejecting either line
+  does the same to the other (check-in applied first, then the day is
+  recalculated: PRESENT / HALF_DAY / late...). Rejected pair -> day ABSENT.
+  Response adds "paired_correction_id" only for a missed-day pair.
+
+POST /attendance/corrections/cancel/            (#E; only the requester)
+  { "correction_id": 77 }
+  Withdraws a PENDING request (deleted; kept in the activity log). A
+  missed-day pair is withdrawn together, and its empty record (created only
+  for the request) is removed.
+  200 { "withdrawn_correction_ids": [77, 78], "attendance_record_removed": true }
+  400 "Only pending corrections can be withdrawn."  403 not your request.  404 not found.

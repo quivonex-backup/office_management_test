@@ -72,3 +72,8 @@ SALARY COMPONENTS — EDIT / DEACTIVATE (batch 13)
     structures / dependent components to fix first).
   - Reactivate: components/update with "is_active": true.
   - Hide inactive components in the structure builder's component picker.
+
+REOPEN / VOID (batch 14, payroll.finalize)
+  - Run detail (FINALIZED): "Reopen" button -> reason dialog -> runs/reopen/.
+    On 400 with payment_ids: "Void these payments first".
+  - Payments list row: "Void" -> reason dialog -> payments/void/.

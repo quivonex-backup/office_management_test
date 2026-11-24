@@ -11,6 +11,7 @@ from .views import (
     AttendanceDeviceCreateAPIView, AttendanceDeviceListAPIView, AttendanceDeviceUpdateAPIView,
     AttendanceDeviceResetPasswordAPIView, AttendanceDeviceDeactivateAPIView,
     KioskLoginAPIView, KioskPunchAPIView,
+    AttendanceMissedDayRequestAPIView, AttendanceCorrectionCancelAPIView,
 )
 
 # ---------------------------------------------------------------------------
@@ -53,6 +54,8 @@ urlpatterns = [
     path("corrections/create/", AttendanceCorrectionCreateAPIView.as_view()),                           #E  own record (attendance.correct for others)
     path("corrections/list/", AttendanceCorrectionListAPIView.as_view()),                               #E #A  scope: self|team|all (attendance.view_*)
     path("corrections/review/", AttendanceCorrectionReviewAPIView.as_view()),                           #A  perm: attendance.approve_correction  + record in caller's scope, not own
+    path("corrections/missed-day/", AttendanceMissedDayRequestAPIView.as_view()),                      #E  own day with no punches (employee_id: attendance.correct)
+    path("corrections/cancel/", AttendanceCorrectionCancelAPIView.as_view()),                           #E  requester withdraws own PENDING request
     path("my-attendance/correct/", MyAttendanceCorrectionAPIView.as_view()),                            #E
 
     # Face Recognize

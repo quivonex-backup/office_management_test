@@ -749,8 +749,62 @@ def create_attendance_correction(
 
 
 
+def get_missed_day_sibling(correction):
+    """
+    Batch 14: a missed-day request is two PENDING corrections (CHECK_IN +
+    CHECK_OUT) on a record that has no check-in and no check-out yet. They
+    are reviewed together. Returns the other one, or None.
+    """
+    if correction.field_name not in ("CHECK_IN", "CHECK_OUT") or correction.status != "PENDING":
+        return None
+    attendance = correction.attendance
+    if attendance.check_in or attendance.check_out:
+        return None
+    other = "CHECK_OUT" if correction.field_name == "CHECK_IN" else "CHECK_IN"
+    return (
+        AttendanceCorrection.objects.filter(
+            attendance=attendance, field_name=other, status="PENDING",
+            requested_by_id=correction.requested_by_id,
+        ).exclude(pk=correction.pk).order_by("-id").first()
+    )
+
+
 @transaction.atomic
 def review_attendance_correction(
+    correction,
+    reviewed_by,
+    approve,
+    review_note="",
+):
+    """
+    Review one correction. For a missed-day request (batch 14) the paired
+    check-in / check-out correction is reviewed with it: approved together
+    (check-in applied first) or rejected together; a rejected missed day
+    with no punches becomes ABSENT.
+    """
+    sibling = get_missed_day_sibling(correction)
+    if sibling is None:
+        return _review_single_correction(correction, reviewed_by, approve, review_note)
+
+    first, second = (correction, sibling) if correction.field_name == "CHECK_IN" else (sibling, correction)
+    _review_single_correction(first, reviewed_by, approve, review_note)
+    second.attendance.refresh_from_db()
+    _review_single_correction(second, reviewed_by, approve, review_note)
+
+    attendance = correction.attendance
+    attendance.refresh_from_db()
+    if not approve and not attendance.check_in and not attendance.check_out \
+            and attendance.status in ("INCOMPLETE", "PENDING_REVIEW"):
+        attendance.status = "ABSENT"
+        attendance.updated_by = reviewed_by
+        attendance.save(update_fields=["status", "updated_by", "updated_at"])
+
+    correction.refresh_from_db()
+    correction.paired_correction_id = sibling.id
+    return correction
+
+
+def _review_single_correction(
     correction,
     reviewed_by,
     approve,
@@ -1407,3 +1461,97 @@ def bulk_mark_absent(
         "from_date": str(from_date),
         "to_date": str(to_date),
     }
+
+
+# =========================================================
+# BATCH 14 — MISSED DAY REQUEST / WITHDRAW A CORRECTION
+# =========================================================
+
+def _parse_aware(value, field):
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        try:
+            parsed = datetime.fromisoformat(str(value).strip())
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{field} must be an ISO 8601 datetime, e.g. 2026-11-20T09:30:00.") from exc
+    if timezone.is_naive(parsed):
+        parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
+    return parsed
+
+
+@transaction.atomic
+def create_missed_day_request(employee, organization, work_date, check_in, check_out, reason, requested_by):
+    """
+    For a day with no punches: creates (or reuses) the attendance record and
+    two PENDING corrections, CHECK_IN and CHECK_OUT. Reviewed together.
+    Returns (attendance, [check_in_correction, check_out_correction]).
+    """
+    if not reason or not str(reason).strip():
+        raise ValueError("reason is required.")
+    today = timezone.localdate()
+    if work_date > today:
+        raise ValueError("work_date cannot be in the future.")
+    joining = getattr(employee, "joining_date", None)
+    if joining and work_date < joining:
+        raise ValueError("work_date is before the employee's joining date.")
+
+    check_in = _parse_aware(check_in, "check_in")
+    check_out = _parse_aware(check_out, "check_out")
+    if timezone.localdate(check_in) != work_date:
+        raise ValueError("check_in must be on work_date.")
+    if check_out <= check_in:
+        raise ValueError("check_out must be after check_in.")
+    if timezone.localdate(check_out) > work_date + timedelta(days=1):
+        raise ValueError("check_out can be at most the next day (overnight shift).")
+    if check_out > timezone.now():
+        raise ValueError("check_out cannot be in the future.")
+
+    existing = (
+        AttendanceRecord.objects.select_for_update()
+        .filter(organization=organization, employee=employee, work_date=work_date).first()
+    )
+    if existing and (existing.check_in or existing.check_out):
+        raise ValueError(
+            "Attendance already has a check-in or check-out for this day. "
+            "Use corrections/create/ to change it."
+        )
+    if existing and existing.corrections.filter(status="PENDING").exists():
+        raise ValueError("A correction request for this day is already pending.")
+
+    attendance = existing or get_or_create_attendance(employee, organization, work_date)
+    corrections = [
+        AttendanceCorrection.objects.create(
+            attendance=attendance, field_name=field, old_value=None, new_value=value.isoformat(),
+            reason=str(reason).strip(), requested_by=requested_by, status="PENDING",
+        )
+        for field, value in (("CHECK_IN", check_in), ("CHECK_OUT", check_out))
+    ]
+    return attendance, corrections
+
+
+@transaction.atomic
+def withdraw_attendance_correction(correction):
+    """
+    Delete a PENDING correction (and its missed-day pair). A record that was
+    created only for the missed-day request (no punches, still INCOMPLETE,
+    nothing else attached) is removed too. Returns the ids removed.
+    """
+    if correction.status != "PENDING":
+        raise ValueError("Only pending corrections can be withdrawn.")
+    attendance = correction.attendance
+    sibling = get_missed_day_sibling(correction)
+    removed = [correction.id] + ([sibling.id] if sibling else [])
+    AttendanceCorrection.objects.filter(id__in=removed).delete()
+
+    record_removed = False
+    if (
+        sibling is not None
+        and not attendance.check_in and not attendance.check_out
+        and attendance.status == "INCOMPLETE"
+        and not attendance.corrections.exists()
+        and not attendance.punches.exists()
+    ):
+        attendance.delete()
+        record_removed = True
+    return removed, record_removed

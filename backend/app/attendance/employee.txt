@@ -610,3 +610,14 @@ SECTION — CHANGES IN BATCH 2
   (corrections/list/ also returns "scope_applied": "self").
 - Punch location is checked against your branch when your branch has a
   map location, otherwise the office location. The same error messages apply.
+
+
+BATCH 14 — MISSED DAY / WITHDRAW
+POST /attendance/corrections/missed-day/
+  { "work_date": "2026-11-20", "check_in": "2026-11-20T09:05:00",
+    "check_out": "2026-11-20T18:10:00", "reason": "Forgot phone" }
+  For a day you did not punch at all. 201 -> { attendance_id, work_date, corrections: [CHECK_IN, CHECK_OUT] }
+  If the day already has a check-in or check-out use corrections/create/.
+POST /attendance/corrections/cancel/   { "correction_id": 77 }
+  Withdraw your own pending request (a missed-day pair goes together).
+  200 -> { withdrawn_correction_ids, attendance_record_removed }

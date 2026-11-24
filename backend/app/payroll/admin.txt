@@ -2402,3 +2402,31 @@ POST /payroll/components/deactivate/  { "component_id": 5 }
   200 "Salary component deactivated."
   Inactive components stay in list/ (filter is_active) and cannot be added to
   new structures.
+
+
+================================================================================
+SECTION — REOPEN A RUN / VOID A PAYMENT (batch 14)   perm: payroll.finalize
+================================================================================
+
+POST /payroll/runs/reopen/     { "payroll_run_id": 100, "reason": "Wrong TDS for EMP-12" }
+  FINALIZED -> GENERATED (finalized_by / finalized_at cleared).
+  Only when NO salary payment is recorded on the run:
+    400 "Cannot reopen: N salary payment(s) are recorded on this run. Void them first (payments/void/)."
+        errors: { "payment_ids": [..] }
+  400 "Only FINALIZED runs can be reopened. This run is GENERATED."
+  400 "reason is required."
+  200 -> run object (status GENERATED)
+  While reopened: employees do not see these payslips (my/payslips shows
+  FINALIZED runs only); records/update-deductions and runs/generate work again
+  (regenerate loses manual deduction edits, as before). Finalize again with
+  runs/finalize/ (employees get the PAYSLIP_FINALIZED notification again).
+  The reason is in the activity log.
+
+POST /payroll/payments/void/   { "payment_id": 55, "reason": "Wrong UTR" }
+  Removes a wrongly recorded salary payment; the record's paid_amount /
+  payment_status are recomputed (UNPAID / PARTIALLY_PAID / PAID).
+  The removed payment (all fields) + reason stay in the activity log.
+  200 { "voided_payment_id": 55, "payroll_record_id": 500,
+        "paid_amount": "0.00", "payment_status": "UNPAID" }
+  404 "Payment not found."   400 "reason is required."
+  To fix a payment: void it, then payments/record/ again.

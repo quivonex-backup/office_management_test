@@ -48,6 +48,7 @@ from .serializers import (
     KioskLoginSerializer,
     KioskPunchRequestSerializer,
 )
+from .services import create_missed_day_request, withdraw_attendance_correction
 
 from .services import (
     get_attendance_settings,
@@ -1620,13 +1621,17 @@ class AttendanceCorrectionReviewAPIView(AttendanceBaseAPIView):
                 priority="HIGH",
             ))
 
-        return self.success(
-            "Correction reviewed successfully.",
-            AttendanceCorrectionSerializer(
-                correction,
-                context={"organization": organization},
-            ).data,
-        )
+        data = AttendanceCorrectionSerializer(
+            correction,
+            context={"organization": organization},
+        ).data
+        paired_id = getattr(correction, "paired_correction_id", None)
+        if paired_id:
+            # Batch 14: missed-day request, the check-in / check-out pair
+            # was reviewed together.
+            data["paired_correction_id"] = paired_id
+
+        return self.success("Correction reviewed successfully.", data)
 
 
 # =========================================================
@@ -2523,3 +2528,128 @@ class KioskPunchAPIView(KioskBaseAPIView):
                 "attendance": AttendanceRecordSerializer(attendance).data,
             },
         }, status=status.HTTP_201_CREATED)
+
+
+# =========================================================
+# =========================================================
+# BATCH 14 — MISSED DAY REQUEST / WITHDRAW A PENDING CORRECTION
+# =========================================================
+# =========================================================
+
+class AttendanceMissedDayRequestAPIView(AttendanceBaseAPIView):
+    """
+    Employee forgot to punch for a whole day (no check-in, no check-out).
+    Creates two PENDING corrections (CHECK_IN + CHECK_OUT) reviewed together
+    through corrections/review/. HR with attendance.correct may send
+    employee_id for someone else.
+    """
+
+    @transaction.atomic
+    def post(self, request):
+        organization, error_response = get_user_organization(request)
+        if error_response:
+            return error_response
+        data = request.data
+
+        own = get_employee_for_user(request.user, organization)
+        employee = own
+        if data.get("employee_id") and (own is None or str(data.get("employee_id")) != str(own.id)):
+            if not has_perm(request, organization, "attendance.correct"):
+                return self.failure("You can only request attendance for yourself.", status.HTTP_403_FORBIDDEN)
+            employee = Employee.objects.filter(
+                pk=data.get("employee_id"), organization=organization, is_active=True,
+            ).first()
+            if employee is None:
+                return self.failure("Employee not found.", status.HTTP_404_NOT_FOUND)
+        if employee is None:
+            return self.failure("No active employee profile is linked to this user.", status.HTTP_404_NOT_FOUND)
+
+        missing = [f for f in ("work_date", "check_in", "check_out", "reason") if not data.get(f)]
+        if missing:
+            return Response(
+                {"status": False, "message": "Validation failed.",
+                 "errors": {f: ["This field is required."] for f in missing}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            work_date = self.parse_date(data.get("work_date"), "work_date")
+            attendance, corrections = create_missed_day_request(
+                employee=employee, organization=organization, work_date=work_date,
+                check_in=data.get("check_in"), check_out=data.get("check_out"),
+                reason=data.get("reason"), requested_by=request.user,
+            )
+        except ValueError as exc:
+            return self.failure(str(exc))
+
+        self.audit(
+            request=request, action="CREATE", module="ATTENDANCE", object_type="AttendanceCorrection",
+            object_id=corrections[0].id,
+            description=f"Missed-day attendance requested for {employee.employee_code} on {work_date}.",
+            new_data={"attendance_id": attendance.id, "correction_ids": [c.id for c in corrections],
+                      "check_in": corrections[0].new_value, "check_out": corrections[1].new_value},
+        )
+
+        approvers = get_approver_users(
+            organization, employee, "attendance.approve_correction",
+            team_code="attendance.view_team", all_code="attendance.view_all",
+        )
+        if approvers:
+            first_id = corrections[0].id
+            transaction.on_commit(lambda: notify(
+                users=approvers,
+                event_code="ATTENDANCE_CORRECTION_SUBMITTED",
+                title="Missed-day attendance request",
+                body=f"{employee.employee_code} requested attendance for {work_date} (no punches that day).",
+                reference_type="attendance_correction",
+                reference_id=first_id,
+                priority="HIGH",
+            ))
+
+        return self.success(
+            "Missed-day request submitted.",
+            {
+                "attendance_id": attendance.id,
+                "work_date": str(work_date),
+                "corrections": AttendanceCorrectionSerializer(
+                    corrections, many=True, context={"organization": organization},
+                ).data,
+            },
+            status.HTTP_201_CREATED,
+        )
+
+
+class AttendanceCorrectionCancelAPIView(AttendanceBaseAPIView):
+    """Requester withdraws their own PENDING correction (missed-day pair together)."""
+
+    @transaction.atomic
+    def post(self, request):
+        organization, error_response = get_user_organization(request)
+        if error_response:
+            return error_response
+        correction_id = request.data.get("correction_id")
+        if not correction_id:
+            return self.failure("correction_id is required.")
+        correction = (
+            AttendanceCorrection.objects.select_related("attendance__employee")
+            .filter(pk=correction_id, attendance__organization=organization).first()
+        )
+        if correction is None:
+            return self.failure("Correction not found.", status.HTTP_404_NOT_FOUND)
+        if correction.requested_by_id != request.user.id:
+            return self.failure("You can only withdraw your own requests.", status.HTTP_403_FORBIDDEN)
+
+        employee_code = correction.attendance.employee.employee_code
+        work_date = correction.attendance.work_date
+        try:
+            removed, record_removed = withdraw_attendance_correction(correction)
+        except ValueError as exc:
+            return self.failure(str(exc))
+
+        self.audit(
+            request=request, action="DELETE", module="ATTENDANCE", object_type="AttendanceCorrection",
+            object_id=removed[0],
+            description=f"Correction request(s) {removed} for {employee_code} on {work_date} withdrawn.",
+            old_data={"correction_ids": removed, "attendance_record_removed": record_removed},
+        )
+        return self.success("Request withdrawn.", {"withdrawn_correction_ids": removed,
+                                                    "attendance_record_removed": record_removed})
