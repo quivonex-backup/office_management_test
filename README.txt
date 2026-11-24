@@ -146,8 +146,8 @@ Check container status	                docker compose ps
 
 
 
->> mkdir app\payroll 
->> python manage.py startapp payroll app\payroll  
+>> mkdir app\visitors 
+>> python manage.py startapp visitors app\visitors  
 
 celery -A config worker -l info --pool=solo
 celery -A config beat -l info
@@ -157,6 +157,9 @@ wsl
 sudo service redis-server start
 redis-cli ping   # should now return PONG
 sudo service redis-server status
+
+
+python manage.py seed_org_access --update-defaults
 
 
 git add .

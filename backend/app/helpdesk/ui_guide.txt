@@ -1,0 +1,46 @@
+================================================================================
+HELPDESK (tickets) — UI GUIDE (for the UI designer / frontend)
+================================================================================
+Who      : every employee (raise + follow own tickets), handling teams (IT, HR ...
+           with ticket.handle), helpdesk managers (ticket.manage), owner
+Apps     : Employee app (raise / my tickets), Web panel (queue + settings)
+Details  : request/response fields are in admin.txt and employee.txt
+Tags     : urls.py marks each endpoint  #A admin side, #E employee, perm: <code>.
+           Show "Helpdesk queue" when my-profile data.permissions has ticket.manage
+           or ticket.handle; "Ticket categories" only with ticket.manage.
+           "Raise ticket" / "My tickets" for everyone.
+
+SCREENS (employee)
+1. Raise ticket            category/options/ -> ticket/create/
+   - Category dropdown, subject, description, priority (default Medium),
+     optional screenshot (multipart "attachment").
+2. My tickets              ticket/my-tickets/
+   - Tabs: Raised by me | Assigned to me (view=assigned; tab only if not empty).
+   - Row: code, subject, category, status chip, last update.
+3. Ticket conversation     ticket/detail/ + ticket/comment/
+   - Header: code, subject, status chip, priority, assignee.
+   - Thread: comments oldest first; is_system rows as small grey lines
+     ("Status changed ...", "Assigned to ...").
+   - Buttons from allowed_actions.status_moves: "Close ticket" / "Reopen".
+
+SCREENS (web panel)
+4. Queue                   ticket/list/
+   - Tiles from summary: Open, In progress, On hold, Resolved, Unassigned.
+   - Filters: search, status, priority, category, "Assigned to me", "Unassigned",
+     date range.
+   - Row: code, subject, raiser, category, priority chip, status chip, assignee, age.
+5. Ticket detail           ticket/detail/
+   - Same thread + "Internal note" toggle on the reply box (internal_note).
+   - Side panel: Assignee picker (ticket/assign/; handlers pick from the
+     category's department, managers from all employees), Priority and
+     Category (ticket/update/), status buttons from allowed_actions.status_moves.
+   - Internal notes shown with a yellow "Internal" badge.
+6. Ticket categories        category/list|create|update|deactivate/   (ticket.manage)
+   - Columns: name, department (handling team), default assignee, open tickets.
+
+RULES TO SHOW IN UI
+  - Hide buttons not in allowed_actions; show the server message on 400.
+  - Closed tickets are read-only (no reply box).
+  - A category without a department is handled only by ticket.manage users
+    (and whoever a ticket is assigned to) — show a hint on the category form.
+  - Notification tap (reference_type "ticket") opens the ticket detail.

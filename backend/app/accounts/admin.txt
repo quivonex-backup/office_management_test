@@ -602,3 +602,21 @@ Existing organizations: run  python manage.py seed_org_access --update-defaults
 to add the new default codes to the roles with the default names.
   announcement.manage  Create and manage announcements (communications app).
                        Default: HR Manager. Run seed_org_access --update-defaults.
+
+
+================================================================================
+SECTION — NEW PERMISSION CODES (batch 6)
+================================================================================
+
+  ticket.manage   All tickets + ticket categories      (helpdesk app)
+  ticket.handle   Tickets of categories whose department is the employee's
+                  own department                       (helpdesk app)
+  asset.view      View company assets                  (assets app)
+  asset.manage    Create / assign / return assets      (assets app)
+  visitor.manage  Visitor log (front desk)             (visitors app)
+Default roles: HR Manager + ticket.manage, asset.manage, visitor.manage;
+HR Executive + ticket.handle, visitor.manage; Payroll Manager + ticket.handle,
+asset.view. For an IT desk create a role (e.g. "IT Support") with
+ticket.handle (+ asset.manage) and set those employees' department to IT.
+Raising tickets, my-assets and my-visitors need no code (any employee).
+Existing organizations: run  python manage.py seed_org_access --update-defaults

@@ -1,0 +1,132 @@
+================================================================================
+HELPDESK APP — ADMIN / HANDLER API REFERENCE
+================================================================================
+
+Base URL   : /helpdesk/
+Method     : All endpoints are POST
+Auth       : Bearer token
+Envelope   : { "status": true|false, "message": "...", "data": {...}?, "errors": {...}? }
+Org        : single-org users omit organization_id; multi-org users send it.
+Body type  : JSON. ticket/create/ and ticket/comment/ also accept multipart
+             (one file in "attachment").
+
+WHO HANDLES WHAT
+  Category    each organization makes its own list (IT, HR, Payroll, Facilities ...).
+              department = the team that handles it; default_assignee (optional)
+              gets every new ticket of that category.
+  Manager     access role with ticket.manage (or the owner): every ticket,
+              categories, assign to anyone.
+  Handler     access role with ticket.handle AND employee department = the
+              category's department; or the employee the ticket is assigned to.
+              Sees only those tickets (an IT handler never sees payroll tickets).
+  Raiser      the employee who raised it (see employee.txt).
+
+STATUS
+  OPEN -> IN_PROGRESS -> ON_HOLD -> RESOLVED -> CLOSED
+  Handler / manager : OPEN|IN_PROGRESS|ON_HOLD -> any later step;
+                      RESOLVED -> IN_PROGRESS | CLOSED
+  Raiser            : any open status -> CLOSED (withdraw);
+                      RESOLVED -> OPEN (reopen) | CLOSED (confirm)
+  CLOSED is final (no status change, no comments).
+  Every change, assignment and priority / category change is stored as a
+  system comment (is_system = true) — that is the ticket history.
+
+NOTIFICATIONS (bell + push)
+  TICKET_CREATED   assignee (category default) or else department handlers;
+                   no handlers -> ticket.manage holders -> owner
+  TICKET_ASSIGNED  the new assignee
+  TICKET_REPLY     raiser replied -> assignee / handlers; staff replied -> raiser
+                   (internal notes notify nobody)
+  TICKET_STATUS    staff changed -> raiser; raiser changed -> assignee / handlers
+  reference_type = "ticket", reference_id = ticket id
+
+TICKET OBJECT
+{ "id", "ticket_code": "TKT-261124-04211", "subject", "description",
+  "category": {"id", "name"}, "priority": "LOW|MEDIUM|HIGH|URGENT",
+  "status": "OPEN|IN_PROGRESS|ON_HOLD|RESOLVED|CLOSED",
+  "raised_by": {"id", "employee_code", "full_name"},
+  "assigned_to": {...} | null, "attachment": "url" | null,
+  "created_at", "updated_at", "resolved_at", "closed_at" }
+
+DETAIL DATA (detail, create, assign, update, status-update, comment)
+{ "ticket": {ticket},
+  "comments": [ {"id", "author": {"id", "name"} | null, "message", "attachment",
+                 "is_internal", "is_system", "created_at"} ],      oldest first
+  "my_roles": ["HANDLER", "MANAGER", "RAISER"],
+  "allowed_actions": {"status_moves": ["IN_PROGRESS", "RESOLVED", ...],
+                      "assign": true, "update": true, "comment": true, "internal_note": true} }
+Internal notes are left out for the raiser.
+
+--------------------------------------------------------------------------------
+1. POST /helpdesk/category/create/          ticket.manage
+--------------------------------------------------------------------------------
+{ "name": "IT support", "description"?: "...", "department_id"?: 3, "default_assignee_id"?: 12 }
+201 -> {"id", "name", "description", "department": {"id","name"} | null,
+        "default_assignee": {...} | null, "open_tickets": 0, "is_active", ...}
+400 "A category with this name already exists." (case-insensitive) /
+    "Active department not found." / "Active employee not found."
+
+--------------------------------------------------------------------------------
+2. POST /helpdesk/category/list/            ticket.manage, ticket.handle (any)
+--------------------------------------------------------------------------------
+{ "include_inactive"?: true }  -> [category] with open_tickets counts
+
+--------------------------------------------------------------------------------
+3. POST /helpdesk/category/update/          ticket.manage
+--------------------------------------------------------------------------------
+{ "category_id": 2, ...only fields that change..., "is_active"?: true (reactivate) }
+Send department_id / default_assignee_id = null to clear.
+
+--------------------------------------------------------------------------------
+4. POST /helpdesk/category/deactivate/      ticket.manage
+--------------------------------------------------------------------------------
+{ "category_id": 2 }  Existing tickets keep the category; new tickets cannot use it.
+
+--------------------------------------------------------------------------------
+5. POST /helpdesk/ticket/list/              ticket.manage (all) | ticket.handle (own scope)
+--------------------------------------------------------------------------------
+Filters (optional): search (code, subject, raiser name / code), status, priority,
+  category_id, assigned_to_id, assigned_to_me (true), unassigned (true),
+  open_only (true = not RESOLVED / CLOSED), from_date, to_date (created, YYYY-MM-DD)
+200 { "data": [ticket without description],
+      "summary": {"total": 12,
+                  "by_status": {"OPEN": 4, "IN_PROGRESS": 3, "ON_HOLD": 1, "RESOLVED": 2, "CLOSED": 2},
+                  "unassigned_open": 2} }
+summary follows "search" only (tiles stay stable while filtering).
+
+--------------------------------------------------------------------------------
+6. POST /helpdesk/ticket/detail/            raiser | handler | manager
+--------------------------------------------------------------------------------
+{ "ticket_id": 9 } -> detail data. 404 when the caller has no role on it.
+
+--------------------------------------------------------------------------------
+7. POST /helpdesk/ticket/assign/            handler | manager
+--------------------------------------------------------------------------------
+{ "ticket_id": 9, "assignee_id": 14 | null }
+Manager: any active employee. Handler: themself or someone in the category's
+department (else 400 "Choose someone from the category's department.").
+null removes the assignee.
+
+--------------------------------------------------------------------------------
+8. POST /helpdesk/ticket/update/            handler | manager
+--------------------------------------------------------------------------------
+{ "ticket_id": 9, "priority"?: "URGENT", "category_id"?: 4 }
+Moving to another category moves the ticket to that department's queue.
+
+--------------------------------------------------------------------------------
+9. POST /helpdesk/ticket/status-update/     raiser | handler | manager
+--------------------------------------------------------------------------------
+{ "ticket_id": 9, "status": "RESOLVED", "note"?: "Battery replaced" }
+Not allowed -> 400 "Cannot change status from X to Y."  The note is part of the
+system line and of the notification.
+
+--------------------------------------------------------------------------------
+10. POST /helpdesk/ticket/comment/          raiser | handler | manager
+--------------------------------------------------------------------------------
+{ "ticket_id": 9, "message": "...", "is_internal"?: true }   + optional file "attachment"
+is_internal only for handler / manager (raiser -> 400). Closed ticket -> 400.
+
+--------------------------------------------------------------------------------
+11. POST /helpdesk/ticket/create/           any employee; raised_by_id needs ticket.manage
+--------------------------------------------------------------------------------
+See employee.txt. A manager can raise for someone: add "raised_by_id": 15.

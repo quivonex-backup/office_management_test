@@ -50,6 +50,12 @@ PERMISSIONS = [
     ("calendar.manage", "Administration", "Manage holidays and weekly offs"),
     ("announcement.manage", "Administration", "Create and manage announcements"),
 
+    ("ticket.manage", "Helpdesk", "Manage all tickets and ticket categories"),
+    ("ticket.handle", "Helpdesk", "Handle tickets of own department"),
+    ("asset.view", "Assets", "View company assets"),
+    ("asset.manage", "Assets", "Manage and assign company assets"),
+    ("visitor.manage", "Visitors", "Manage the visitor log (front desk)"),
+
     ("org.manage", "Administration", "Manage branches, departments, designations"),
     ("access.manage", "Administration", "Manage access roles and assign them"),
     ("settings.manage", "Administration", "Manage settings"),
@@ -77,6 +83,7 @@ DEFAULT_ACCESS_ROLES = {
             "attendance.approve_correction", "leave.apply", "leave.view_all", "leave.approve",
             "reimbursement.review", "payroll.view_self", "salary.assign",
             "calendar.manage", "announcement.manage",
+            "ticket.manage", "asset.manage", "visitor.manage",
         ],
     },
     "HR Executive": {
@@ -85,6 +92,7 @@ DEFAULT_ACCESS_ROLES = {
             "dashboard.view", "applicant.view", "applicant.create", "applicant.update",
             "applicant.status_update", "verification.update", "onboarding.complete",
             "employee.view_all", "attendance.view_self", "leave.apply", "payroll.view_self",
+            "ticket.handle", "visitor.manage",
         ],
     },
     "Department Manager": {
@@ -102,6 +110,7 @@ DEFAULT_ACCESS_ROLES = {
             "leave.apply", "leave.view_all", "reimbursement.pay", "payroll.view_self",
             "payroll.view_all", "payroll.generate", "payroll.finalize", "salary.assign",
             "expense.manage", "vendor.manage",
+            "ticket.handle", "asset.view",
         ],
     },
 }

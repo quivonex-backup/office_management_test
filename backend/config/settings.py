@@ -47,6 +47,9 @@ INSTALLED_APPS = [
     'app.payroll',
     'app.communications',
     'app.recruitment',
+    'app.helpdesk',
+    'app.assets',
+    'app.visitors',
 ]
 
 # Middleware

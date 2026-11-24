@@ -1,0 +1,23 @@
+================================================================================
+ASSETS APP — EMPLOYEE API REFERENCE
+================================================================================
+
+Base URL   : /assets/
+Method     : POST
+Auth       : Bearer token
+Envelope   : { "status": true|false, "message": "...", "data": [...] }
+Who        : any user with an active employee profile (no access code needed).
+
+--------------------------------------------------------------------------------
+POST /assets/asset/my-assets/
+--------------------------------------------------------------------------------
+{} -> assets currently issued to me
+[ { "id": 4, "asset_code": "AST-261124-01234", "name": "Dell Latitude 5440",
+    "category": {"id": 1, "name": "Laptop"}, "brand": "Dell", "model_number": null,
+    "serial_number": "SN-123", "warranty_until": "2029-01-09",
+    "assigned_on": "2026-11-24" } ]
+Cost and internal notes are not included.
+404 "No active employee profile is linked to this user."
+
+Notification: ASSET_ASSIGNED when something is issued to you
+(reference_type "asset", reference_id = asset id).

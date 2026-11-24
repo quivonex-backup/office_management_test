@@ -1,0 +1,74 @@
+================================================================================
+VISITORS APP — FRONT DESK API REFERENCE
+================================================================================
+
+Base URL   : /visitors/
+Method     : All endpoints are POST
+Auth       : Bearer token
+Envelope   : { "status": true|false, "message": "...", "data": {...}?, "errors": {...}? }
+Org        : single-org users omit organization_id; multi-org users send it.
+Body type  : JSON; create/ and update/ also accept multipart (file "photo").
+Permission : visitor.manage on every endpoint here (front desk / security / admin;
+             the owner always). my-visitors is for any employee (employee.txt).
+
+HOW IT WORKS
+  - The front desk adds each visit. One row per visit; the same person (name +
+    mobile) can come any number of times.
+  - check_in_at defaults to the time of adding (send null to log a visit without
+    check-in, or a datetime to back-date). check_out_at is optional.
+  - "Inside" = checked in and not checked out. Nothing is closed automatically.
+  - The host employee (if any) gets VISITOR_ARRIVED when a checked-in visit is added
+    (reference_type "visit").
+  - Only the ID type and the last 4 characters of the ID number are stored.
+
+VISIT OBJECT
+{ "id", "visit_code": "VIS-261124-00412",
+  "visitor_name", "visitor_mobile", "visitor_email", "visitor_company", "visitor_count",
+  "purpose": "MEETING|INTERVIEW|CLIENT|VENDOR|DELIVERY|PERSONAL|OTHER", "purpose_note",
+  "host": {"id", "employee_code", "full_name"} | null, "branch": {"id", "name"} | null,
+  "check_in_at", "check_out_at", "is_inside": true,
+  "id_proof_type": "AADHAAR|PAN|DL|PASSPORT|VOTER_ID|OTHER" | null, "id_proof_last4",
+  "photo": "url" | null, "badge_number", "vehicle_number", "notes",
+  "created_by": {"id", "name"}, "created_at", "updated_at" }
+
+--------------------------------------------------------------------------------
+1. POST /visitors/visit/create/
+--------------------------------------------------------------------------------
+Required: visitor_name, visitor_mobile (7-15 digits, optional +), purpose
+Optional: visitor_email, visitor_company, visitor_count (1-100, default 1),
+  purpose_note, host_id (employee), branch_id, check_in_at, check_out_at,
+  id_proof_type, id_proof_last4 (exactly 4 letters / digits), badge_number,
+  vehicle_number, notes, photo (multipart)
+201 -> visit object. 400 field errors ("Send only the last 4 characters of the ID.",
+"Must be after check_in_at.", "Active employee not found." ...).
+
+--------------------------------------------------------------------------------
+2. POST /visitors/visit/list/
+--------------------------------------------------------------------------------
+{ "from_date"?, "to_date"? (YYYY-MM-DD; both default to today),
+  "inside_only"?: true, "search"? (code, name, mobile, company, badge),
+  "purpose"?, "host_id"?, "branch_id"? }
+inside_only without dates = everyone still inside, whatever the day.
+Dates use the check-in day (created day when there is no check-in).
+200 -> [visit], newest check-in first. 400 when from_date > to_date.
+
+3. POST /visitors/visit/detail/        { "visit_id": 12 } -> visit object
+
+4. POST /visitors/visit/update/        { "visit_id": 12, ...only fields that change...,
+                                         "remove_photo"?: true }   + optional photo
+   Send host_id / branch_id = null to clear.
+
+5. POST /visitors/visit/check-out/     { "visit_id": 12, "check_out_at"? (default now) }
+   400 "This visitor is already checked out."
+
+6. POST /visitors/visit/deactivate/    { "visit_id": 12 }   removes a wrong entry
+
+--------------------------------------------------------------------------------
+7. POST /visitors/visit/lookup/        (autofill while typing the mobile)
+--------------------------------------------------------------------------------
+{ "visitor_mobile": "9876500011" }
+200 { "found": true, "visit_count": 3, "visitor_name": "Ravi Kumar",
+      "visitor_email": null, "visitor_company": "ABC Tech",
+      "last_visit_at": "...", "last_purpose": "MEETING" }
+    | { "found": false, "visit_count": 0 }
+Email / company = the newest visit that has them filled.

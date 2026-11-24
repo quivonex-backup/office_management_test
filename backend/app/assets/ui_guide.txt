@@ -1,0 +1,37 @@
+================================================================================
+ASSETS — UI GUIDE (for the UI designer / frontend)
+================================================================================
+Who      : admin / IT / HR with asset.manage, read-only users with asset.view,
+           every employee (My assets)
+Apps     : Web panel (register), Employee app (My assets)
+Details  : request/response fields are in admin.txt and employee.txt
+Tags     : urls.py marks each endpoint  #A admin side, #E employee, perm: <code>.
+           Show the Assets menu when my-profile data.permissions has asset.view
+           or asset.manage; hide create / assign / return buttons without asset.manage.
+
+SCREENS (web panel)
+1. Asset register          asset/list/
+   - Tiles from summary: Total, Available, Assigned, In repair, Retired / Lost.
+   - Filters: search, category, status, branch, holder, "Warranty ending in 30 days"
+     (warranty_due_days=30).
+   - Row: code, name, category, serial, status chip, holder, warranty date.
+2. Add / edit asset        asset/create/, asset/update/   (one form)
+   - Category, name, brand, model, serial, branch, purchase date / cost,
+     warranty until, notes, status (Available / In repair / Retired / Lost).
+3. Asset detail            asset/detail/
+   - Card + holder history table (issued on, returned on, conditions, notes).
+   - Buttons: "Assign" when AVAILABLE (employee picker from employees/list/,
+     date, condition, note) | "Return" when ASSIGNED (date, condition, note,
+     "Asset goes to": Available / In repair / Retired / Lost) | Edit | Remove.
+4. Categories              category/list|create|update|deactivate/   (Settings tab)
+5. Employee detail page    asset/list/ with holder_id = employee id -> "Assets" tab.
+6. Exit                    employees/deactivate/ response has assets_held: show
+   "Collect these assets" with a link to each asset (nothing is blocked).
+
+SCREENS (employee app)
+7. My assets               asset/my-assets/   simple list: name, code, serial, since.
+
+RULES TO SHOW IN UI
+  - Assign only for Available; status cannot be edited while Assigned (return first).
+  - Serial numbers are unique per organization; show the server message.
+  - Remove is for wrong entries; use status Retired for disposals.

@@ -1,0 +1,56 @@
+================================================================================
+HELPDESK APP — EMPLOYEE API REFERENCE
+================================================================================
+
+Base URL   : /helpdesk/
+Method     : All endpoints are POST
+Auth       : Bearer token
+Envelope   : { "status": true|false, "message": "...", "data": {...}?, "errors": {...}? }
+Who        : any user with an active employee profile (no access code needed).
+Identity   : the backend uses the logged-in employee; never send employee_id.
+
+--------------------------------------------------------------------------------
+1. POST /helpdesk/category/options/
+--------------------------------------------------------------------------------
+{} -> [ {"id": 2, "name": "IT support", "description": "Laptop, email, VPN"} ]
+Fill the "Category" dropdown of the raise-ticket form.
+
+--------------------------------------------------------------------------------
+2. POST /helpdesk/ticket/create/          (JSON, or multipart with a file)
+--------------------------------------------------------------------------------
+{ "category_id": 2, "subject": "Laptop not starting", "description": "Black screen since morning",
+  "priority"?: "LOW" | "MEDIUM" (default) | "HIGH" | "URGENT" }
+multipart: same fields + "attachment" (one file, e.g. a screenshot)
+201 -> detail data (see admin.txt): ticket, comments, my_roles ["RAISER"], allowed_actions.
+400 "Active category not found." / field errors.
+
+--------------------------------------------------------------------------------
+3. POST /helpdesk/ticket/my-tickets/
+--------------------------------------------------------------------------------
+{ "view"?: "raised" (default) | "assigned", "status"?: "OPEN" }
+raised   = tickets I raised; assigned = tickets assigned to me to work on.
+-> [ {id, ticket_code, subject, category, priority, status, raised_by,
+      assigned_to, created_at, updated_at, resolved_at, closed_at} ]
+
+--------------------------------------------------------------------------------
+4. POST /helpdesk/ticket/detail/
+--------------------------------------------------------------------------------
+{ "ticket_id": 9 } -> detail data (internal notes of the handling team are not shown).
+
+--------------------------------------------------------------------------------
+5. POST /helpdesk/ticket/comment/
+--------------------------------------------------------------------------------
+{ "ticket_id": 9, "message": "Any update?" }  (+ optional file "attachment")
+The assignee (or the handling team) is notified. Closed ticket -> 400.
+
+--------------------------------------------------------------------------------
+6. POST /helpdesk/ticket/status-update/
+--------------------------------------------------------------------------------
+{ "ticket_id": 9, "status": "CLOSED" | "OPEN", "note"?: "Still not working" }
+  CLOSED  withdraw an open ticket, or confirm a resolved one
+  OPEN    reopen a RESOLVED ticket (note recommended)
+Other moves -> 400 "Cannot change status from X to Y."
+Use allowed_actions.status_moves from detail to show only valid buttons.
+
+Notifications you receive: TICKET_STATUS (status changed by the team),
+TICKET_REPLY (team replied), TICKET_ASSIGNED (a ticket assigned to you).

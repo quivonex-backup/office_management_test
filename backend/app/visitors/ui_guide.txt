@@ -1,0 +1,31 @@
+================================================================================
+VISITORS — UI GUIDE (for the UI designer / frontend)
+================================================================================
+Who      : front desk / security / admin (visitor.manage), every employee (My visitors)
+Apps     : Web panel (front desk; works on a tablet), Employee app (My visitors)
+Details  : request/response fields are in admin.txt and employee.txt
+Tags     : urls.py marks each endpoint  #A admin side, #E employee, perm: <code>.
+           Show the Visitors menu when my-profile data.permissions has visitor.manage.
+
+SCREENS (front desk)
+1. Today's visitors         visit/list/ (no dates = today)
+   - Toggle "Inside now" (inside_only=true).
+   - Row: time in, name, company, purpose, host, badge, "Check out" button
+     (visit/check-out/) while is_inside.
+   - Date range + search for older visits.
+2. Add visitor (one short form)   visit/lookup/ -> visit/create/
+   - Mobile first: on blur call lookup/ and prefill name, email, company
+     ("3rd visit" hint from visit_count).
+   - Name, purpose, host (employee search), company, people count, badge,
+     ID type + last 4 digits, vehicle, photo (camera), notes.
+   - Save = checked in now. No extra steps.
+3. Visit detail / edit      visit/detail/, visit/update/, visit/deactivate/ ("Remove entry")
+
+SCREENS (employee app)
+4. My visitors              visit/my-visitors/   (last 30 days by default)
+   - Notification "Your visitor has arrived" opens this list.
+
+RULES TO SHOW IN UI
+  - Check-out is optional; never force it. Visits left inside stay inside.
+  - Ask for the last 4 characters of the ID only (the server refuses more).
+  - The same person can be added again for each visit (no duplicate warning).

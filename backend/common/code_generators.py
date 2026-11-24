@@ -108,3 +108,45 @@ def generate_applicant_code():
 
         if not Applicant.objects.filter(applicant_code=code).exists():
             return code
+
+
+# Used for ticket_code generation (helpdesk)
+def generate_ticket_code():
+    from app.helpdesk.models import Ticket
+
+    date_part = timezone.now().strftime("%y%m%d")
+
+    while True:
+        random_part = f"{random.randint(0, 99999):05d}"
+        code = f"TKT-{date_part}-{random_part}"
+
+        if not Ticket.objects.filter(ticket_code=code).exists():
+            return code
+
+
+# Used for asset_code generation (assets)
+def generate_asset_code():
+    from app.assets.models import Asset
+
+    date_part = timezone.now().strftime("%y%m%d")
+
+    while True:
+        random_part = f"{random.randint(0, 99999):05d}"
+        code = f"AST-{date_part}-{random_part}"
+
+        if not Asset.objects.filter(asset_code=code).exists():
+            return code
+
+
+# Used for visit_code generation (visitors)
+def generate_visit_code():
+    from app.visitors.models import Visit
+
+    date_part = timezone.now().strftime("%y%m%d")
+
+    while True:
+        random_part = f"{random.randint(0, 99999):05d}"
+        code = f"VIS-{date_part}-{random_part}"
+
+        if not Visit.objects.filter(visit_code=code).exists():
+            return code

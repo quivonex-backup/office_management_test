@@ -1,0 +1,102 @@
+================================================================================
+ASSETS APP — ADMIN API REFERENCE
+================================================================================
+
+Base URL   : /assets/
+Method     : All endpoints are POST
+Auth       : Bearer token
+Envelope   : { "status": true|false, "message": "...", "data": {...}?, "errors": {...}? }
+Org        : single-org users omit organization_id; multi-org users send it.
+
+PERMISSIONS
+  asset.manage   categories, create / update / assign / return / remove assets
+  asset.view     list + detail only (e.g. accounts, auditors)
+  (organization owner has both; my-assets needs no code, see employee.txt)
+
+STATUS
+  AVAILABLE --assign--> ASSIGNED --return--> AVAILABLE | IN_REPAIR | RETIRED | LOST
+  AVAILABLE / IN_REPAIR / RETIRED / LOST can be changed with asset/update/.
+  ASSIGNED only through assign / return (update with status while assigned -> 400
+  "Return the asset before changing its status.").
+  Only AVAILABLE assets can be assigned.
+
+EXIT
+  employees/deactivate/ is never blocked by assets. Its response lists
+  "assets_held" so HR knows what to collect; return them here afterwards.
+
+ASSET OBJECT
+{ "id", "asset_code": "AST-261124-01234", "name", "category": {"id", "name"},
+  "brand", "model_number", "serial_number", "branch": {"id", "name"} | null,
+  "status", "current_holder": {"id", "employee_code", "full_name"} | null,
+  "warranty_until", "created_at",
+  detail also: "purchase_date", "purchase_cost", "notes", "updated_at" }
+
+ASSIGNMENT ROW
+{ "id", "asset": {"id", "asset_code", "name"}, "employee": {...},
+  "assigned_on", "condition_on_issue", "issue_note",
+  "returned_on" | null, "condition_on_return", "return_note",
+  "assigned_by": {"id", "name"}, "returned_by": {...} | null, "created_at" }
+condition: NEW | GOOD | FAIR | DAMAGED
+
+DETAIL DATA (create, detail, update, assign, return)
+{ "asset": {asset object with detail fields}, "assignments": [rows, newest first] }
+
+--------------------------------------------------------------------------------
+1. POST /assets/category/create/          asset.manage
+--------------------------------------------------------------------------------
+{ "name": "Laptop", "description"?: "..." }   400 on duplicate name (case-insensitive)
+
+2. POST /assets/category/list/            asset.manage, asset.view (any)
+   { "include_inactive"?: true } -> [ {"id", "name", "description", "asset_count", "is_active", ...} ]
+
+3. POST /assets/category/update/          asset.manage
+   { "category_id": 1, "name"?, "description"?, "is_active"?: true (reactivate) }
+
+4. POST /assets/category/deactivate/      asset.manage
+   { "category_id": 1 }  Existing assets keep it; new assets cannot use it.
+
+--------------------------------------------------------------------------------
+5. POST /assets/asset/create/             asset.manage
+--------------------------------------------------------------------------------
+Required: category_id, name
+Optional: brand, model_number, serial_number (unique per organization,
+  case-insensitive), branch_id, purchase_date, purchase_cost, warranty_until
+  (not before purchase_date), notes,
+  status (AVAILABLE default | IN_REPAIR | RETIRED | LOST)
+201 -> detail data
+
+--------------------------------------------------------------------------------
+6. POST /assets/asset/list/               asset.manage, asset.view (any)
+--------------------------------------------------------------------------------
+Filters (optional): search (code, name, serial, brand, model, holder name / code),
+  status, category_id, branch_id, holder_id (employee id),
+  warranty_due_days (warranty ends within N days from today)
+200 { "data": [asset], "summary": {"total": 40,
+      "by_status": {"AVAILABLE": 10, "ASSIGNED": 26, "IN_REPAIR": 2, "RETIRED": 1, "LOST": 1}} }
+summary follows "search" only.
+
+7. POST /assets/asset/detail/             asset.manage, asset.view (any)
+   { "asset_id": 4 } -> detail data (with full holder history)
+
+8. POST /assets/asset/update/             asset.manage
+   { "asset_id": 4, ...only fields that change (same names as create)... }
+
+--------------------------------------------------------------------------------
+9. POST /assets/asset/assign/             asset.manage
+--------------------------------------------------------------------------------
+{ "asset_id": 4, "employee_id": 15, "assigned_on"?: "2026-11-24" (default today),
+  "condition"?: "NEW", "note"?: "With charger and bag" }
+-> ASSIGNED, holder set, history row; the employee gets ASSET_ASSIGNED
+(reference_type "asset").  400 when the asset is not AVAILABLE.
+
+--------------------------------------------------------------------------------
+10. POST /assets/asset/return/            asset.manage
+--------------------------------------------------------------------------------
+{ "asset_id": 4, "returned_on"?: "2026-11-30" (default today, not before issue date),
+  "condition"?: "GOOD", "note"?: "...",
+  "status_after"?: "AVAILABLE" (default) | "IN_REPAIR" | "RETIRED" | "LOST" }
+400 "This asset is not assigned to anyone."
+
+11. POST /assets/asset/deactivate/        asset.manage
+    { "asset_id": 4 }  Removes a wrong entry; refused while ASSIGNED.
+    (A real disposal is status RETIRED, which keeps it in reports.)

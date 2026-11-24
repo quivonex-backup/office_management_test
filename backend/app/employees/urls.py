@@ -7,6 +7,7 @@ from .views import (
     EmployeeDetailAPIView,
     EmployeeUpdateAPIView,
     EmployeeDeactivateAPIView,
+    EmployeeReactivateAPIView,
     EmployeeDocumentUploadAPIView,
     EmployeeDocumentDeleteAPIView,
     MyEmployeeProfileAPIView,
@@ -34,6 +35,7 @@ urlpatterns = [
     path("detail/", EmployeeDetailAPIView.as_view(), name="employee-detail"),                                  #A  own, or in team/all scope
     path("update/", EmployeeUpdateAPIView.as_view(), name="employee-update"),                                  #A  perm: employee.update (access_role_id needs access.manage)
     path("deactivate/", EmployeeDeactivateAPIView.as_view(), name="employee-deactivate"),                      #A  perm: employee.update  closes running shift / salary assignments (last_working_day)
+    path("reactivate/", EmployeeReactivateAPIView.as_view(), name="employee-reactivate"),                      #A  perm: employee.update  rehire: employee + membership + login back on (shift / salary assigned again)
 
     # =====================================================
     # EMPLOYEE DOCUMENTS

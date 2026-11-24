@@ -10,6 +10,7 @@ from rest_framework.exceptions import ValidationError
 
 from .models import Department, Designation, Employee, EmployeeDocument
 from app.accounts.models import Role, OrganizationMembership
+from app.accounts.services import is_super_admin
 
 from .serializers import (
     EmployeeCreateSerializer,
@@ -447,9 +448,12 @@ class EmployeeListAPIView(APIView):
         if error_response:
             return error_response
 
+        # inactive_only=true lists people who left (to reactivate them).
+        inactive_only = str(request.data.get("inactive_only", "")).strip().lower() in ("true", "1", "yes")
+
         employees = Employee.objects.filter(
             organization=organization,
-            is_active=True,
+            is_active=not inactive_only,
         ).select_related(
             "work_state", "branch", "department_ref", "designation_ref",
             "access_role", "reports_to",
@@ -1136,6 +1140,35 @@ class EmployeeDeactivateAPIView(APIView):
         )
 
         # -------------------------------------------------
+        # LOGIN: organization membership off; the user account is
+        # deactivated when no other active organization is left
+        # (owners and super admins are never touched).
+        # -------------------------------------------------
+        login_disabled = False
+        user = employee.user
+        if user is not None and organization.owner_id != user.id and not is_super_admin(user):
+            OrganizationMembership.objects.filter(
+                organization=organization, user=user, is_active=True,
+            ).update(is_active=False)
+            still_member = OrganizationMembership.objects.filter(
+                user=user, is_active=True, organization__is_active=True,
+            ).exists()
+            if not still_member and user.is_active:
+                user.is_active = False
+                user.save(update_fields=["is_active"])
+                login_disabled = True
+
+        # Assets still with the employee (information only; exit is not blocked).
+        from app.assets.models import Asset
+
+        assets_held = [
+            {"id": a.id, "asset_code": a.asset_code, "name": a.name}
+            for a in Asset.objects.filter(
+                organization=organization, current_holder=employee, status="ASSIGNED", is_active=True,
+            ).order_by("name")
+        ]
+
+        # -------------------------------------------------
         # AUDIT LOG
         # -------------------------------------------------
 
@@ -1163,7 +1196,12 @@ class EmployeeDeactivateAPIView(APIView):
             {
                 "status": True,
                 "message": "Employee deactivated successfully.",
-                "data": {"last_working_day": str(last_working_day), **closed},
+                "data": {
+                    "last_working_day": str(last_working_day),
+                    **closed,
+                    "login_disabled": login_disabled,
+                    "assets_held": assets_held,
+                },
             },
             status=status.HTTP_200_OK,
         )
@@ -1612,3 +1650,126 @@ DesignationListAPIView = type("DesignationListAPIView", (_MasterList,), _DESIG)
 DesignationCreateAPIView = type("DesignationCreateAPIView", (_MasterCreate,), _DESIG)
 DesignationUpdateAPIView = type("DesignationUpdateAPIView", (_MasterUpdate,), _DESIG)
 DesignationDeactivateAPIView = type("DesignationDeactivateAPIView", (_MasterDeactivate,), _DESIG)
+
+
+# =========================================================
+# EMPLOYEE REACTIVATE (rehire) — mirror of deactivate
+# =========================================================
+class EmployeeReactivateAPIView(APIView):
+    """
+    Brings a deactivated employee back: same record, same history, same login.
+    Shift and salary are not restored; assign them again like for a joiner.
+    """
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request):
+        from datetime import date as _date
+
+        organization, error_response = get_user_organization(request)
+
+        if error_response:
+            return error_response
+
+        denied = require_perm(request, organization, "employee.update")
+        if denied:
+            return denied
+
+        employee_id = request.data.get("employee_id")
+
+        if not employee_id:
+            return Response(
+                {"status": False, "message": "employee_id is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        employee = Employee.objects.filter(
+            id=employee_id,
+            organization=organization,
+            is_active=False,
+        ).select_related("user").first()
+
+        if not employee:
+            return Response(
+                {"status": False, "message": "Inactive employee not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        raw_joining = request.data.get("joining_date")
+        try:
+            joining_date = _date.fromisoformat(str(raw_joining)) if raw_joining else None
+        except ValueError:
+            return Response(
+                {"status": False, "message": "joining_date must use YYYY-MM-DD format."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        old_data = {
+            "is_active": employee.is_active,
+            "employment_status": employee.employment_status,
+            "joining_date": str(employee.joining_date) if employee.joining_date else None,
+            "resignation_date": str(employee.resignation_date) if employee.resignation_date else None,
+        }
+
+        # -------------------------------------------------
+        # EMPLOYEE BACK TO ACTIVE
+        # -------------------------------------------------
+        employee.is_active = True
+        employee.employment_status = "ACTIVE"
+        employee.resignation_date = None
+        fields = ["is_active", "employment_status", "resignation_date", "updated_by", "updated_at"]
+        if joining_date:
+            employee.joining_date = joining_date
+            fields.append("joining_date")
+        employee.updated_by = request.user
+        employee.save(update_fields=fields)
+
+        # -------------------------------------------------
+        # LOGIN BACK ON (membership + user account)
+        # -------------------------------------------------
+        login_enabled = False
+        user = employee.user
+        if user is not None:
+            OrganizationMembership.objects.update_or_create(
+                organization=organization,
+                user=user,
+                defaults={"is_active": True},
+            )
+            if not user.is_active:
+                user.is_active = True
+                user.save(update_fields=["is_active"])
+            login_enabled = True
+
+        log_activity(
+            request=request,
+            action="UPDATE",
+            module="EMPLOYEE",
+            object_type="Employee",
+            object_id=employee.id,
+            description=f"Employee {employee.employee_code} reactivated.",
+            old_data=old_data,
+            new_data={
+                "is_active": True,
+                "employment_status": "ACTIVE",
+                "joining_date": str(employee.joining_date) if employee.joining_date else None,
+            },
+        )
+
+        return Response(
+            {
+                "status": True,
+                "message": "Employee reactivated successfully.",
+                "data": {
+                    "employee_id": employee.id,
+                    "employee_code": employee.employee_code,
+                    "joining_date": str(employee.joining_date) if employee.joining_date else None,
+                    "login_enabled": login_enabled,
+                    "has_login": user is not None,
+                    "next_steps": [
+                        "Assign a shift (attendance).",
+                        "Assign a salary structure (payroll).",
+                    ],
+                },
+            },
+            status=status.HTTP_200_OK,
+        )

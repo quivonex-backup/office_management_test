@@ -55,4 +55,9 @@ ACCESS (batch 2)
 
 EXIT (batch 4)
   - Deactivate dialog: last working day (default resignation date / today).
+    Show the response: "Login disabled" (login_disabled) and "Collect these assets"
+    (assets_held, links to the asset pages). Nothing blocks the exit.
+  - "Former employees" tab: employees/list/ with inactive_only=true.
+    Row action "Reactivate" -> dialog with optional new joining date ->
+    employees/reactivate/. After success show next_steps (assign shift + salary).
     Show the returned counts ("1 shift and 1 salary assignment closed").

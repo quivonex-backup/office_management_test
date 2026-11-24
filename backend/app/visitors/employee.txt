@@ -1,0 +1,21 @@
+================================================================================
+VISITORS APP — EMPLOYEE API REFERENCE
+================================================================================
+
+Base URL   : /visitors/
+Method     : POST
+Auth       : Bearer token
+Envelope   : { "status": true|false, "message": "...", "data": [...] }
+Who        : any user with an active employee profile (no access code needed).
+
+--------------------------------------------------------------------------------
+POST /visitors/visit/my-visitors/
+--------------------------------------------------------------------------------
+Visits where I am the host.
+{ "from_date"?: "2026-11-01", "to_date"?: "2026-11-24" }   default: last 30 days to today
+-> [ { "id", "visit_code", "visitor_name", "visitor_mobile", "visitor_company",
+       "visitor_count", "purpose", "purpose_note", "check_in_at", "check_out_at" } ]
+ID proof, photo and front-desk notes are not included.
+
+Notification: VISITOR_ARRIVED "Your visitor has arrived" when the front desk
+adds a checked-in visit with you as host (reference_type "visit").

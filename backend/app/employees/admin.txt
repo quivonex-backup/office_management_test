@@ -157,8 +157,9 @@ Purpose : List all active employees in the caller's org
 Access  : Admin (org owner)
 Request (optional):
 {
-  "search": "rahul"          // matches code, name, mobile, email,
+  "search": "rahul",         // matches code, name, mobile, email,
                              // department, designation
+  "inactive_only": true      // people who left (for reactivate); default false
 }
 Response 200:
 {
@@ -273,23 +274,60 @@ Purpose : Soft-delete an employee
 Access  : Admin (org owner)
 Request :
 {
-  "employee_id": 15
+  "employee_id": 15,
+  "last_working_day": "2026-11-30"      // optional, default today
 }
 Response 200:
 {
   "status": true,
-  "message": "Employee deactivated successfully."
+  "message": "Employee deactivated successfully.",
+  "data": {
+    "last_working_day": "2026-11-30",
+    ...closed shift / salary assignment info...,
+    "login_disabled": true,                       // user account switched off
+    "assets_held": [ {"id": 4, "asset_code": "AST-...", "name": "Dell Latitude"} ]
+  }
 }
 
 Behavior:
-  - Sets is_active = false
-  - Sets employment_status = "INACTIVE"
-  - Does NOT deactivate the linked User account
-  - Does NOT remove org membership
+  - Sets is_active = false, employment_status = "INACTIVE"
+  - Batch 6: the organization membership is set inactive; the User account is
+    set inactive when the person has no other active organization
+    (login then answers 403 "Your account is inactive."). The organization
+    owner and super admins are never touched.
+  - assets_held: assets still issued to the person (information only — exit is
+    never blocked). Collect them and use assets/asset/return/.
   - Employee disappears from all list endpoints and self-service calls
 
-NOTE: To fully remove a user's access, also deactivate their User account
-      and OrganizationMembership from /accounts/ endpoints (separate app).
+
+--------------------------------------------------------------------------------
+1.7  POST /employees/reactivate/          perm: employee.update
+--------------------------------------------------------------------------------
+Purpose : Rehire / undo a deactivation. Same employee record, same history
+          (payslips, attendance, leave), same login and password.
+Request :
+{
+  "employee_id": 15,
+  "joining_date": "2027-03-01"     // optional: new joining date
+}
+Response 200:
+{
+  "status": true,
+  "message": "Employee reactivated successfully.",
+  "data": {
+    "employee_id": 15, "employee_code": "EMP-15", "joining_date": "2027-03-01",
+    "login_enabled": true,          // membership + user account switched back on
+    "has_login": true,              // false = no user account (use create-user/)
+    "next_steps": ["Assign a shift (attendance).", "Assign a salary structure (payroll)."]
+  }
+}
+Behavior:
+  - is_active = true, employment_status = "ACTIVE", resignation_date cleared
+  - organization membership active again; user account active again
+  - shift and salary assignments closed at exit are NOT reopened: assign them
+    again like for a new joiner (the old ones stay as history)
+  - 404 "Inactive employee not found." when the employee is active / not in the org
+Find people who left with employees/list/ { "inactive_only": true }.
 
 
 ================================================================================
@@ -357,6 +395,7 @@ EMPLOYEE (6)
   POST /employees/detail/
   POST /employees/update/
   POST /employees/deactivate/
+  POST /employees/reactivate/
 
 DOCUMENTS (2)
   POST /employees/document/upload/
@@ -402,12 +441,10 @@ KEY NOTES FOR FRONTEND — ADMIN SIDE
    After deactivating an employee:
    - Employee.is_active = false
    - Employee.employment_status = "INACTIVE"
-   - User.is_active is UNCHANGED
-   - OrganizationMembership is UNCHANGED
-   If the frontend wants to fully lock the employee out, the admin must
-   ALSO deactivate the User account from /accounts/ endpoints.
-   (This is intentional — you may want to keep the login to view
-   archived payslips, for example.)
+   - OrganizationMembership.is_active = false (batch 6)
+   - User.is_active = false when no other active organization is left
+   (Self-service payslips already required an active employee, so keeping
+   the login gave an ex-employee nothing to use.)
 
 7. NO ROLE MANAGEMENT HERE
    Role assignment (Admin, Manager, etc.) happens in /accounts/.
@@ -443,6 +480,7 @@ Permissions now enforced:
   /employees/create-user/   employee.create_user
   /employees/update/        employee.update
   /employees/deactivate/    employee.update
+  /employees/reactivate/    employee.update
   (list/detail scope comes in batch 2)
 
 create / update accept (all optional; blank or null clears the link):
