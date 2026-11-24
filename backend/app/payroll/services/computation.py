@@ -307,6 +307,52 @@ def gross_package_warning(structure, monthly_gross, component_amounts, entries):
 # PAYSLIP COMPUTATION
 # =========================================================
 
+def apply_late_deduction(line_items, settings, per_day_rate, late_minutes):
+    """
+    Late mark deduction (PayrollSettings.late_deduction_enabled).
+
+    amount = late_minutes x per-minute rate x late_deduction_multiplier
+    per-minute rate = per-day rate / (standard_work_hours_per_day x 60)
+
+    Appends a "LATE" DEDUCTION line and returns the amount. Capped so the
+    net pay never goes below zero. Does not change PF / ESI / PT bases.
+    """
+    late_minutes = int(late_minutes or 0)
+    if not getattr(settings, "late_deduction_enabled", False) or late_minutes <= 0:
+        return ZERO
+    hours = settings.standard_work_hours_per_day or Decimal("8")
+    if hours <= ZERO or per_day_rate <= ZERO:
+        return ZERO
+
+    multiplier = settings.late_deduction_multiplier or ZERO
+    rate_per_minute = per_day_rate / (hours * Decimal("60"))
+    amount = q2(Decimal(late_minutes) * rate_per_minute * multiplier)
+
+    earnings = sum((li["amount"] for li in line_items if li["component_type"] == "EARNING"), ZERO)
+    deductions = sum((li["amount"] for li in line_items if li["component_type"] in {"DEDUCTION", "LOP"}), ZERO)
+    room = q2(earnings - deductions)
+    capped = amount > room
+    if capped:
+        amount = room if room > ZERO else ZERO
+    if amount <= ZERO:
+        return ZERO
+
+    line_items.append({
+        "component_code": "LATE",
+        "component_name": "Late Deduction",
+        "component_type": "DEDUCTION",
+        "amount": amount,
+        "calculation_details": {
+            "late_minutes": str(late_minutes),
+            "rate_per_minute": str(rate_per_minute.quantize(Decimal("0.0001"))),
+            "rate_per_hour": str(q2(rate_per_minute * Decimal("60"))),
+            "multiplier": str(multiplier),
+            "capped_to_zero_net": capped,
+        },
+    })
+    return amount
+
+
 def compute_payslip_data(employee, organization, period_start, period_end):
     """
     Compute one employee's payslip. Returns a dict ready for persistence.
@@ -351,6 +397,7 @@ def compute_payslip_data(employee, organization, period_start, period_end):
     )
     counts = attendance["counts"]
     overtime_minutes = attendance["overtime_minutes"]
+    late_minutes = int(attendance.get("late_minutes", 0) or 0)
     warnings = attendance["warnings"]
     requires_review = attendance["requires_review"]
     sources = attendance["sources"]
@@ -689,6 +736,9 @@ def compute_payslip_data(employee, organization, period_start, period_end):
                 },
             })
 
+    # ---- Late mark deduction (after every other line, capped at net 0) ----
+    late_amount = apply_late_deduction(line_items, settings, per_day_rate, late_minutes)
+
     gross_total = q2(sum(
         li["amount"] for li in line_items
         if li["component_type"] == "EARNING"
@@ -718,6 +768,8 @@ def compute_payslip_data(employee, organization, period_start, period_end):
         "attendance_sources": {
             key: str(value) for key, value in sources.items()
         },
+        "late_minutes": late_minutes,
+        "late_deduction": str(late_amount),
         "employer_costs": {
             "pf_employer": str(pf_result["pf_employer"]),
             "eps": str(pf_result["eps"]),
@@ -738,6 +790,7 @@ def compute_payslip_data(employee, organization, period_start, period_end):
         "holiday_days": counts["holiday_days"],
         "weekly_off_days": counts["weekly_off_days"],
         "overtime_hours": overtime_hours,
+        "late_minutes": late_minutes,
 
         # Salary snapshot
         "monthly_salary": full_gross,

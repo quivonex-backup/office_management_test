@@ -1349,6 +1349,7 @@ class PayrollRunPreviewAPIView(PayrollBaseAPIView):
                 "holiday_days": str(data["holiday_days"]),
                 "weekly_off_days": str(data["weekly_off_days"]),
                 "overtime_hours": str(data["overtime_hours"]),
+                "late_minutes": data.get("late_minutes", 0),
                 "gross_earnings": str(data["gross_earnings"]),
                 "total_deductions": str(data["total_deductions"]),
                 "net": str(data["net"]),
@@ -2290,6 +2291,8 @@ class PayrollCalculatorAPIView(PayrollBaseAPIView):
       working_days                      optional; default = present + half +
                                         absent + paid leave + unpaid leave
       overtime_hours                    optional number, default 0
+      late_minutes                      optional whole number, default 0
+                                        (deducted only when late deduction is on)
       monthly_gross | annual_ctc        optional (batch 3): use the structure
                                         as a template for this package
     Response data also has "ctc_breakup".
@@ -2338,6 +2341,12 @@ class PayrollCalculatorAPIView(PayrollBaseAPIView):
             overtime_hours = (
                 self.parse_decimal(raw_ot, "overtime_hours") if raw_ot not in (None, "") else Decimal("0")
             )
+            raw_late = data.get("late_minutes")
+            late_minutes = (
+                self.parse_int(raw_late, "late_minutes") if raw_late not in (None, "") else 0
+            )
+            if late_minutes < 0:
+                raise ValueError("late_minutes cannot be negative.")
 
             employee = None
             if data.get("employee_id") not in (None, ""):
@@ -2374,6 +2383,7 @@ class PayrollCalculatorAPIView(PayrollBaseAPIView):
                 period_end=period_end,
                 counts_in=counts_in,
                 overtime_hours=overtime_hours,
+                late_minutes=late_minutes,
                 employee=employee,
                 salary_structure=structure,
                 payslip_mode=payslip_mode,

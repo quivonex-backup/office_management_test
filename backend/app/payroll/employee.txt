@@ -86,6 +86,7 @@ Response 200:
       "holiday_days": "2.00",
       "weekly_off_days": "4.00",
       "overtime_hours": "0.00",
+      "late_minutes": 0,                  // late minutes counted this period
 
       "monthly_salary": "28000.00",
       "per_day_rate": "1000.00",
@@ -430,3 +431,8 @@ Display full details using /my/payslips/detail/.
 Use the id field from the payslip list as payroll_record_id.
 Download the PDF using /my/payslips/download/.
 Show payment_status, paid_amount, and remaining on the payslip screen.
+
+LATE DEDUCTION (batch 7)
+  When the organization turns on late deduction, a payslip line
+  "Late Deduction" (component_code LATE) shows the late minutes of the
+  period (after the grace time, full-present days only) and the amount.

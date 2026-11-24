@@ -53,6 +53,7 @@ def _persist_payroll_record(payroll_run, employee, data):
         holiday_days=data["holiday_days"],
         weekly_off_days=data["weekly_off_days"],
         overtime_hours=data["overtime_hours"],
+        late_minutes=data.get("late_minutes", 0),
         monthly_salary=data["monthly_salary"],
         per_day_rate=data["per_day_rate"],
         pf_employee=data["pf_employee"],
@@ -451,6 +452,7 @@ def recompute_payroll_record(record, recomputed_by=None):
     record.holiday_days = data["holiday_days"]
     record.weekly_off_days = data["weekly_off_days"]
     record.overtime_hours = data["overtime_hours"]
+    record.late_minutes = data.get("late_minutes", 0)
     record.monthly_salary = data["monthly_salary"]
     record.per_day_rate = data["per_day_rate"]
     record.pf_employee = data["pf_employee"]

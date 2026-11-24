@@ -69,6 +69,8 @@ class PayrollSettingsSerializer(serializers.ModelSerializer):
             "unpaid_leave_multiplier",
             "overtime_enabled",
             "overtime_rate_multiplier",
+            "late_deduction_enabled",
+            "late_deduction_multiplier",
             "standard_work_hours_per_day",
             "missing_attendance_action",
             "payslip_mode",
@@ -125,6 +127,11 @@ class PayrollSettingsSerializer(serializers.ModelSerializer):
         return value
 
     def validate_overtime_rate_multiplier(self, value):
+        if value is not None and value < 0:
+            raise serializers.ValidationError("Multiplier cannot be negative.")
+        return value
+
+    def validate_late_deduction_multiplier(self, value):
         if value is not None and value < 0:
             raise serializers.ValidationError("Multiplier cannot be negative.")
         return value
@@ -1112,6 +1119,7 @@ class PayrollRecordSerializer(serializers.ModelSerializer):
             "holiday_days",
             "weekly_off_days",
             "overtime_hours",
+            "late_minutes",
             "monthly_salary",
             "per_day_rate",
             "pf_employee",

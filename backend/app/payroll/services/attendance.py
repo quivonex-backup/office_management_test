@@ -129,6 +129,7 @@ def classify_period(
     }
 
     overtime_minutes = 0
+    late_minutes = 0    # PRESENT days only (a late half day is already a half day)
     warnings = []   # anything here sets requires_review
     notes = []      # informational only
 
@@ -242,6 +243,7 @@ def classify_period(
         if status == "PRESENT":
             counts["present_days"] += ONE
             overtime_minutes += rec.overtime_minutes or 0
+            late_minutes += getattr(rec, "late_minutes", 0) or 0
 
         elif status == "HALF_DAY":
             counts["half_days"] += ONE
@@ -314,6 +316,7 @@ def classify_period(
     return {
         "counts": counts,
         "overtime_minutes": overtime_minutes,
+        "late_minutes": late_minutes,
         "warnings": warnings,
         "notes": notes,
         "requires_review": requires_review,
@@ -364,7 +367,7 @@ def compute_attendance_counts(
             organization=organization,
             employee=employee,
             work_date__range=(period_start, period_end),
-        ).only("work_date", "status", "overtime_minutes")
+        ).only("work_date", "status", "overtime_minutes", "late_minutes")
     }
 
     leave_map = build_leave_map(employee, period_start, period_end)

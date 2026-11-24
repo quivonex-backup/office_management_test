@@ -38,6 +38,7 @@ from .computation import (
     _compute_esi,
     _compute_pt,
     _compute_lwf,
+    apply_late_deduction,
 )
 
 COUNT_FIELDS = (
@@ -72,6 +73,7 @@ def simulate_payslip(
     period_end,
     counts_in,
     overtime_hours=ZERO,
+    late_minutes=0,
     employee=None,
     salary_structure=None,
     payslip_mode=None,
@@ -181,6 +183,12 @@ def simulate_payslip(
     if overtime_hours < ZERO:
         raise ValueError("Overtime hours cannot be negative.")
     overtime_minutes = int((overtime_hours * Decimal("60")).to_integral_value())
+    try:
+        late_minutes = int(late_minutes or 0)
+    except (TypeError, ValueError):
+        raise ValueError("late_minutes must be a whole number.")
+    if late_minutes < 0:
+        raise ValueError("Late minutes cannot be negative.")
 
     stand_in = employee or SimpleNamespace(employee_code="(calculator)", work_state=None)
 
@@ -196,6 +204,7 @@ def simulate_payslip(
         monthly_gross=monthly_gross,
         counts=counts,
         overtime_minutes=overtime_minutes,
+        late_minutes=late_minutes,
         warnings=warnings,
         requires_review=False,
         sources={},
@@ -212,6 +221,8 @@ def simulate_payslip(
         "unpaid_leave_multiplier": str(settings.unpaid_leave_multiplier),
         "overtime_enabled": bool(settings.overtime_enabled),
         "overtime_rate_multiplier": str(settings.overtime_rate_multiplier),
+        "late_deduction_enabled": bool(settings.late_deduction_enabled),
+        "late_deduction_multiplier": str(settings.late_deduction_multiplier),
         "standard_work_hours_per_day": str(settings.standard_work_hours_per_day),
     }
     data["period"] = {
@@ -233,6 +244,7 @@ def simulate_payslip(
 def _build_payslip(
     employee, organization, settings, structure, period_start, period_end,
     *, counts, overtime_minutes, warnings, requires_review, sources, notes,
+    late_minutes=0,
     monthly_gross=None,
 ):
     """
@@ -541,6 +553,9 @@ def _build_payslip(
                 },
             })
 
+    # ---- Late mark deduction (after every other line, capped at net 0) ----
+    late_amount = apply_late_deduction(line_items, settings, per_day_rate, late_minutes)
+
     gross_total = q2(sum(
         li["amount"] for li in line_items
         if li["component_type"] == "EARNING"
@@ -570,6 +585,8 @@ def _build_payslip(
         "attendance_sources": {
             key: str(value) for key, value in sources.items()
         },
+        "late_minutes": late_minutes,
+        "late_deduction": str(late_amount),
         "employer_costs": {
             "pf_employer": str(pf_result["pf_employer"]),
             "eps": str(pf_result["eps"]),
@@ -590,6 +607,7 @@ def _build_payslip(
         "holiday_days": counts["holiday_days"],
         "weekly_off_days": counts["weekly_off_days"],
         "overtime_hours": overtime_hours,
+        "late_minutes": late_minutes,
 
         # Salary snapshot
         "monthly_salary": full_gross,

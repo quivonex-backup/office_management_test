@@ -90,6 +90,8 @@ Response 200 (fetched):
     "unpaid_leave_multiplier": "1.00",
     "overtime_enabled": true,
     "overtime_rate_multiplier": "1.50",
+    "late_deduction_enabled": false,
+    "late_deduction_multiplier": "1.00",
     "standard_work_hours_per_day": "8.00",
     "missing_attendance_action": "ABSENT",
     "payslip_mode": "FULL",
@@ -112,11 +114,32 @@ Request (UPDATE behavior — any of these keys):
   "unpaid_leave_multiplier": "1.00",
   "overtime_enabled": true,
   "overtime_rate_multiplier": "1.50",
+  "late_deduction_enabled": false,
+  "late_deduction_multiplier": "1.00",
   "standard_work_hours_per_day": "8.00",
   "missing_attendance_action": "ABSENT",
   "payslip_mode": "FULL",
   "payroll_enabled": true
 }
+
+LATE MARK DEDUCTION (batch 7)
+  late_deduction_enabled     false (default) = late minutes are stored on the
+                             payroll record but nothing is deducted
+  late_deduction_multiplier  1.00 = deduct the late time at the normal rate;
+                             2.00 = double. Not negative.
+  Amount = late minutes x per-minute rate x multiplier
+    per-minute rate = per_day_rate / (standard_work_hours_per_day x 60)
+    (the same base as overtime). Example: 1000/day, 8 h -> 2.0833/min;
+    120 late minutes x 1.00 = 250.00.
+  Late minutes = attendance late_minutes (already after the late grace) of
+  PRESENT days in the period. A day that became HALF_DAY (e.g. late beyond
+  late_half_day_threshold_minutes) is deducted as a half day, not again as late.
+  Payslip line: component_code "LATE", "Late Deduction", type DEDUCTION, in
+  SIMPLE and FULL mode; calculation_details {late_minutes, rate_per_minute,
+  rate_per_hour, multiplier, capped_to_zero_net}. Never takes net below 0.
+  Does not change PF / ESI / PT bases (same as overtime).
+  Record / preview / payslip carry "late_minutes"; breakdown has
+  "late_minutes" and "late_deduction".
 
 Response 200 (updated):
 {
@@ -995,6 +1018,8 @@ Response 200:
         "holiday_days": "2.00",
         "weekly_off_days": "4.00",
         "overtime_hours": "0.00",
+      "late_minutes": 0,
+        "late_minutes": 0,
         "gross_earnings": "30000.00",
         "total_deductions": "6000.00",
         "net": "24000.00",
@@ -1201,6 +1226,8 @@ Response 200:
         "holiday_days": "2.00",
         "weekly_off_days": "4.00",
         "overtime_hours": "0.00",
+      "late_minutes": 0,
+        "late_minutes": 0,
         "monthly_salary": "30000.00",
         "per_day_rate": "1000.00",
         "pf_employee": "1800.00",
@@ -1459,6 +1486,7 @@ Response 200:
       "holiday_days": "2.00",
       "weekly_off_days": "4.00",
       "overtime_hours": "0.00",
+      "late_minutes": 0,
       "monthly_salary": "30000.00",
       "per_day_rate": "1000.00",
       "pf_employee": "1800.00",
@@ -2038,6 +2066,7 @@ weekly_off_days	number	no, default 0	Paid, not deducted
 not_employed_days	number	no, default 0	Days before joining / after exit; unpaid
 working_days	number	no	Default: present + half + absent + paid leave + unpaid leave. Used as the divisor when salary_basis is WORKING_DAYS
 overtime_hours	number	no, default 0	Paid only if overtime is enabled in the payroll settings
+late_minutes	whole number	no, default 0	Deducted only if late deduction is enabled in the payroll settings (LATE line)
 
 Overrides (payslip_mode, salary_basis) apply to this calculation only.
 
@@ -2073,6 +2102,8 @@ json
         "holiday_days": "1",
         "weekly_off_days": "4",
         "overtime_hours": "0.00",
+      "late_minutes": 0,
+        "late_minutes": 0,
         "monthly_salary": "30000.00",
         "per_day_rate": "1200.00",
         "pf_employee": "0.00",
@@ -2143,6 +2174,8 @@ json
             "unpaid_leave_multiplier": "1.00",
             "overtime_enabled": true,
             "overtime_rate_multiplier": "1.50",
+            "late_deduction_enabled": false,
+            "late_deduction_multiplier": "1.00",
             "standard_work_hours_per_day": "8.00"
         },
         "period": {
@@ -2166,7 +2199,7 @@ line_items	Earnings, loss of pay and (FULL only) deductions
 warnings	Messages to show to the admin as they are
 settings_used	Which settings produced this result
 SIMPLE and FULL
-SIMPLE: one GROSS earning, LOP, and overtime if any. PF, ESI, PT and LWF are 0.00.
+SIMPLE: one GROSS earning, LOP, overtime and late deduction if any. PF, ESI, PT and LWF are 0.00.
 FULL: one earning line per salary component, LOP, non-statutory deductions, and the statutory lines (PF, ESI, PT, LWF) when they apply. pf_employee, esi_employee, pt, lwf_employee and breakdown.employer_costs carry the amounts. Needs employee_id.
 Warnings
 If the day counts do not add up to the number of days in the period, warnings contains a message such as "The days entered add up to 28, but the period has 30 days. Check the counts." The calculation still runs.

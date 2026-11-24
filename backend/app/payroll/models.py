@@ -48,6 +48,13 @@ class PayrollSettings(models.Model):
     # Overtime
     overtime_enabled = models.BooleanField(default=True)
     overtime_rate_multiplier = models.DecimalField(max_digits=4, decimal_places=2, default=Decimal("1.50"))
+
+    # Late mark deduction: attendance late_minutes (after grace, PRESENT days)
+    # x per-minute rate x multiplier. Per-minute rate = per-day rate /
+    # (standard_work_hours_per_day x 60), the same base as overtime.
+    late_deduction_enabled = models.BooleanField(default=False)
+    late_deduction_multiplier = models.DecimalField(max_digits=4, decimal_places=2, default=Decimal("1.00"))
+
     standard_work_hours_per_day = models.DecimalField(max_digits=4, decimal_places=2, default=Decimal("8.00"))
 
     # Missing attendance policy
@@ -485,6 +492,7 @@ class PayrollRecord(models.Model):
     holiday_days = models.DecimalField(max_digits=6, decimal_places=2, default=ZERO)
     weekly_off_days = models.DecimalField(max_digits=6, decimal_places=2, default=ZERO)
     overtime_hours = models.DecimalField(max_digits=8, decimal_places=2, default=ZERO)
+    late_minutes = models.PositiveIntegerField(default=0)
 
     # ---- Salary snapshot ----
     monthly_salary = models.DecimalField(max_digits=12, decimal_places=2, default=ZERO)

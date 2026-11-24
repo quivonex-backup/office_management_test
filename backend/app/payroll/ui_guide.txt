@@ -10,7 +10,8 @@ Tags     : urls.py marks each endpoint  #SU super admin, #A admin side,
            the code (organization owner has every code).
 
 SETUP ORDER (show as a checklist on the Payroll page)
-  1. Settings                settings/ (cycle start day, salary basis, overtime, payslip mode)
+  1. Settings                settings/ (cycle start day, salary basis, overtime,
+                             late deduction on/off + multiplier, payslip mode)
   2. Statutory settings      statutory-settings/ (PF / ESI / PT / LWF flags)
   3. Components              components/list|create/
   4. Structures              structures/list|create|detail|update|deactivate/
@@ -43,3 +44,11 @@ CTC (batch 3)
     toggle). Show the live breakup from calculator/ (ctc_breakup) before saving.
   - Settings: "CTC includes employer PF / ESI" switch.
   - Revision = close old assignment, create a new one with the new package.
+
+LATE DEDUCTION (batch 7)
+  - Settings: "Late mark deduction" switch (late_deduction_enabled) and
+    "Multiplier" (late_deduction_multiplier, default 1.00) next to Overtime.
+    Help text: "Late minutes after grace x per-minute salary x multiplier".
+  - Preview / record tables: add a "Late (min)" column (late_minutes).
+  - Payslip: LATE line is a normal deduction row ("Late Deduction").
+  - Calculator: "Late minutes" number input -> late_minutes.
