@@ -648,3 +648,80 @@ New requests notify the people who can act on them, not only the owner:
   the employee (managers above them with attendance.view_team, attendance.view_all holders).
 The requester is never notified about their own request. If nobody qualifies,
 the organization owner is notified.
+
+
+================================================================================
+SECTION — ATTENDANCE KIOSK DEVICES (batch 12)   perm: attendance.device_manage
+================================================================================
+A kiosk is a shared tablet at the office entrance. It has its own login
+(device code + password), separate from users. Employees punch on it with
+their employee code (typed, or a QR that holds the code) + face.
+
+POST /attendance/device/create/
+  { "name": "Lobby tablet", "branch_id"?: 3, "device_code"?: "LOBBY-1", "notes"?: "..." }
+  device_code optional: blank = auto "KSK-XXXXXX". Letters, digits, - and _ ,
+  3-50 characters, unique, stored upper-case. Password is always generated
+  (e.g. "k8Rm-42Tx-9pQa"). branch_id = an active branch of the organization
+  (label only; the punch location is checked against the EMPLOYEE's branch).
+  201 -> device object
+
+POST /attendance/device/list/
+  { "search"?: "lobby", "branch_id"?: 3, "include_inactive"?: false }
+  200 -> [device, ...]   (passwords are shown)
+
+POST /attendance/device/update/
+  { "device_id": 1, "name"?, "branch_id"? (null clears), "notes"?, "device_code"?,
+    "is_active"?: true (reactivate) }
+  Changing device_code logs the tablet out.
+
+POST /attendance/device/reset-password/   { "device_id": 1 }
+  New password, tablet logged out, lock cleared. 200 -> device object
+
+POST /attendance/device/deactivate/       { "device_id": 1 }
+  Tablet logged out, login refused (403) until reactivated.
+
+Device object:
+{ "id": 1, "name": "Lobby tablet", "device_code": "KSK-7QX2LM",
+  "password": "k8Rm-42Tx-9pQa", "branch": {"id": 3, "name": "Mumbai HQ"} | null,
+  "notes": null, "is_active": true, "logged_in": true,
+  "token_issued_at": "...", "locked_until": null, "last_login_at": "...",
+  "last_seen_at": "...", "last_ip": "192.168.1.20", "created_at": "...", "updated_at": "..." }
+
+Errors: 400 validation (device_code taken / invalid, branch not found),
+403 without the permission, 404 device not in this organization.
+
+
+================================================================================
+SECTION — KIOSK APIs (batch 12)  — no user token
+================================================================================
+1) POST /attendance/kiosk/login/
+   { "device_code": "KSK-7QX2LM", "password": "k8Rm-42Tx-9pQa" }   (code case-insensitive)
+   200 { "token": "dvc_...", "device": {id, name, device_code, branch},
+         "organization": {id, name, logo} }
+   400 "Invalid device code or password."
+   403 "Device is inactive."
+   423 "Too many attempts. Try again in N minutes."  (5 wrong passwords -> 15 min lock)
+   One session per device: a new login ends the previous token. The token does
+   not expire; it ends on re-login, reset-password, code change or deactivate.
+   Only a SHA-256 fingerprint of the token is stored (attendance_devices.token_hash).
+
+2) POST /attendance/kiosk/punch/      header  Authorization: Device <token>
+   multipart: punch_type (CHECK_IN | CHECK_OUT), employee_code,
+              selfie (required when settings photo_required),
+              latitude, longitude (required when settings location_required),
+              gps_accuracy_meters?
+   Same rules as the mobile punch (attendance/punch/): face match, branch
+   geofence or remote exemption, shift, late, half day, overnight.
+   The button must match the state:
+     400 "No open check-in to check out from. Check in first."
+     400 "Already checked in. Use check-out."
+   201 { "employee": {id, employee_code, name, photo},
+         "punch": {...same as mobile}, "attendance": {...same as mobile} }
+   401 "Device not logged in." / "Device session ended. Log in again." / "Device is inactive."
+   404 "Employee not found."   (only active employees of the device's organization)
+   400 other punch errors (selfie required, face mismatch, outside location...)
+
+   Stored like a mobile punch; verification_details also gets
+   source "KIOSK", device_id, device_name, device_code. recorded_by is null.
+   The employee sees it in my-attendance like any other punch.
+   No logout API: the app just forgets the token.

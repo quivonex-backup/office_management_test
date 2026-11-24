@@ -47,3 +47,22 @@ ACCESS (batch 2)
   - Mark absent: attendance.correct.
   - Branch geofence: an employee in a branch with a map pin punches against
     the branch; the punch detail shows verification_details.branch.
+
+KIOSK (batch 12)
+  Admin screen "Attendance devices" (attendance.device_manage):
+    table name / code / password (show + copy) / branch / logged in / last seen;
+    actions Edit, Reset password (confirm: "the tablet will be logged out"),
+    Deactivate / Reactivate.
+  Kiosk app (tablet):
+    1. Login screen: device code + password -> kiosk/login/. Keep the token
+       (secure storage). Show organization logo + name and device name.
+    2. Home: two big buttons Check in / Check out. Logout icon at the top
+       (asks for confirmation, then just deletes the token; no API).
+    3. Scan the employee QR (holds the employee code) or type the code.
+    4. Front camera selfie when photo_required; send the tablet's GPS when
+       location_required (fixed tablet: ask once for location permission).
+    5. kiosk/punch/ -> show employee photo + name + "Checked in 09:05"
+       for 3 seconds, then back to Home. On 400/404 show the message.
+    On 401 go back to the Login screen.
+  Employee QR: build it in the employee app / ID card from employee_code;
+  no API is needed.

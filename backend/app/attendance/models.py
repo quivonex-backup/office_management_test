@@ -461,3 +461,65 @@ class AttendanceCorrection(models.Model):
 
     def __str__(self):
         return f"Correction #{self.pk} - {self.field_name} - {self.status}"
+
+
+# =========================================================
+# ATTENDANCE DEVICE (kiosk tablet / computer)
+# A registered device that records punches for employees of its
+# organization. It is not a user: it logs in with device_code + password
+# and gets a random token (only its SHA-256 fingerprint is stored here).
+# =========================================================
+
+class AttendanceDevice(models.Model):
+    organization = models.ForeignKey(
+        "accounts.Organization",
+        on_delete=models.CASCADE,
+        related_name="attendance_devices",
+    )
+    branch = models.ForeignKey(
+        "accounts.Branch",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="attendance_devices",
+    )
+    name = models.CharField(max_length=150)
+    device_code = models.CharField(max_length=50, unique=True, db_index=True)
+    # Plain text on purpose: shown to device managers in the list; reset any time.
+    password = models.CharField(max_length=50)
+    notes = models.TextField(blank=True, null=True)
+    is_active = models.BooleanField(default=True, db_index=True)
+
+    # Current login (one per device). Cleared by reset-password / deactivate.
+    token_hash = models.CharField(max_length=64, unique=True, null=True, blank=True)
+    token_issued_at = models.DateTimeField(null=True, blank=True)
+
+    failed_logins = models.PositiveSmallIntegerField(default=0)
+    locked_until = models.DateTimeField(null=True, blank=True)
+    last_login_at = models.DateTimeField(null=True, blank=True)
+    last_seen_at = models.DateTimeField(null=True, blank=True)
+    last_ip = models.CharField(max_length=45, null=True, blank=True)
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="attendance_devices_created",
+    )
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="attendance_devices_updated",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "attendance_devices"
+        ordering = ["name"]
+
+    def __str__(self):
+        return f"{self.device_code} - {self.name}"

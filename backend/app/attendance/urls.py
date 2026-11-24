@@ -7,13 +7,17 @@ from .views import (
     EmployeeShiftAssignmentBulkAPIView, EmployeeShiftAssignmentPatternAPIView, EmployeeShiftAssignmentBulkCloseAPIView,
     AttendancePunchAPIView, AttendanceListAPIView, MyAttendanceListAPIView, MyShiftAssignmentListAPIView, AttendanceDetailAPIView, AttendanceBulkMarkAbsentAPIView,
     AttendanceCorrectionCreateAPIView, AttendanceCorrectionListAPIView, AttendanceCorrectionReviewAPIView,
-    MyAttendanceCorrectionAPIView, FaceRecognitionAPIView
+    MyAttendanceCorrectionAPIView, FaceRecognitionAPIView,
+    AttendanceDeviceCreateAPIView, AttendanceDeviceListAPIView, AttendanceDeviceUpdateAPIView,
+    AttendanceDeviceResetPasswordAPIView, AttendanceDeviceDeactivateAPIView,
+    KioskLoginAPIView, KioskPunchAPIView,
 )
 
 # ---------------------------------------------------------------------------
 # Who calls what:
 #   #SU  super admin (platform)        #A  organization admin side
 #   #E   employee self-service         #PUB public (no token)   #DEV debug only
+#   #KIOSK  attendance device: "Authorization: Device <token>" from kiosk/login
 #   perm: <code>  enforced permission code (organization owner always passes;
 #                 others need an access role that has the code)
 # ---------------------------------------------------------------------------
@@ -53,4 +57,15 @@ urlpatterns = [
 
     # Face Recognize
     path("face-recognition/", FaceRecognitionAPIView.as_view()),                                        #E
+
+    # Attendance devices (kiosk tablets)
+    path("device/create/", AttendanceDeviceCreateAPIView.as_view()),                                    #A  perm: attendance.device_manage
+    path("device/list/", AttendanceDeviceListAPIView.as_view()),                                        #A  perm: attendance.device_manage  (shows passwords)
+    path("device/update/", AttendanceDeviceUpdateAPIView.as_view()),                                    #A  perm: attendance.device_manage
+    path("device/reset-password/", AttendanceDeviceResetPasswordAPIView.as_view()),                     #A  perm: attendance.device_manage  (logs the device out)
+    path("device/deactivate/", AttendanceDeviceDeactivateAPIView.as_view()),                            #A  perm: attendance.device_manage  (logs the device out)
+
+    # Kiosk (device login, no user)
+    path("kiosk/login/", KioskLoginAPIView.as_view()),                                                  #KIOSK  device_code + password -> device token
+    path("kiosk/punch/", KioskPunchAPIView.as_view()),                                                  #KIOSK  Authorization: Device <token>
 ]

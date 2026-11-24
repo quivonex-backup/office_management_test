@@ -12,6 +12,7 @@ from .models import (
     AttendanceRecord,
     AttendancePunch,
     AttendanceCorrection,
+    AttendanceDevice,
 )
 
 
@@ -588,3 +589,49 @@ class MyShiftAssignmentSerializer(serializers.ModelSerializer):
             and (obj.effective_to is None or obj.effective_to >= today)
         )
     
+
+# =========================================================
+# ATTENDANCE DEVICES (kiosk)
+# =========================================================
+
+class AttendanceDeviceSerializer(serializers.ModelSerializer):
+    """Device managers see everything, including the plain password."""
+
+    branch = serializers.SerializerMethodField()
+    logged_in = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AttendanceDevice
+        fields = [
+            "id", "name", "device_code", "password", "branch", "notes", "is_active",
+            "logged_in", "token_issued_at", "locked_until", "last_login_at", "last_seen_at", "last_ip",
+            "created_at", "updated_at",
+        ]
+
+    def get_branch(self, obj):
+        return {"id": obj.branch_id, "name": obj.branch.name} if obj.branch else None
+
+    def get_logged_in(self, obj):
+        return bool(obj.token_hash)
+
+
+class AttendanceDeviceWriteSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=150)
+    device_code = serializers.RegexField(
+        r"^[A-Za-z0-9_-]{3,50}$", required=False, allow_blank=True, allow_null=True,
+        error_messages={"invalid": "Use 3-50 letters, digits, '-' or '_'."},
+    )
+    branch_id = serializers.IntegerField(required=False, allow_null=True)
+    notes = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+
+class KioskLoginSerializer(serializers.Serializer):
+    device_code = serializers.CharField(max_length=50)
+    password = serializers.CharField(max_length=50)
+
+
+class KioskPunchRequestSerializer(AttendancePunchRequestSerializer):
+    """Same fields and checks as the mobile punch + who / which button."""
+
+    punch_type = serializers.ChoiceField(choices=["CHECK_IN", "CHECK_OUT"])
+    employee_code = serializers.CharField(max_length=50)

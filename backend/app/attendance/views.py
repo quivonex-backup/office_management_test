@@ -31,6 +31,7 @@ from .models import (
     AttendanceRecord,
     AttendancePunch,
     AttendanceCorrection,
+    AttendanceDevice,
 )
 
 from .serializers import (
@@ -42,6 +43,10 @@ from .serializers import (
     AttendanceRecordSerializer,
     AttendanceCorrectionSerializer,
     MyShiftAssignmentSerializer,
+    AttendanceDeviceSerializer,
+    AttendanceDeviceWriteSerializer,
+    KioskLoginSerializer,
+    KioskPunchRequestSerializer,
 )
 
 from .services import (
@@ -2106,3 +2111,415 @@ class MyShiftAssignmentListAPIView(AttendanceBaseAPIView):
                 "assignments": serializer.data,
             },
         )
+
+
+# =========================================================
+# =========================================================
+# ATTENDANCE DEVICES (kiosk) — admin side
+# perm: attendance.device_manage
+# =========================================================
+# =========================================================
+
+import hashlib
+import secrets
+import string
+from datetime import timedelta
+
+KIOSK_MAX_FAILED_LOGINS = 5
+KIOSK_LOCK_MINUTES = 15
+_PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"   # no 0/O/1/l/I
+
+
+def generate_device_password():
+    """e.g. k8Rm-42Tx-9pQa (12 characters in 3 groups, easy to read and type)."""
+    return "-".join("".join(secrets.choice(_PASSWORD_ALPHABET) for _ in range(4)) for _ in range(3))
+
+
+def generate_device_code():
+    alphabet = string.ascii_uppercase + string.digits
+    while True:
+        code = "KSK-" + "".join(secrets.choice(alphabet) for _ in range(6))
+        if not AttendanceDevice.objects.filter(device_code=code).exists():
+            return code
+
+
+def hash_device_token(token):
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def client_ip(request):
+    forwarded = request.META.get("HTTP_X_FORWARDED_FOR")
+    if forwarded:
+        return forwarded.split(",")[0].strip()[:45]
+    return (request.META.get("REMOTE_ADDR") or "")[:45] or None
+
+
+class AttendanceDeviceBaseAPIView(AttendanceBaseAPIView):
+    required_perms = ("attendance.device_manage",)
+
+    def get_device(self, request, organization, active_only=False):
+        device_id = request.data.get("device_id")
+        if not device_id:
+            return None, self.failure("device_id is required.")
+        qs = AttendanceDevice.objects.filter(pk=device_id, organization=organization).select_related("branch")
+        if active_only:
+            qs = qs.filter(is_active=True)
+        device = qs.first()
+        if device is None:
+            return None, self.failure("Device not found.", status.HTTP_404_NOT_FOUND)
+        return device, None
+
+    def resolve_branch(self, organization, data):
+        from app.accounts.models import Branch
+
+        value = data.get("branch_id")
+        if value in (None, "", "null"):
+            return None, None
+        branch = Branch.objects.filter(pk=value, organization=organization, is_active=True).first()
+        if branch is None:
+            return None, Response(
+                {"status": False, "message": "Validation failed.",
+                 "errors": {"branch_id": ["Active branch not found."]}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return branch, None
+
+    def code_taken(self, code, exclude_id=None):
+        qs = AttendanceDevice.objects.filter(device_code__iexact=code)
+        if exclude_id:
+            qs = qs.exclude(pk=exclude_id)
+        return qs.exists()
+
+    def invalid(self, errors):
+        return Response({"status": False, "message": "Validation failed.", "errors": errors},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+
+# =========================================================
+# DEVICE — CREATE
+# =========================================================
+
+class AttendanceDeviceCreateAPIView(AttendanceDeviceBaseAPIView):
+
+    def post(self, request):
+        organization, error_response = self.get_organization(request)
+        if error_response:
+            return error_response
+        serializer = AttendanceDeviceWriteSerializer(data=request.data)
+        if not serializer.is_valid():
+            return self.invalid(serializer.errors)
+        data = serializer.validated_data
+
+        branch, error_response = self.resolve_branch(organization, data)
+        if error_response:
+            return error_response
+        code = (data.get("device_code") or "").strip().upper() or generate_device_code()
+        if self.code_taken(code):
+            return self.invalid({"device_code": ["This device code is already in use."]})
+
+        device = AttendanceDevice.objects.create(
+            organization=organization, branch=branch, name=data["name"].strip(), device_code=code,
+            password=generate_device_password(), notes=(data.get("notes") or "").strip() or None,
+            created_by=request.user, updated_by=request.user,
+        )
+        self.audit(
+            request=request, action="CREATE", module="ATTENDANCE", object_type="AttendanceDevice",
+            object_id=device.id, description=f"Attendance device {device.device_code} created.",
+            new_data={"name": device.name, "device_code": device.device_code, "branch_id": device.branch_id},
+        )
+        return self.success("Device created.", AttendanceDeviceSerializer(device).data, status.HTTP_201_CREATED)
+
+
+# =========================================================
+# DEVICE — LIST (password included)
+# =========================================================
+
+class AttendanceDeviceListAPIView(AttendanceDeviceBaseAPIView):
+
+    def post(self, request):
+        organization, error_response = self.get_organization(request)
+        if error_response:
+            return error_response
+        data = request.data
+        qs = AttendanceDevice.objects.filter(organization=organization).select_related("branch")
+        if str(data.get("include_inactive", "")).lower() not in ("true", "1", "yes"):
+            qs = qs.filter(is_active=True)
+        if data.get("branch_id"):
+            qs = qs.filter(branch_id=data.get("branch_id"))
+        search = (data.get("search") or "").strip()
+        if search:
+            qs = qs.filter(Q(name__icontains=search) | Q(device_code__icontains=search))
+        return self.success("Devices fetched.", AttendanceDeviceSerializer(qs.order_by("name"), many=True).data)
+
+
+# =========================================================
+# DEVICE — UPDATE
+# =========================================================
+
+class AttendanceDeviceUpdateAPIView(AttendanceDeviceBaseAPIView):
+
+    def post(self, request):
+        organization, error_response = self.get_organization(request)
+        if error_response:
+            return error_response
+        device, error_response = self.get_device(request, organization)
+        if error_response:
+            return error_response
+        serializer = AttendanceDeviceWriteSerializer(data=request.data, partial=True)
+        if not serializer.is_valid():
+            return self.invalid(serializer.errors)
+        data = serializer.validated_data
+        old = AttendanceDeviceSerializer(device).data
+
+        if "name" in data:
+            device.name = data["name"].strip()
+        if "notes" in data:
+            device.notes = (data.get("notes") or "").strip() or None
+        if "branch_id" in data:
+            device.branch, error_response = self.resolve_branch(organization, data)
+            if error_response:
+                return error_response
+        if data.get("device_code"):
+            code = data["device_code"].strip().upper()
+            if code != device.device_code:
+                if self.code_taken(code, exclude_id=device.pk):
+                    return self.invalid({"device_code": ["This device code is already in use."]})
+                device.device_code = code
+                device.token_hash = None          # the tablet must log in with the new code
+                device.token_issued_at = None
+        if str(request.data.get("is_active", "")).lower() in ("true", "1", "yes"):
+            device.is_active = True
+        device.updated_by = request.user
+        device.save()
+        self.audit(
+            request=request, action="UPDATE", module="ATTENDANCE", object_type="AttendanceDevice",
+            object_id=device.id, description=f"Attendance device {device.device_code} updated.",
+            old_data={k: old[k] for k in ("name", "device_code", "branch", "notes", "is_active")},
+            new_data={"name": device.name, "device_code": device.device_code, "branch_id": device.branch_id,
+                      "is_active": device.is_active},
+        )
+        return self.success("Device updated.", AttendanceDeviceSerializer(device).data)
+
+
+# =========================================================
+# DEVICE — RESET PASSWORD (also logs the tablet out)
+# =========================================================
+
+class AttendanceDeviceResetPasswordAPIView(AttendanceDeviceBaseAPIView):
+
+    def post(self, request):
+        organization, error_response = self.get_organization(request)
+        if error_response:
+            return error_response
+        device, error_response = self.get_device(request, organization)
+        if error_response:
+            return error_response
+        device.password = generate_device_password()
+        device.token_hash = None
+        device.token_issued_at = None
+        device.failed_logins = 0
+        device.locked_until = None
+        device.updated_by = request.user
+        device.save()
+        self.audit(
+            request=request, action="UPDATE", module="ATTENDANCE", object_type="AttendanceDevice",
+            object_id=device.id, description=f"Attendance device {device.device_code} password reset.",
+        )
+        return self.success("Password reset. The device must log in again.", AttendanceDeviceSerializer(device).data)
+
+
+# =========================================================
+# DEVICE — DEACTIVATE (logs the tablet out)
+# =========================================================
+
+class AttendanceDeviceDeactivateAPIView(AttendanceDeviceBaseAPIView):
+
+    def post(self, request):
+        organization, error_response = self.get_organization(request)
+        if error_response:
+            return error_response
+        device, error_response = self.get_device(request, organization, active_only=True)
+        if error_response:
+            return error_response
+        device.is_active = False
+        device.token_hash = None
+        device.token_issued_at = None
+        device.updated_by = request.user
+        device.save()
+        self.audit(
+            request=request, action="DELETE", module="ATTENDANCE", object_type="AttendanceDevice",
+            object_id=device.id, description=f"Attendance device {device.device_code} deactivated.",
+        )
+        return self.success("Device deactivated.")
+
+
+# =========================================================
+# =========================================================
+# KIOSK — no user login. Device token in "Authorization: Device <token>"
+# =========================================================
+# =========================================================
+
+class KioskBaseAPIView(APIView):
+    authentication_classes = []        # device token, not a user JWT
+    permission_classes = []
+    parser_classes = [JSONParser, FormParser, MultiPartParser]
+
+    def fail(self, message, http_status=status.HTTP_400_BAD_REQUEST, errors=None):
+        body = {"status": False, "message": message}
+        if errors:
+            body["errors"] = errors
+        return Response(body, status=http_status)
+
+    def get_device(self, request):
+        header = request.META.get("HTTP_AUTHORIZATION", "")
+        scheme, _, token = header.partition(" ")
+        if scheme.lower() != "device" or not token.strip():
+            return None, self.fail("Device not logged in.", status.HTTP_401_UNAUTHORIZED)
+        device = (
+            AttendanceDevice.objects.filter(token_hash=hash_device_token(token.strip()))
+            .select_related("organization", "branch").first()
+        )
+        if device is None:
+            return None, self.fail("Device session ended. Log in again.", status.HTTP_401_UNAUTHORIZED)
+        if not device.is_active or not getattr(device.organization, "is_active", True):
+            return None, self.fail("Device is inactive.", status.HTTP_401_UNAUTHORIZED)
+        return device, None
+
+
+# =========================================================
+# KIOSK — LOGIN
+# =========================================================
+
+class KioskLoginAPIView(KioskBaseAPIView):
+
+    def post(self, request):
+        serializer = KioskLoginSerializer(data=request.data)
+        if not serializer.is_valid():
+            return self.fail("Validation failed.", errors=serializer.errors)
+        code = serializer.validated_data["device_code"].strip()
+        password = serializer.validated_data["password"]
+        now = timezone.now()
+
+        with transaction.atomic():
+            device = (
+                AttendanceDevice.objects.select_for_update()
+                .filter(device_code__iexact=code).select_related("organization", "branch").first()
+            )
+            if device is None:
+                return self.fail("Invalid device code or password.")
+            if device.locked_until and device.locked_until > now:
+                minutes = max(int((device.locked_until - now).total_seconds() // 60) + 1, 1)
+                return self.fail(f"Too many attempts. Try again in {minutes} minutes.", status.HTTP_423_LOCKED)
+            if not secrets.compare_digest(device.password, password):
+                device.failed_logins += 1
+                fields = ["failed_logins"]
+                if device.failed_logins >= KIOSK_MAX_FAILED_LOGINS:
+                    device.locked_until = now + timedelta(minutes=KIOSK_LOCK_MINUTES)
+                    device.failed_logins = 0
+                    fields.append("locked_until")
+                device.save(update_fields=fields)
+                return self.fail("Invalid device code or password.")
+            if not device.is_active or not getattr(device.organization, "is_active", True):
+                return self.fail("Device is inactive.", status.HTTP_403_FORBIDDEN)
+
+            token = "dvc_" + secrets.token_urlsafe(36)
+            device.token_hash = hash_device_token(token)
+            device.token_issued_at = now
+            device.failed_logins = 0
+            device.locked_until = None
+            device.last_login_at = now
+            device.last_seen_at = now
+            device.last_ip = client_ip(request)
+            device.save(update_fields=["token_hash", "token_issued_at", "failed_logins", "locked_until",
+                                       "last_login_at", "last_seen_at", "last_ip", "updated_at"])
+
+        org = device.organization
+        logo = None
+        try:
+            logo = org.logo.url if getattr(org, "logo", None) else None
+        except Exception:
+            logo = None
+        return Response({
+            "status": True,
+            "message": "Device logged in.",
+            "data": {
+                "token": token,
+                "device": {"id": device.id, "name": device.name, "device_code": device.device_code,
+                           "branch": {"id": device.branch_id, "name": device.branch.name} if device.branch else None},
+                "organization": {"id": org.id, "name": org.organization_name, "logo": logo},
+            },
+        }, status=status.HTTP_200_OK)
+
+
+# =========================================================
+# KIOSK — PUNCH (same rules as the mobile punch)
+# =========================================================
+
+class KioskPunchAPIView(KioskBaseAPIView):
+
+    def post(self, request):
+        device, error_response = self.get_device(request)
+        if error_response:
+            return error_response
+        organization = device.organization
+
+        serializer = KioskPunchRequestSerializer(data=request.data, context={"organization": organization})
+        if not serializer.is_valid():
+            return self.fail("Invalid attendance punch data.", errors=serializer.errors)
+        data = serializer.validated_data
+
+        employee = Employee.objects.filter(
+            organization=organization, employee_code__iexact=data["employee_code"].strip(), is_active=True,
+        ).first()
+        if employee is None:
+            return self.fail("Employee not found.", status.HTTP_404_NOT_FOUND)
+
+        try:
+            with transaction.atomic():     # a rejected punch leaves nothing behind
+                attendance, punch = process_attendance_punch(
+                    employee=employee,
+                    organization=organization,
+                    latitude=data.get("latitude"),
+                    longitude=data.get("longitude"),
+                    gps_accuracy_meters=data.get("gps_accuracy_meters"),
+                    selfie_file=data.get("selfie"),
+                    recorded_by=None,
+                    expected_punch_type=data["punch_type"],
+                    extra_details={"source": "KIOSK", "device_id": device.id, "device_name": device.name,
+                                   "device_code": device.device_code},
+                )
+        except ValueError as exc:
+            return self.fail(str(exc))
+        except Exception:
+            return self.fail("Unable to process attendance punch. Please try again.",
+                             status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        AttendanceDevice.objects.filter(pk=device.pk).update(last_seen_at=timezone.now(), last_ip=client_ip(request))
+        try:
+            log_activity(
+                request=None, user=None, action="CREATE", module="ATTENDANCE", object_type="AttendancePunch",
+                object_id=punch.id,
+                description=(f"{punch.punch_type} recorded for employee {employee.employee_code} on "
+                             f"{attendance.work_date} at kiosk {device.device_code}."),
+                new_data={"punch_type": punch.punch_type, "punched_at": str(punch.punched_at),
+                          "attendance_id": attendance.id, "device_id": device.id},
+            )
+        except Exception:
+            pass
+
+        try:
+            photo = employee.profile_photo.url if employee.profile_photo else None
+        except Exception:
+            photo = None
+        return Response({
+            "status": True,
+            "message": ("Check-in recorded successfully." if punch.punch_type == "CHECK_IN"
+                        else "Check-out recorded successfully."),
+            "data": {
+                "employee": {"id": employee.id, "employee_code": employee.employee_code,
+                             "name": " ".join(p for p in [employee.first_name, employee.last_name] if p),
+                             "photo": photo},
+                "punch": AttendancePunchSerializer(punch).data,
+                "attendance": AttendanceRecordSerializer(attendance).data,
+            },
+        }, status=status.HTTP_201_CREATED)

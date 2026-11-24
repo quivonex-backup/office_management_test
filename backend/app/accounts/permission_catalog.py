@@ -27,6 +27,7 @@ PERMISSIONS = [
     ("attendance.view_all", "Attendance", "View all attendance"),
     ("attendance.correct", "Attendance", "Edit / correct attendance"),
     ("attendance.approve_correction", "Attendance", "Approve correction requests"),
+    ("attendance.device_manage", "Attendance", "Manage attendance kiosk devices"),
 
     ("leave.apply", "Leave", "Apply for leave"),
     ("leave.view_team", "Leave", "View team leave"),
@@ -80,7 +81,8 @@ DEFAULT_ACCESS_ROLES = {
             "applicant.status_update", "verification.update", "onboarding.complete",
             "employee.view_all", "employee.update", "employee.create_user",
             "attendance.view_self", "attendance.view_all", "attendance.correct",
-            "attendance.approve_correction", "leave.apply", "leave.view_all", "leave.approve",
+            "attendance.approve_correction", "attendance.device_manage", "leave.apply", "leave.view_all",
+            "leave.approve",
             "reimbursement.review", "payroll.view_self", "salary.assign",
             "calendar.manage", "announcement.manage",
             "ticket.manage", "asset.manage", "visitor.manage",

@@ -620,3 +620,15 @@ asset.view. For an IT desk create a role (e.g. "IT Support") with
 ticket.handle (+ asset.manage) and set those employees' department to IT.
 Raising tickets, my-assets and my-visitors need no code (any employee).
 Existing organizations: run  python manage.py seed_org_access --update-defaults
+
+
+================================================================================
+SECTION — NEW PERMISSION CODE (batch 12)
+================================================================================
+
+  attendance.device_manage  Manage attendance kiosk devices: create, list
+                            (shows device passwords), update, reset password,
+                            deactivate                       (attendance app)
+Default roles: HR Manager. For a front-desk / facilities person create a role
+with only this code.
+Existing organizations: run  python manage.py seed_org_access --update-defaults

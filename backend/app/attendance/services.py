@@ -502,7 +502,15 @@ def process_attendance_punch(
     gps_accuracy_meters=None,
     selfie_file=None,
     recorded_by=None,
+    expected_punch_type=None,
+    extra_details=None,
 ):
+    """
+    expected_punch_type: kiosk buttons ("CHECK_IN" / "CHECK_OUT"); when the
+    automatic punch type differs, nothing is saved and a clear error is raised.
+    extra_details: merged into the punch's verification_details (e.g. kiosk
+    source / device). Both default to None = the normal mobile punch.
+    """
     now = timezone.now()
     current_date = timezone.localdate(now)
 
@@ -598,6 +606,11 @@ def process_attendance_punch(
                 ]
             )
 
+    if expected_punch_type and expected_punch_type != punch_type:
+        if expected_punch_type == "CHECK_OUT":
+            raise ValueError("No open check-in to check out from. Check in first.")
+        raise ValueError("Already checked in. Use check-out.")
+
     # If there is no active checkout, determine the correct shift date.
     if punch_type == "CHECK_IN":
         work_date = get_attendance_work_date(
@@ -658,6 +671,7 @@ def process_attendance_punch(
             "face_model": "OpenCV SFace" if face_result["verified"] else None,
             "face_similarity": face_result["similarity"],
             "face_threshold": face_result["threshold"],
+            **(extra_details or {}),
         },
         recorded_by=recorded_by,
         is_manual=False,
