@@ -29,3 +29,6 @@ RULES TO SHOW IN UI
   - Check-out is optional; never force it. Visits left inside stay inside.
   - Ask for the last 4 characters of the ID only (the server refuses more).
   - The same person can be added again for each visit (no duplicate warning).
+
+EXCEL
+  - "Download" on the visitor list: same request as the list + "format": "xlsx".

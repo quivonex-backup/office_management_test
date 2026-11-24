@@ -35,3 +35,6 @@ RULES TO SHOW IN UI
   - Assign only for Available; status cannot be edited while Assigned (return first).
   - Serial numbers are unique per organization; show the server message.
   - Remove is for wrong entries; use status Retired for disposals.
+
+EXCEL
+  - "Download" on the asset register: same request as asset/list/ + "format": "xlsx".

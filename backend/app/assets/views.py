@@ -294,6 +294,9 @@ class AssetListAPIView(AssetBaseAPIView):
             qs = qs.filter(warranty_until__gte=today,
                            warranty_until__lte=today + timedelta(days=days))
 
+        if str(data.get("format") or "").lower() == "xlsx":
+            return assets_xlsx(qs.order_by("asset_code"), organization, data)
+
         by_status = {code: 0 for code, _label in Asset.STATUS_CHOICES}
         for row in summary_qs.values("status").annotate(n=Count("id")):
             by_status[row["status"]] = row["n"]
@@ -532,3 +535,47 @@ class MyAssetListAPIView(AssetBaseAPIView):
             .select_related("category").prefetch_related("assignments").order_by("name")
         )
         return self.ok("Your assets fetched.", MyAssetSerializer(qs, many=True).data)
+
+
+# =========================================================
+# ASSET LIST — EXCEL ("format": "xlsx" on asset/list/)
+# =========================================================
+def assets_xlsx(qs, organization, data):
+    from common.exports import xlsx_response
+
+    rows = []
+    for a in qs:
+        holder = a.current_holder
+        rows.append({
+            "asset_code": a.asset_code, "name": a.name, "category": a.category.name,
+            "brand": a.brand, "model_number": a.model_number, "serial_number": a.serial_number,
+            "branch": a.branch.name if a.branch else None, "status": a.get_status_display(),
+            "holder": " ".join(p for p in [holder.first_name, holder.last_name] if p) if holder else None,
+            "holder_code": holder.employee_code if holder else None,
+            "purchase_date": str(a.purchase_date) if a.purchase_date else None,
+            "purchase_cost": float(a.purchase_cost) if a.purchase_cost is not None else None,
+            "warranty_until": str(a.warranty_until) if a.warranty_until else None,
+        })
+    columns = [
+        {"key": "asset_code", "label": "Asset", "type": "text"},
+        {"key": "name", "label": "Name", "type": "text"},
+        {"key": "category", "label": "Category", "type": "text"},
+        {"key": "brand", "label": "Brand", "type": "text"},
+        {"key": "model_number", "label": "Model", "type": "text"},
+        {"key": "serial_number", "label": "Serial", "type": "text"},
+        {"key": "branch", "label": "Branch", "type": "text"},
+        {"key": "status", "label": "Status", "type": "text"},
+        {"key": "holder_code", "label": "Holder code", "type": "text"},
+        {"key": "holder", "label": "Holder", "type": "text"},
+        {"key": "purchase_date", "label": "Purchased", "type": "date"},
+        {"key": "purchase_cost", "label": "Cost", "type": "money"},
+        {"key": "warranty_until", "label": "Warranty until", "type": "date"},
+    ]
+    # hide columns nobody filled (e.g. no branches, no costs entered)
+    optional = {"brand", "model_number", "serial_number", "branch", "purchase_date", "purchase_cost", "warranty_until"}
+    columns = [c for c in columns if c["key"] not in optional or any(r[c["key"]] not in (None, "") for r in rows)]
+    filters = {k: data.get(k) for k in ("status", "category_id", "branch_id", "holder_id", "warranty_due_days",
+                                        "search") if data.get(k)}
+    totals = {"purchase_cost": round(sum(r["purchase_cost"] or 0 for r in rows), 2)}
+    return xlsx_response({"report": "asset_register", "title": "Asset register", "filters": filters,
+                          "columns": columns, "rows": rows, "totals": totals}, organization)

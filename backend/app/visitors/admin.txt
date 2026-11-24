@@ -51,6 +51,9 @@ Optional: visitor_email, visitor_company, visitor_count (1-100, default 1),
 inside_only without dates = everyone still inside, whatever the day.
 Dates use the check-in day (created day when there is no check-in).
 200 -> [visit], newest check-in first. 400 when from_date > to_date.
+"format": "xlsx" -> Excel file "visitor_log_..." of the same filtered visits
+  (visit, check-in, check-out, visitor, mobile, company, people, purpose, host,
+  branch when used, ID proof (type + xxxx last 4), badge, vehicle, notes).
 
 3. POST /visitors/visit/detail/        { "visit_id": 12 } -> visit object
 

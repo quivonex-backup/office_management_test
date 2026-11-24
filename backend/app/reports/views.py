@@ -7,6 +7,11 @@ Reports & dashboard API (all POST). Read-only: data comes from the other apps.
   leave/          leave.view_all | leave.view_team
   payroll/        payroll.view_all
   recruitment/    applicant.view
+  employees/      employee.view_all | employee.view_team
+  expenses/       reimbursement.review | reimbursement.pay | expense.manage
+  receivables/    payment.manage
+  projects/       project.manage
+  helpdesk/       ticket.manage | ticket.handle
 
 Reports: "format": "json" (default, envelope with columns / rows / totals /
 chart / pagination) or "xlsx" (Excel file of all rows, same columns).
@@ -124,3 +129,23 @@ class PayrollReportAPIView(ReportAPIView):
 
 class RecruitmentReportAPIView(ReportAPIView):
     report_key = "recruitment"
+
+
+class EmployeesReportAPIView(ReportAPIView):
+    report_key = "employees"
+
+
+class ExpensesReportAPIView(ReportAPIView):
+    report_key = "expenses"
+
+
+class ReceivablesReportAPIView(ReportAPIView):
+    report_key = "receivables"
+
+
+class ProjectsReportAPIView(ReportAPIView):
+    report_key = "projects"
+
+
+class HelpdeskReportAPIView(ReportAPIView):
+    report_key = "helpdesk"

@@ -74,6 +74,9 @@ Filters (optional): search (code, name, serial, brand, model, holder name / code
 200 { "data": [asset], "summary": {"total": 40,
       "by_status": {"AVAILABLE": 10, "ASSIGNED": 26, "IN_REPAIR": 2, "RETIRED": 1, "LOST": 1}} }
 summary follows "search" only.
+"format": "xlsx" -> Excel asset register of the same filtered assets (asset, name,
+  category, brand, model, serial, branch, status, holder code, holder, purchased,
+  cost, warranty until); columns nobody filled are left out; cost total row.
 
 7. POST /assets/asset/detail/             asset.manage, asset.view (any)
    { "asset_id": 4 } -> detail data (with full holder history)

@@ -42,3 +42,14 @@ REPORTS (own sidebar item "Reports")
       Leave balance        leave {view: "balance"}
       Salary register      payroll {month: "2026-11"}
       Hiring funnel        recruitment {view: "funnel"}
+      New joiners          employees {view: "joiners"}
+      Exits (attrition)    employees {view: "exits"}
+      Pending claims       expenses {view: "reimbursements", status: "PENDING"}
+      Monthly spend        expenses {view: "company"}
+      Overdue payments     receivables {overdue_only: true}
+      Who is overloaded    projects {view: "assignees"}
+      Helpdesk by category helpdesk {view: "summary"}
+  - Expenses: show the view switch only for views the user may open (reimbursements:
+    reimbursement.review / reimbursement.pay; company: expense.manage).
+  - Visitor log and asset register downloads live on their own list screens
+    ("format": "xlsx" on visitors/visit/list/ and assets/asset/list/).

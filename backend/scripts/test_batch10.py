@@ -172,10 +172,11 @@ def run():
     keys = [r["key"] for r in b["data"]["reports"]]
     filters = {f["key"] for r in b["data"]["reports"] for f in r["filters"]}
     check("HR manager: attendance, leave, recruitment (no payroll.view_all)",
-          keys == ["attendance", "leave", "recruitment"], keys)
+          keys[:3] == ["attendance", "leave", "recruitment"] and "payroll" not in keys, keys)
     check("no branch filter when the organization has no branches", "branch_id" not in filters, filters)
     s, b = post(C["owner"], "reports/list/")
-    check("owner: all 4 reports", [r["key"] for r in b["data"]["reports"]] == ["attendance", "leave", "payroll", "recruitment"])
+    check("owner: all reports (batch 10 four first)",
+          [r["key"] for r in b["data"]["reports"]][:4] == ["attendance", "leave", "payroll", "recruitment"])
 
     # ================= ATTENDANCE
     rng = {"from_date": str(OCT1), "to_date": str(OCT31)}

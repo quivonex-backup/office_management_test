@@ -205,6 +205,8 @@ class VisitListAPIView(VisitorBaseAPIView):
         if data.get("branch_id"):
             qs = qs.filter(branch_id=data.get("branch_id"))
 
+        if str(data.get("format") or "").lower() == "xlsx":
+            return visits_xlsx(qs, organization, data)
         return self.ok("Visits fetched.", VisitSerializer(qs, many=True).data)
 
 
@@ -386,3 +388,56 @@ class MyVisitorListAPIView(VisitorBaseAPIView):
         qs = self.date_range(Visit.objects.filter(organization=organization, is_active=True, host=employee),
                              from_date, to_date)
         return self.ok("Your visitors fetched.", MyVisitSerializer(qs, many=True).data)
+
+
+# =========================================================
+# VISIT LIST — EXCEL ("format": "xlsx" on visit/list/)
+# =========================================================
+def visits_xlsx(qs, organization, data):
+    from common.exports import xlsx_response
+
+    purpose = dict(Visit.PURPOSE_CHOICES)
+    proof = dict(Visit.ID_PROOF_CHOICES)
+    has_branch = any(v.branch_id for v in qs)
+
+    def at(value):
+        return timezone.localtime(value).strftime("%Y-%m-%d %H:%M") if value else None
+
+    columns = [
+        {"key": "visit_code", "label": "Visit", "type": "text"},
+        {"key": "check_in", "label": "Check-in", "type": "text"},
+        {"key": "check_out", "label": "Check-out", "type": "text"},
+        {"key": "visitor_name", "label": "Visitor", "type": "text"},
+        {"key": "visitor_mobile", "label": "Mobile", "type": "text"},
+        {"key": "visitor_company", "label": "Company", "type": "text"},
+        {"key": "visitor_count", "label": "People", "type": "number"},
+        {"key": "purpose", "label": "Purpose", "type": "text"},
+        {"key": "host", "label": "Host", "type": "text"},
+    ]
+    if has_branch:
+        columns.append({"key": "branch", "label": "Branch", "type": "text"})
+    columns += [
+        {"key": "id_proof", "label": "ID proof", "type": "text"},
+        {"key": "badge_number", "label": "Badge", "type": "text"},
+        {"key": "vehicle_number", "label": "Vehicle", "type": "text"},
+        {"key": "notes", "label": "Notes", "type": "text"},
+    ]
+    rows = []
+    for v in qs:
+        host = v.host
+        rows.append({
+            "visit_code": v.visit_code, "check_in": at(v.check_in_at), "check_out": at(v.check_out_at),
+            "visitor_name": v.visitor_name, "visitor_mobile": v.visitor_mobile,
+            "visitor_company": v.visitor_company, "visitor_count": v.visitor_count,
+            "purpose": purpose.get(v.purpose, v.purpose),
+            "host": " ".join(p for p in [host.first_name, host.last_name] if p) if host else None,
+            "branch": v.branch.name if v.branch else None,
+            "id_proof": f"{proof.get(v.id_proof_type, v.id_proof_type)} xxxx{v.id_proof_last4}"
+            if v.id_proof_type and v.id_proof_last4 else (proof.get(v.id_proof_type) if v.id_proof_type else None),
+            "badge_number": v.badge_number, "vehicle_number": v.vehicle_number, "notes": v.notes,
+        })
+    filters = {k: data.get(k) for k in ("from_date", "to_date", "inside_only", "purpose", "host_id", "branch_id",
+                                        "search") if data.get(k)}
+    return xlsx_response({"report": "visitor_log", "title": "Visitor log", "filters": filters,
+                          "columns": columns, "rows": rows,
+                          "totals": {"visitor_count": sum(r["visitor_count"] or 0 for r in rows)}}, organization)

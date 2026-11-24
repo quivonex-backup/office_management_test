@@ -192,3 +192,74 @@ applicants columns: applicant_code, name, applied_on, position, department, sour
 funnel rows: stage, current (now in stage), reached (got at least this far),
   percent_of_applied; summary {applied, offers_sent, offers_accepted, offers_declined,
   hired, average_days_to_hire}
+
+--------------------------------------------------------------------------------
+8. POST /reports/employees/          employee.view_all | employee.view_team
+--------------------------------------------------------------------------------
+Filters: view "headcount" (default; active employees, dates ignored) | "joiners"
+  (joining_date in period) | "exits" (resignation_date in period),
+  employment_status ACTIVE | INACTIVE | ON_LEAVE | RESIGNED | TERMINATED,
+  access_role_id, remote_only (only when the organization has remote employees)
+Columns: employee_code, name, department, designation, branch, joining_date, exit_date,
+  status, active (joiners / exits), reports_to, mobile, email (personal), access_role, remote
+Chart: headcount by department (designation when no departments); joiners vs exits per month.
+summary: {employees}
+
+--------------------------------------------------------------------------------
+9. POST /reports/expenses/           reimbursement.review | reimbursement.pay | expense.manage
+--------------------------------------------------------------------------------
+view "reimbursements" (needs reimbursement.review / pay) | "company" (needs expense.manage);
+default = reimbursements when allowed, else company. Other view -> 403.
+Common filters: from_date / to_date (expense date), category (food, travel, utilities,
+  rent, software, cloud, equipment, office, maintenance, telephone, marketing,
+  professional_services, other), project_id, search
+reimbursements: + status PENDING | APPROVED | REJECTED | PAID | CANCELLED, employee /
+  department filters. Columns: number, expense_date, employee_code, name, department,
+  category, title, project, amount, status, reviewed_by, payment_date.
+  summary {claims, amount_by_status}
+company: one-off expenses + recurring expense entries (date = entry due date, else the
+  1st of its month) in the period; + payment_status paid | unpaid, vendor_id.
+  Columns: date, number, source (One-off / Recurring (Monthly)), category, title, vendor,
+  project, amount, due_date, payment_status, payment_date. summary {entries, unpaid}
+Chart: amount per category. Totals: amount.
+
+--------------------------------------------------------------------------------
+10. POST /reports/receivables/       payment.manage
+--------------------------------------------------------------------------------
+Rows = project payment rows (advance / installments), cancelled excluded, due in the period.
+Filters: client_id, project_id, status PENDING | PARTIALLY_PAID | PAID | OVERDUE,
+  payment_type ADVANCE | INSTALLMENT, overdue_only (everything overdue today; dates
+  ignored), include_undated (rows without a due date too), search (project / client / title)
+Columns: client, project, project_code, payment_type, installment, title, due_date, amount,
+  paid (received), outstanding, status, days_overdue, last_payment_date
+summary: {collected_in_period (successful transactions dated in the period),
+  overdue_total, ageing_days {"0-30", "31-60", "61-90", "90+"}}
+Chart: overdue outstanding by age bucket. Totals: amount, paid, outstanding.
+
+--------------------------------------------------------------------------------
+11. POST /reports/projects/          project.manage
+--------------------------------------------------------------------------------
+Active projects (snapshot); the period only drives "done in period" (tasks completed then).
+Filters: view "projects" (default) | "assignees", project_status new | in_progress |
+  testing | completed | on_hold | cancelled, project_id, client_id, assignee_id,
+  overdue_only, search
+projects columns: project_code, project, client, status, priority, heads (project heads),
+  start_date, deadline, late (past deadline, not completed), total_tasks, done_tasks,
+  open_tasks, overdue_tasks, done_in_period, percent_complete, total_cost (project value)
+assignees columns: employee_code, name, projects, total_tasks, open_tasks, overdue_tasks,
+  done_in_period (sorted by most overdue)
+Chart: done vs open per project / open vs overdue per assignee (top 15).
+
+--------------------------------------------------------------------------------
+12. POST /reports/helpdesk/          ticket.manage | ticket.handle
+--------------------------------------------------------------------------------
+Tickets raised in the period. ticket.manage = all; ticket.handle = own department's
+categories + tickets assigned to them (same as the helpdesk queue).
+Filters: view "tickets" (default) | "summary", category_id, status, priority,
+  assigned_to_id, unassigned_only, search
+tickets columns: ticket_code, raised_on, raised_by, department, category, subject,
+  priority, status, assigned_to, resolved_on, resolution_hours, open_days (still open),
+  reopened; summary {tickets, open, average_resolution_hours, reopened};
+  chart raised vs resolved per day
+summary view (per category): raised, resolved (resolved in period), open_now (all open,
+  any date), average_resolution_hours, oldest_open_days; chart raised vs resolved.

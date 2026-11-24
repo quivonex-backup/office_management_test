@@ -5,9 +5,21 @@ filters that apply to this organization (no branch filter without branches...).
 from common.permissions import has_perm
 
 from .attendance import attendance_report
+from .employees import employees_report
+from .expenses import expenses_report
+from .helpdesk import helpdesk_report
 from .leave import leave_report
 from .payroll import payroll_report
+from .projects import projects_report
+from .receivables import receivables_report
 from .recruitment import recruitment_report
+
+PERIOD = [
+    {"key": "from_date", "type": "date", "default": "first day of this month"},
+    {"key": "to_date", "type": "date", "default": "last day of this month"},
+]
+EXPENSE_CATEGORIES = ["food", "travel", "utilities", "rent", "software", "cloud", "equipment", "office",
+                      "maintenance", "telephone", "marketing", "professional_services", "other"]
 
 
 def _common_people_filters(features):
@@ -81,6 +93,75 @@ def _recruitment_filters(features):
     return out
 
 
+def _employees_filters(features):
+    out = _common_people_filters(features) + [
+        {"key": "view", "type": "choice", "options": ["headcount", "joiners", "exits"], "default": "headcount",
+         "note": "dates apply to joiners / exits"},
+        {"key": "employment_status", "type": "choice",
+         "options": ["ACTIVE", "INACTIVE", "ON_LEAVE", "RESIGNED", "TERMINATED"]},
+        {"key": "access_role_id", "type": "access_role"},
+    ]
+    if features["has_remote"]:
+        out.append({"key": "remote_only", "type": "bool"})
+    return out
+
+
+def _expenses_filters(features):
+    out = PERIOD + [
+        {"key": "view", "type": "choice", "options": ["reimbursements", "company"],
+         "note": "reimbursements: reimbursement.review / reimbursement.pay; company: expense.manage"},
+        {"key": "category", "type": "choice", "options": EXPENSE_CATEGORIES},
+        {"key": "status", "type": "choice", "options": ["PENDING", "APPROVED", "REJECTED", "PAID", "CANCELLED"],
+         "note": "reimbursements"},
+        {"key": "payment_status", "type": "choice", "options": ["paid", "unpaid"], "note": "company"},
+        {"key": "vendor_id", "type": "vendor", "note": "company"},
+        {"key": "project_id", "type": "project"},
+        {"key": "employee_id", "type": "employee", "note": "reimbursements"},
+    ]
+    if features["has_departments"]:
+        out.append({"key": "department_id", "type": "department", "note": "reimbursements"})
+    out.append({"key": "search", "type": "text"})
+    return out
+
+
+def _receivables_filters(features):
+    return PERIOD + [
+        {"key": "client_id", "type": "client"},
+        {"key": "project_id", "type": "project"},
+        {"key": "status", "type": "choice", "options": ["PENDING", "PARTIALLY_PAID", "PAID", "OVERDUE"]},
+        {"key": "payment_type", "type": "choice", "options": ["ADVANCE", "INSTALLMENT"]},
+        {"key": "overdue_only", "type": "bool", "note": "everything overdue today, ignores the dates"},
+        {"key": "include_undated", "type": "bool"},
+        {"key": "search", "type": "text"},
+    ]
+
+
+def _projects_filters(features):
+    return PERIOD + [
+        {"key": "view", "type": "choice", "options": ["projects", "assignees"], "default": "projects",
+         "note": "dates apply to 'done in period'"},
+        {"key": "project_status", "type": "choice",
+         "options": ["new", "in_progress", "testing", "completed", "on_hold", "cancelled"]},
+        {"key": "project_id", "type": "project"},
+        {"key": "client_id", "type": "client"},
+        {"key": "assignee_id", "type": "employee"},
+        {"key": "overdue_only", "type": "bool"},
+        {"key": "search", "type": "text"},
+    ]
+
+
+def _helpdesk_filters(features):
+    return PERIOD + [
+        {"key": "view", "type": "choice", "options": ["tickets", "summary"], "default": "tickets"},
+        {"key": "category_id", "type": "ticket_category"},
+        {"key": "status", "type": "choice", "options": ["OPEN", "IN_PROGRESS", "ON_HOLD", "RESOLVED", "CLOSED"]},
+        {"key": "priority", "type": "choice", "options": ["LOW", "MEDIUM", "HIGH", "URGENT"]},
+        {"key": "assigned_to_id", "type": "employee"},
+        {"key": "unassigned_only", "type": "bool"},
+        {"key": "search", "type": "text"},
+    ]
+
+
 # key: (title, group, any-of codes, filters builder, report function)
 REPORTS = {
     "attendance": ("Attendance", "People", ("attendance.view_all", "attendance.view_team"),
@@ -88,6 +169,13 @@ REPORTS = {
     "leave": ("Leave", "People", ("leave.view_all", "leave.view_team"), _leave_filters, leave_report),
     "payroll": ("Payroll (salary register)", "Payroll", ("payroll.view_all",), _payroll_filters, payroll_report),
     "recruitment": ("Recruitment", "Recruitment", ("applicant.view",), _recruitment_filters, recruitment_report),
+    "employees": ("Employees", "People", ("employee.view_all", "employee.view_team"), _employees_filters,
+                  employees_report),
+    "expenses": ("Expenses", "Finance", ("reimbursement.review", "reimbursement.pay", "expense.manage"),
+                 _expenses_filters, expenses_report),
+    "receivables": ("Receivables", "Finance", ("payment.manage",), _receivables_filters, receivables_report),
+    "projects": ("Projects", "Work", ("project.manage",), _projects_filters, projects_report),
+    "helpdesk": ("Helpdesk", "Work", ("ticket.manage", "ticket.handle"), _helpdesk_filters, helpdesk_report),
 }
 
 
