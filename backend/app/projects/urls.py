@@ -61,11 +61,11 @@ urlpatterns = [
     path("my-project-detail/", MyProjectDetailAPIView.as_view(), name="project-my-project-detail"),                                      #E
 
     # Tasks
-    path("task/create/", TaskCreateAPIView.as_view(), name="task-create"),                                                               #E #A  (project head / admin)
-    path("task/list/", TaskListAPIView.as_view(), name="task-list"),                                                                     #E #A  (project head / admin)
-    path("task/detail/", TaskDetailAPIView.as_view(), name="task-detail"),                                                               #E #A  (project head / admin)
-    path("task/update/", TaskUpdateAPIView.as_view(), name="task-update"),                                                               #E #A  (project head / admin)
-    path("task/status-update/", TaskStatusUpdateAPIView.as_view(), name="task-status-update"),                                           #E #A  (project head / admin)
-    path("task/deactivate/", TaskDeactivateAPIView.as_view(), name="task-deactivate"),                                                   #E #A  (project head / admin)
+    path("task/create/", TaskCreateAPIView.as_view(), name="task-create"),                                                               #E #A  perm: project.manage | project head
+    path("task/list/", TaskListAPIView.as_view(), name="task-list"),                                                                     #E #A  perm: project.manage | project head
+    path("task/detail/", TaskDetailAPIView.as_view(), name="task-detail"),                                                               #E #A  perm: project.manage | project head | assignee
+    path("task/update/", TaskUpdateAPIView.as_view(), name="task-update"),                                                               #E #A  perm: project.manage | project head
+    path("task/status-update/", TaskStatusUpdateAPIView.as_view(), name="task-status-update"),                                           #E #A  perm: project.manage | project head | assignee
+    path("task/deactivate/", TaskDeactivateAPIView.as_view(), name="task-deactivate"),                                                   #E #A  perm: project.manage | project head
     path("task/my-tasks/", MyTasksAPIView.as_view(), name="task-my-tasks"),                                                              #E
 ]

@@ -49,10 +49,10 @@ urlpatterns = [
     path("announcements/my/", MyAnnouncementsAPIView.as_view(), name="announcement-my"),                                  #E #A
 
     # Project chat
-    path("project-chat/messages/", ProjectChatMessagesAPIView.as_view(), name="project-chat-messages"),                   #E #A
-    path("project-chat/send/", ProjectChatSendAPIView.as_view(), name="project-chat-send"),                               #E #A
-    path("project-chat/delete/", ProjectChatDeleteAPIView.as_view(), name="project-chat-delete"),                         #E #A
-    path("project-chat/settings/", ProjectChatSettingsAPIView.as_view(), name="project-chat-settings"),                   #A
+    path("project-chat/messages/", ProjectChatMessagesAPIView.as_view(), name="project-chat-messages"),                   #E #A  perm: project.manage | project head | member
+    path("project-chat/send/", ProjectChatSendAPIView.as_view(), name="project-chat-send"),                               #E #A  perm: project.manage | head / member per chat settings
+    path("project-chat/delete/", ProjectChatDeleteAPIView.as_view(), name="project-chat-delete"),                         #E #A  perm: project.manage | project head | own message within 15 min
+    path("project-chat/settings/", ProjectChatSettingsAPIView.as_view(), name="project-chat-settings"),                   #A     perm: project.manage
 
     path("test-notification/", TestSendNotificationAPIView.as_view(), name="test-notification"),                          #DEV  only when DEBUG=True
 ]
