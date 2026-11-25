@@ -161,7 +161,11 @@ class ApiService {
     final key = '${activeOrgId ?? ''}|$path|${jsonEncode(body)}';
     final running = _inflight[key];
     if (running != null) return running;
-    final p = send().whenComplete(() => _inflight.remove(key));
+    // NOTE: block body on purpose. An arrow body would return the removed future itself, and
+    // whenComplete waits for a returned future -> the call would wait on itself forever.
+    final p = send().whenComplete(() {
+      _inflight.remove(key);
+    });
     _inflight[key] = p;
     return p;
   }
