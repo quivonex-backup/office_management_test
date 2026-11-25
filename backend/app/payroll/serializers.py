@@ -813,18 +813,35 @@ def _complete_package(org, structure, as_of, annual_ctc, monthly_gross, instance
     """
     from .services import compute_ctc_breakup, monthly_gross_from_annual_ctc
 
+    from .services import default_package_from_structure
+
     sent_ctc = annual_ctc is not serializers.empty
     sent_gross = monthly_gross is not serializers.empty
+
+    def from_structure():
+        # Batch 17: never save an empty package; work it out from the structure.
+        if structure is None:
+            raise serializers.ValidationError({"salary_structure": "Required to work out the package."})
+        try:
+            return default_package_from_structure(org, structure, as_of=as_of)
+        except ValueError as exc:
+            raise serializers.ValidationError({"annual_ctc": str(exc)})
+
     if not sent_ctc and not sent_gross:
-        return {}
+        if instance is None:
+            return from_structure()                      # create without a package
+        structure_changed = structure is not None and structure.pk != instance.salary_structure_id
+        if structure_changed or (instance.annual_ctc is None and instance.monthly_gross is None):
+            return from_structure()                      # new structure / still empty
+        return {}                                        # keep the current package
     for name, value in (("annual_ctc", annual_ctc), ("monthly_gross", monthly_gross)):
         if value not in (serializers.empty, None) and value <= 0:
             raise serializers.ValidationError({name: "Must be greater than zero."})
 
     ctc = None if annual_ctc is serializers.empty else annual_ctc
     gross = None if monthly_gross is serializers.empty else monthly_gross
-    if ctc is None and gross is None:  # both cleared
-        return {"annual_ctc": None, "monthly_gross": None}
+    if ctc is None and gross is None:  # both cleared -> back to the structure's own package
+        return from_structure()
     if structure is None:
         raise serializers.ValidationError({"salary_structure": "Required to work out the package."})
     try:

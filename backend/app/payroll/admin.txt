@@ -2430,3 +2430,42 @@ POST /payroll/payments/void/   { "payment_id": 55, "reason": "Wrong UTR" }
         "paid_amount": "0.00", "payment_status": "UNPAID" }
   404 "Payment not found."   400 "reason is required."
   To fix a payment: void it, then payments/record/ again.
+
+
+================================================================================
+SECTION — SALARY PACKAGE NEVER EMPTY (batch 17)   perm: salary.assign
+================================================================================
+assignments/create/, assignments/update/, assignments/bulk-assign/ — same
+request and response; annual_ctc / monthly_gross are now always filled.
+
+  Sent                         Result
+  ---------------------------  ------------------------------------------------
+  annual_ctc + monthly_gross   stored as sent (unchanged)
+  only one                     the other worked out (unchanged)
+  neither (create / bulk)      worked out from the structure (below)
+  neither (update)             kept; refilled only when salary_structure
+                               changes or the assignment had no package
+  both null (update)           back to the structure's own package
+
+From the structure (services.default_package_from_structure, statutory rates
+as of effective_from; same calculation as payroll/calculator/):
+  monthly_gross = sum of the structure's earnings (FIXED amounts, % of other
+                  components; statutory roles excluded)
+  annual_ctc    = 12 x (gross + PF employer + EDLI + ESI employer + LWF
+                  employer) in FULL mode when "CTC includes employer
+                  contributions" is on, else 12 x gross
+                  (no payroll settings yet -> 12 x gross)
+
+400 (errors.annual_ctc) when the structure cannot give a salary by itself:
+  "Structure 'X' is based on monthly gross (balancing / % of gross component).
+   Send annual_ctc or monthly_gross."      (balancing component, or a %
+                                           component without a base)
+  "Structure 'X' gives no salary on its own. Send annual_ctc or monthly_gross."
+bulk-assign returns the same text as "message".
+
+Existing assignments without a package:
+  python manage.py backfill_salary_packages --dry-run     # preview
+  python manage.py backfill_salary_packages               # fill
+  python manage.py backfill_salary_packages --organization 3
+Fixed structures are filled; gross-based ones are listed as "NEEDS HR" (set
+annual_ctc or monthly_gross with assignments/update/).

@@ -736,7 +736,13 @@ def bulk_assign_salary(
                 f"Assignment date ranges cannot overlap."
             )
 
-    if annual_ctc is not None or monthly_gross is not None:
+    if annual_ctc is None and monthly_gross is None:
+        # Batch 17: package from the structure (ValueError when it needs a gross).
+        from .calculator import default_package_from_structure
+
+        package = default_package_from_structure(organization, structure, as_of=effective_from)
+        annual_ctc, monthly_gross = package["annual_ctc"], package["monthly_gross"]
+    elif annual_ctc is not None or monthly_gross is not None:
         from .calculator import compute_ctc_breakup, monthly_gross_from_annual_ctc
 
         for name, value in (("annual_ctc", annual_ctc), ("monthly_gross", monthly_gross)):

@@ -77,3 +77,9 @@ REOPEN / VOID (batch 14, payroll.finalize)
   - Run detail (FINALIZED): "Reopen" button -> reason dialog -> runs/reopen/.
     On 400 with payment_ids: "Void these payments first".
   - Payments list row: "Void" -> reason dialog -> payments/void/.
+
+SALARY PACKAGE (batch 17)
+  - Assignment form: CTC / gross fields optional for fixed structures
+    (hint: "Leave empty to use the structure's amounts"); show the filled
+    values from the response. For structures with a balancing / % of gross
+    component make one of them required (the API returns 400 otherwise).

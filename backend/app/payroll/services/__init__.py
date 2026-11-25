@@ -27,7 +27,10 @@ from .common import (
 
 from .computation import compute_payslip_data
 
-from .calculator import simulate_payslip, compute_ctc_breakup, monthly_gross_from_annual_ctc
+from .calculator import (
+    simulate_payslip, compute_ctc_breakup, monthly_gross_from_annual_ctc,
+    structure_needs_gross, default_package_from_structure,
+)
 
 from .processing import (
     generate_payroll,

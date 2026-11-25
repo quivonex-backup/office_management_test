@@ -745,3 +745,63 @@ def monthly_gross_from_annual_ctc(organization, structure, annual_ctc, as_of=Non
     best["requested_annual_ctc"] = target
     best["difference"] = q2(best["annual_ctc"] - target)
     return best
+
+
+# =========================================================
+# DEFAULT PACKAGE FROM THE STRUCTURE (batch 17)
+# =========================================================
+
+def structure_needs_gross(structure, entries=None):
+    """
+    True when the structure cannot give a salary on its own: it has a
+    balancing component, or a PERCENTAGE earning with no base component
+    (a % of monthly gross). Such structures need annual_ctc / monthly_gross.
+    """
+    if entries is None:
+        entries = _load_structure_entries(structure)
+    for entry in entries:
+        comp = entry.salary_component
+        if getattr(entry, "is_balancing", False):
+            return True
+        if comp.calculation_type == "PERCENTAGE" and comp.percentage_of_component_id is None:
+            return True
+    return False
+
+
+def default_package_from_structure(organization, structure, as_of=None):
+    """
+    Batch 17: package for an assignment sent without annual_ctc and
+    monthly_gross. Same calculation as compute_ctc_breakup with no gross:
+      monthly_gross = sum of the structure's earnings (fixed amounts and
+                      % of other components; statutory roles excluded)
+      annual_ctc    = 12 x (gross + employer PF / EDLI / ESI / LWF in FULL
+                      mode, when ctc_includes_employer_contributions), else
+                      12 x gross. No payroll settings yet -> 12 x gross.
+    Returns {"annual_ctc", "monthly_gross"}. Raises ValueError when the
+    structure needs a gross figure or gives no salary.
+    """
+    entries = _load_structure_entries(structure)
+    if structure_needs_gross(structure, entries):
+        raise ValueError(
+            f"Structure '{structure.name}' is based on monthly gross (balancing / % of gross "
+            f"component). Send annual_ctc or monthly_gross."
+        )
+    settings = PayrollSettings.objects.filter(organization=organization).first()
+    if settings is not None:
+        breakup = compute_ctc_breakup(organization, structure, None, as_of=as_of, settings=settings, entries=entries)
+        gross, ctc = breakup["monthly_gross"], breakup["annual_ctc"]
+    else:
+        amounts, entries = _resolve_component_amounts(structure, monthly_gross=None, entries=entries)
+        gross = q2(sum(
+            (amounts.get(e.salary_component.code, ZERO) for e in entries
+             if e.salary_component.component_type == "EARNING"
+             and e.salary_component.component_role not in STATUTORY_COMPONENT_ROLES),
+            ZERO,
+        ))
+        ctc = q2(gross * 12)
+    if gross <= ZERO:
+        raise ValueError(
+            f"Structure '{structure.name}' gives no salary on its own. Send annual_ctc or monthly_gross."
+        )
+    return {"annual_ctc": ctc, "monthly_gross": gross}
+
