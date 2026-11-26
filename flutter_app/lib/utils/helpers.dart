@@ -15,10 +15,10 @@ class Fmt {
   static String time(dynamic v) => DateFormatter.time(v);
 
   /// Indian-style money: 125000 -> ₹1,25,000.00
-  static String money(dynamic v) {
+  static String money(dynamic v, {int digits = 2}) {
     final n = num.tryParse(v?.toString() ?? '');
     if (n == null) return v?.toString() ?? '';
-    return NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 2).format(n);
+    return NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: digits).format(n);
   }
 
   static String number(dynamic v) {

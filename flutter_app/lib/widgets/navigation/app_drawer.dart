@@ -49,91 +49,137 @@ class NavigationPanel extends StatelessWidget {
       if (items.isEmpty) continue;
       if (g.section != lastSection) {
         groups.add(Padding(
-          padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
-          child: Text(g.section.toUpperCase(), style: Theme.of(context).textTheme.labelSmall?.copyWith(letterSpacing: 1.1, color: AppColors.textMuted)),
+          padding: const EdgeInsets.fromLTRB(22, 16, 16, 6),
+          child: Text(g.section.toUpperCase(), style: const TextStyle(fontSize: 11, letterSpacing: 1.1, color: AppColors.textMuted, fontWeight: FontWeight.w600)),
         ));
         lastSection = g.section;
       }
       final hasActive = items.any((i) => i.path == current);
       if (items.length == 1) {
-        final i = items.first;
-        groups.add(_tile(context, i, current == i.path));
+        groups.add(_tile(context, items.first, current == items.first.path));
       } else {
-        groups.add(ExpansionTile(
-          key: PageStorageKey('menu-${g.title}'),
-          initiallyExpanded: hasActive || g.title == 'Home',
-          leading: Icon(g.icon, color: hasActive ? scheme.primary : null),
-          title: Text(g.title, style: TextStyle(fontWeight: hasActive ? FontWeight.w700 : FontWeight.w500)),
-          children: [for (final i in items) _tile(context, i, current == i.path, indent: true)],
+        groups.add(Theme(
+          data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+          child: ExpansionTile(
+            key: PageStorageKey('menu-${g.title}'),
+            initiallyExpanded: hasActive || g.title == 'Home',
+            tilePadding: const EdgeInsets.symmetric(horizontal: 22),
+            childrenPadding: EdgeInsets.zero,
+            iconColor: scheme.primary,
+            leading: Icon(g.icon, size: 22, color: hasActive ? scheme.primary : AppColors.textMuted),
+            title: Text(g.title, style: TextStyle(fontSize: 14, fontWeight: hasActive ? FontWeight.w600 : FontWeight.w500, color: hasActive ? scheme.primary : null)),
+            children: [for (final i in items) _tile(context, i, current == i.path, indent: true)],
+          ),
         ));
       }
     }
 
+    final help = appMenu.firstWhere((g) => g.hidden).items.where(visible).toList();
+    final support = findMenuItem('/helpdesk/my');
+    final supportVisible = support != null && visible(support);
+
     return Material(
-      color: Theme.of(context).drawerTheme.backgroundColor ?? scheme.surface,
+      color: Theme.of(context).cardTheme.color,
       child: SafeArea(
         child: Column(children: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(16, 18, 16, 14),
-            color: scheme.primary,
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              CircleAvatar(
-                radius: 26,
-                backgroundColor: Colors.white24,
-                backgroundImage: (p?.profilePhoto ?? '').isNotEmpty ? NetworkImage(ApiUrls.media(p!.profilePhoto)) : null,
-                child: (p?.profilePhoto ?? '').isEmpty ? Text(Fmt.initials(p?.fullName ?? ''), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)) : null,
-              ),
-              const SizedBox(height: 10),
-              Text(p?.fullName ?? '', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
-              Text(p?.organizationName ?? AppStrings.appName, style: const TextStyle(color: Colors.white70, fontSize: 12.5)),
-              if (p?.accessRole != null) Text(p!.accessRole!.name, style: const TextStyle(color: Colors.white70, fontSize: 12)),
-            ]),
-          ),
-          Expanded(child: ListView(padding: EdgeInsets.zero, children: groups)),
-          const Divider(height: 1),
-          for (final i in appMenu.firstWhere((g) => g.hidden).items) _tile(context, i, current == i.path, dense: true),
-          if (auth.organizations.length > 1)
-            ListTile(
-              dense: true,
-              leading: const Icon(Icons.swap_horiz),
-              title: const Text('Switch organization'),
-              onTap: () {
-                if (inDrawer) Navigator.of(context).pop();
-                auth.switchOrganization();
-              },
+          if (inDrawer)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Row(children: [
+                CircleAvatar(
+                  radius: 24,
+                  backgroundColor: AppColors.accentSoft,
+                  foregroundColor: scheme.primary,
+                  backgroundImage: (p?.profilePhoto ?? '').isNotEmpty ? NetworkImage(ApiUrls.media(p!.profilePhoto)) : null,
+                  child: (p?.profilePhoto ?? '').isEmpty ? Text(Fmt.initials(p?.fullName ?? ''), style: const TextStyle(fontWeight: FontWeight.w700)) : null,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(p?.fullName ?? '', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
+                    Text(p?.organizationName ?? AppStrings.appName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppColors.textMuted, fontSize: 12.5)),
+                  ]),
+                ),
+              ]),
             ),
-          ListTile(
-            dense: true,
-            leading: Icon(Icons.logout, color: scheme.error),
-            title: Text('Log out', style: TextStyle(color: scheme.error)),
-            onTap: () async {
-              final ok = await AppDialogs.confirm(context, title: 'Log out', message: 'Do you want to log out?', confirmLabel: 'Log out');
-              if (ok) await auth.logout(); // the router sends you to Login
-            },
-          ),
+          Expanded(child: ListView(padding: const EdgeInsets.only(top: 6, bottom: 8), children: groups)),
+          const Divider(),
+          for (final i in help) _tile(context, i, current == i.path),
+          if (auth.organizations.length > 1)
+            _plain(context, Icons.swap_horiz, 'Switch organization', AppColors.textMuted, () {
+              if (inDrawer) Navigator.of(context).pop();
+              auth.switchOrganization();
+            }),
+          _plain(context, Icons.logout, 'Log out', scheme.error, () async {
+            final ok = await AppDialogs.confirm(context, title: 'Log out', message: 'Do you want to log out?', confirmLabel: 'Log out');
+            if (ok) await auth.logout(); // the router sends you to Login
+          }),
+          if (supportVisible)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 6, 14, 14),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(16),
+                onTap: () => _go(context, '/helpdesk/my'),
+                child: Ink(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(color: AppColors.accentSoft, borderRadius: BorderRadius.circular(16)),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Icon(Icons.headset_mic_outlined, color: scheme.primary),
+                    const SizedBox(height: 8),
+                    const Text('Need Help?', style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+                    const Text('Contact support team', style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
+                  ]),
+                ),
+              ),
+            ),
         ]),
       ),
     );
   }
 
-  Widget _tile(BuildContext context, MenuItem i, bool active, {bool indent = false, bool dense = false}) {
+  Widget _plain(BuildContext context, IconData icon, String label, Color color, VoidCallback onTap) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 1),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: Row(children: [
+              Icon(icon, size: 21, color: color),
+              const SizedBox(width: 14),
+              Text(label, style: TextStyle(fontSize: 14, color: color, fontWeight: FontWeight.w500)),
+            ]),
+          ),
+        ),
+      );
+
+  Widget _tile(BuildContext context, MenuItem i, bool active, {bool indent = false}) {
     final scheme = Theme.of(context).colorScheme;
+    final color = active ? scheme.primary : AppColors.textMuted;
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       if (i.divider != null && indent)
         Padding(
-          padding: const EdgeInsets.fromLTRB(72, 8, 16, 2),
-          child: Text(i.divider!.toUpperCase(), style: Theme.of(context).textTheme.labelSmall?.copyWith(color: AppColors.textMuted, letterSpacing: 0.8)),
+          padding: const EdgeInsets.fromLTRB(60, 8, 16, 2),
+          child: Text(i.divider!.toUpperCase(), style: const TextStyle(fontSize: 10.5, color: AppColors.textMuted, letterSpacing: 0.8)),
         ),
-      ListTile(
-        dense: dense || indent,
-        selected: active,
-        selectedColor: scheme.primary,
-        selectedTileColor: scheme.primary.withValues(alpha: 0.08),
-        contentPadding: EdgeInsets.only(left: indent ? 28 : 16, right: 12),
-        leading: Icon(i.icon, size: 22),
-        title: Text(i.label),
-        onTap: () => _go(context, i.path),
+      Padding(
+        padding: EdgeInsets.fromLTRB(indent ? 22 : 12, 1, 12, 1),
+        child: Material(
+          color: active ? AppColors.accentSoft : Colors.transparent,
+          borderRadius: BorderRadius.circular(12),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () => _go(context, i.path),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              child: Row(children: [
+                Icon(i.icon, size: 21, color: color),
+                const SizedBox(width: 14),
+                Expanded(child: Text(i.label, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 14, fontWeight: active ? FontWeight.w600 : FontWeight.w500, color: active ? scheme.primary : null))),
+              ]),
+            ),
+          ),
+        ),
       ),
     ]);
   }

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../providers/auth_provider.dart';
@@ -52,6 +53,15 @@ class _CrudListScreenState extends State<CrudListScreen> {
       }
     }
     _load();
+    // dashboard quick actions open a list with ?new=1 -> go straight to the create form
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      try {
+        final wantsNew = GoRouterState.of(context).uri.queryParameters['new'] == '1';
+        final auth = context.read<AuthProvider>();
+        if (wantsNew && c.create != null && c.fields.isNotEmpty && _canManage(auth)) _openForm();
+      } catch (_) {}
+    });
   }
 
   @override
