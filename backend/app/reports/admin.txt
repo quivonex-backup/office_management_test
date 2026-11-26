@@ -263,3 +263,44 @@ tickets columns: ticket_code, raised_on, raised_by, department, category, subjec
   chart raised vs resolved per day
 summary view (per category): raised, resolved (resolved in period), open_now (all open,
   any date), average_resolution_hours, oldest_open_days; chart raised vs resolved.
+
+
+================================================================================
+SECTION — ASSETS + VISITORS REPORTS (batch 18)
+================================================================================
+Same request / response shape as every report (columns, rows, totals, chart,
+summary, pagination; "format": "xlsx" downloads). Both appear in reports/list/
+(group "Office") for callers with the code.
+
+POST /reports/assets/        perm: asset.view | asset.manage
+  { "view": "register" | "holders" | "history",       // default register
+    "category_id"?, "branch_id"? (only with branches), "employee_id"?,
+    "status"? (register: AVAILABLE | ASSIGNED | IN_REPAIR | RETIRED | LOST),
+    "warranty_expiring_days"? (register: warranty ends within N days),
+    "from_date"?, "to_date"? (history only; default this month), "search"? }
+  register: active assets today: asset, name, category, brand, model, serial,
+            branch, status, holder, assigned on, purchase date / cost,
+            warranty until / expired. totals.purchase_cost; chart bar by
+            status; summary {assets, available, assigned, in_repair, retired,
+            lost, warranty_expired}.
+  holders:  employees holding assets now: emp code, employee, department,
+            assets held, purchase value, asset list. totals assets_held / value.
+  history:  assignments issued or returned in the period: asset, employee,
+            issued on / condition, returned on / condition, days held.
+            summary {assignments, issued, returned, still_held}.
+  400 bad view / status / warranty_expiring_days.
+
+POST /reports/visitors/      perm: visitor.manage
+  { "from_date"?, "to_date"?,                         // default this month (by check-in)
+    "view": "visits" | "summary",                     // default visits
+    "group_by": "host" | "purpose" | "day",           // summary, default host
+    "purpose"?, "host_id"?, "branch_id"?, "still_inside"?: true, "search"? }
+  visits:  visit, date, in, out, stay (min), visitor, mobile, company, people,
+           purpose, host, host department, branch, badge, vehicle, still
+           inside. totals.visitor_count; chart line per day; summary {visits,
+           visitors, still_inside, average_minutes}.
+  summary: one row per host ("No host" too) / purpose / day (every day in the
+           range): visits, visitors, average stay. totals visits / visitors.
+  400 bad view / group_by / purpose.
+Deactivated assets and visits are excluded. The older list exports
+(visitors/visit/list/ and assets/asset/list/ with "format": "xlsx") still work.

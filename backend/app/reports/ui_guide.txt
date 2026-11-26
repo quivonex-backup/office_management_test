@@ -53,3 +53,10 @@ REPORTS (own sidebar item "Reports")
     reimbursement.review / reimbursement.pay; company: expense.manage).
   - Visitor log and asset register downloads live on their own list screens
     ("format": "xlsx" on visitors/visit/list/ and assets/asset/list/).
+
+ASSETS / VISITORS REPORTS (batch 18)
+  - Shown in reports/list/ under group "Office" (asset.view / asset.manage,
+    visitor.manage). Same report screen as the others: render the filters
+    from reports/list/, the columns / rows / totals / chart from the report.
+  - Assets: tabs Register / Holders / History (date range only on History).
+  - Visitors: tabs Visit log / Summary (group by Host / Purpose / Day).

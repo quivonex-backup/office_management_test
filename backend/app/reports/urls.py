@@ -1,6 +1,7 @@
 from django.urls import path
 
 from .views import (
+    AssetsReportAPIView,
     AttendanceReportAPIView,
     DashboardAPIView,
     EmployeesReportAPIView,
@@ -12,6 +13,7 @@ from .views import (
     ReceivablesReportAPIView,
     RecruitmentReportAPIView,
     ReportListAPIView,
+    VisitorsReportAPIView,
 )
 
 
@@ -36,4 +38,6 @@ urlpatterns = [
     path("receivables/", ReceivablesReportAPIView.as_view(), name="reports-receivables"),        #A     perm: payment.manage
     path("projects/", ProjectsReportAPIView.as_view(), name="reports-projects"),                 #A     perm: project.manage
     path("helpdesk/", HelpdeskReportAPIView.as_view(), name="reports-helpdesk"),                 #A     perm: ticket.manage, ticket.handle (any; handle = own department)
+    path("assets/", AssetsReportAPIView.as_view(), name="reports-assets"),                       #A     perm: asset.view, asset.manage (any)
+    path("visitors/", VisitorsReportAPIView.as_view(), name="reports-visitors"),                 #A     perm: visitor.manage
 ]

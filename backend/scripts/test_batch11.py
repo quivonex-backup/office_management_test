@@ -109,7 +109,7 @@ def run():
 
     s, b = post(C["owner"], "reports/list/")
     keys = [r["key"] for r in b["data"]["reports"]]
-    check("owner sees all 9 reports", len(keys) == 9 and {"employees", "expenses", "receivables", "projects",
+    check("owner sees all reports (9+)", len(keys) >= 9 and {"employees", "expenses", "receivables", "projects",
                                                           "helpdesk"} <= set(keys), keys)
     s, b = post(C["hr"], "reports/list/")
     check("HR manager: + employees, expenses, helpdesk (not receivables / projects)",

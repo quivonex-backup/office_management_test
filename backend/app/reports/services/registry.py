@@ -4,6 +4,7 @@ filters that apply to this organization (no branch filter without branches...).
 """
 from common.permissions import has_perm
 
+from .assets import assets_report
 from .attendance import attendance_report
 from .employees import employees_report
 from .expenses import expenses_report
@@ -13,6 +14,7 @@ from .payroll import payroll_report
 from .projects import projects_report
 from .receivables import receivables_report
 from .recruitment import recruitment_report
+from .visitors import visitors_report
 
 PERIOD = [
     {"key": "from_date", "type": "date", "default": "first day of this month"},
@@ -162,6 +164,40 @@ def _helpdesk_filters(features):
     ]
 
 
+def _assets_filters(features):
+    out = [
+        {"key": "view", "type": "choice", "options": ["register", "holders", "history"], "default": "register",
+         "note": "register / holders = today; history = issue / return in the period"},
+        {"key": "from_date", "type": "date", "default": "first day of this month", "note": "history"},
+        {"key": "to_date", "type": "date", "default": "last day of this month", "note": "history"},
+        {"key": "category_id", "type": "asset_category"},
+        {"key": "status", "type": "choice", "options": ["AVAILABLE", "ASSIGNED", "IN_REPAIR", "RETIRED", "LOST"],
+         "note": "register"},
+        {"key": "employee_id", "type": "employee", "note": "holder / assignee"},
+        {"key": "warranty_expiring_days", "type": "number", "note": "register: warranty ends within N days"},
+    ]
+    if features["has_branches"]:
+        out.append({"key": "branch_id", "type": "branch"})
+    out.append({"key": "search", "type": "text"})
+    return out
+
+
+def _visitors_filters(features):
+    out = PERIOD + [
+        {"key": "view", "type": "choice", "options": ["visits", "summary"], "default": "visits"},
+        {"key": "group_by", "type": "choice", "options": ["host", "purpose", "day"], "default": "host",
+         "note": "summary"},
+        {"key": "purpose", "type": "choice",
+         "options": ["MEETING", "INTERVIEW", "CLIENT", "VENDOR", "DELIVERY", "PERSONAL", "OTHER"]},
+        {"key": "host_id", "type": "employee"},
+        {"key": "still_inside", "type": "bool"},
+    ]
+    if features["has_branches"]:
+        out.append({"key": "branch_id", "type": "branch"})
+    out.append({"key": "search", "type": "text"})
+    return out
+
+
 # key: (title, group, any-of codes, filters builder, report function)
 REPORTS = {
     "attendance": ("Attendance", "People", ("attendance.view_all", "attendance.view_team"),
@@ -176,6 +212,8 @@ REPORTS = {
     "receivables": ("Receivables", "Finance", ("payment.manage",), _receivables_filters, receivables_report),
     "projects": ("Projects", "Work", ("project.manage",), _projects_filters, projects_report),
     "helpdesk": ("Helpdesk", "Work", ("ticket.manage", "ticket.handle"), _helpdesk_filters, helpdesk_report),
+    "assets": ("Assets", "Office", ("asset.view", "asset.manage"), _assets_filters, assets_report),
+    "visitors": ("Visitors", "Office", ("visitor.manage",), _visitors_filters, visitors_report),
 }
 
 

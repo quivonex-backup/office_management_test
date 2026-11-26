@@ -12,6 +12,8 @@ Reports & dashboard API (all POST). Read-only: data comes from the other apps.
   receivables/    payment.manage
   projects/       project.manage
   helpdesk/       ticket.manage | ticket.handle
+  assets/         asset.view | asset.manage          (batch 18)
+  visitors/       visitor.manage                     (batch 18)
 
 Reports: "format": "json" (default, envelope with columns / rows / totals /
 chart / pagination) or "xlsx" (Excel file of all rows, same columns).
@@ -149,3 +151,12 @@ class ProjectsReportAPIView(ReportAPIView):
 
 class HelpdeskReportAPIView(ReportAPIView):
     report_key = "helpdesk"
+
+
+class AssetsReportAPIView(ReportAPIView):
+    report_key = "assets"
+
+
+class VisitorsReportAPIView(ReportAPIView):
+    report_key = "visitors"
+
