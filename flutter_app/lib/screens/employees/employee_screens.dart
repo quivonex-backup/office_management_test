@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+
+import '../../constants/app_colors.dart';
+import '../../widgets/cards/summary_stat.dart';
 import 'package:provider/provider.dart';
 
 import '../../api/api_response.dart';
@@ -104,6 +107,19 @@ class EmployeeListScreen extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
           child: Align(alignment: Alignment.centerLeft, child: Text('Showing: ${r.scopeApplied}', style: Theme.of(ctx).textTheme.bodySmall)),
         ),
+        cards: true,
+        subtitle: 'Manage your team members and their information',
+        avatarOf: (i) => i['profile_photo'] as String?,
+        stats: (items) {
+          final active = items.where((i) => i['is_active'] != false).length;
+          final depts = items.map((i) => i['department']).where((d) => d != null && '$d'.isNotEmpty).toSet().length;
+          return [
+            SummaryStat('Total Employees', '${items.length}', Icons.groups_outlined, AppColors.accent),
+            SummaryStat('Active', '$active', Icons.check_circle_outline, AppColors.success),
+            SummaryStat('Inactive', '${items.length - active}', Icons.cancel_outlined, AppColors.danger),
+            SummaryStat('Departments', '$depts', Icons.apartment_outlined, AppColors.highlight),
+          ];
+        },
         titleOf: (i) => '${i['full_name']}',
         subtitleOf: (i) => [i['employee_code'], i['designation'], i['department']].where((e) => e != null && '$e'.isNotEmpty).join(' · '),
         badgeOf: (i) => i['is_active'] == false ? 'INACTIVE' : null,

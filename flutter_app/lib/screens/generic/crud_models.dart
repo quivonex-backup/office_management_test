@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../api/api_request.dart';
 import '../../api/api_response.dart';
+import '../../widgets/cards/summary_stat.dart';
 import '../../widgets/forms/opt.dart';
 
 enum FieldType { text, multiline, integer, decimal, email, phone, password, date, time, dropdown, boolean, file, image }
@@ -50,7 +51,24 @@ class FilterSpec {
   final String key, label;
   final List<Opt>? options;
   final Future<List<Opt>> Function()? loadOptions;
-  const FilterSpec(this.key, this.label, {this.options, this.loadOptions});
+
+  /// show as a row of chips (All / option ...) instead of a dropdown; a filter named `status` is always chips
+  final bool chips;
+  const FilterSpec(this.key, this.label, {this.options, this.loadOptions, this.chips = false});
+}
+
+/// One column of the wide-screen table.
+class ColumnSpec {
+  final String label;
+  final String Function(Map<String, dynamic> item) value;
+  final int flex;
+
+  /// render the value as a coloured status pill
+  final bool badge;
+
+  /// show an avatar (photo or first letter) before the value and make it bold
+  final bool avatar;
+  const ColumnSpec(this.label, this.value, {this.flex = 2, this.badge = false, this.avatar = false});
 }
 
 typedef Item = Map<String, dynamic>;
@@ -93,6 +111,21 @@ class CrudConfig {
   /// extra widgets shown above the list (summary chips etc.)
   final Widget Function(BuildContext context, ApiResult<dynamic> lastResult)? header;
 
+  /// line under the page title (default: "Manage <title>")
+  final String? subtitle;
+
+  /// number tiles above the list; default = Total / Active / Inactive computed from the loaded rows
+  final List<SummaryStat> Function(List<Map<String, dynamic>> items)? stats;
+
+  /// wide-screen table columns; default = Name / Details / Status / Amount built from titleOf & co.
+  final List<ColumnSpec>? columns;
+
+  /// wide screens: show a grid of cards instead of a table (people, tasks)
+  final bool cards;
+
+  /// photo url for the row avatar (first letter when null)
+  final String? Function(Map<String, dynamic> item)? avatarOf;
+
   const CrudConfig({
     required this.title,
     required this.list,
@@ -117,6 +150,11 @@ class CrudConfig {
     this.rowActions = const [],
     this.emptyMessage = 'Nothing here yet.',
     this.header,
+    this.subtitle,
+    this.stats,
+    this.columns,
+    this.cards = false,
+    this.avatarOf,
   });
 }
 

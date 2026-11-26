@@ -4,7 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../api/api_url.dart';
+import '../../constants/app_colors.dart';
 import '../../providers/auth_provider.dart';
+import '../../widgets/cards/summary_stat.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common/empty_view.dart';
 import '../../widgets/common/error_view.dart';
@@ -127,7 +130,19 @@ class _CrudListScreenState extends State<CrudListScreen> {
 
   bool _isActive(Item i) => i['is_active'] != false;
 
-  Widget _tile(Item item, AuthProvider auth) {
+  Widget _avatar(Item item, {double radius = 21}) {
+    final url = c.avatarOf?.call(item);
+    final name = c.titleOf(item).trim();
+    return CircleAvatar(
+      radius: radius,
+      backgroundColor: AppColors.accentSoft,
+      foregroundColor: Theme.of(context).colorScheme.primary,
+      backgroundImage: (url ?? '').isNotEmpty ? NetworkImage(ApiUrls.media(url)) : null,
+      child: (url ?? '').isNotEmpty ? null : Text(name.isEmpty ? '?' : name[0].toUpperCase(), style: const TextStyle(fontWeight: FontWeight.w700)),
+    );
+  }
+
+  Widget _tile(Item item, AuthProvider auth, {EdgeInsets margin = const EdgeInsets.only(bottom: 10)}) {
     final canManage = _canManage(auth);
     final active = _isActive(item);
     final badge = c.badgeOf?.call(item);
@@ -135,10 +150,12 @@ class _CrudListScreenState extends State<CrudListScreen> {
     final hasMenu = (canManage && c.deactivate != null && active) || actions.isNotEmpty;
     final tapEdit = canManage && c.update != null && c.fields.isNotEmpty;
     return Card(
-      margin: const EdgeInsets.only(bottom: 8),
+      margin: margin,
       child: Opacity(
         opacity: active ? 1 : 0.55,
         child: ListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+          leading: _avatar(item),
           onTap: c.onTap != null ? () => c.onTap!(context, item, _load) : (tapEdit ? () => _openForm(item) : null),
           title: Text(c.titleOf(item), style: const TextStyle(fontWeight: FontWeight.w600)),
           subtitle: c.subtitleOf?.call(item) == null ? null : Text(c.subtitleOf!(item)!, maxLines: 3, overflow: TextOverflow.ellipsis),
@@ -169,87 +186,232 @@ class _CrudListScreenState extends State<CrudListScreen> {
     );
   }
 
+  // ------------------------------------------------------------------ summary tiles
+  List<SummaryStat> _stats() {
+    if (c.stats != null) return c.stats!(_items);
+    final primary = Theme.of(context).colorScheme.primary;
+    final total = SummaryStat('Total ${c.title}', '${_items.length}', c.icon, primary);
+    if (!_items.any((i) => i.containsKey('is_active'))) return [total];
+    final active = _items.where(_isActive).length;
+    return [
+      total,
+      SummaryStat('Active', '$active', Icons.check_circle_outline, AppColors.success),
+      SummaryStat('Inactive', '${_items.length - active}', Icons.cancel_outlined, AppColors.danger),
+    ];
+  }
+
+  // ------------------------------------------------------------------ filters
+  Widget _filters() {
+    final chipFilters = c.filters.where((f) => f.chips || f.key == 'status').toList();
+    final dropFilters = c.filters.where((f) => !(f.chips || f.key == 'status')).toList();
+    final scheme = Theme.of(context).colorScheme;
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      for (final f in chipFilters)
+        Padding(
+          padding: const EdgeInsets.only(top: 12),
+          child: Wrap(spacing: 8, runSpacing: 8, children: [
+            for (final o in <Opt?>[null, ...(_filterOpts[f.key] ?? const <Opt>[])])
+              ChoiceChip(
+                showCheckmark: false,
+                label: Text(o == null ? 'All' : o.label),
+                selected: _filterValues[f.key] == o?.value,
+                selectedColor: scheme.primary,
+                backgroundColor: Theme.of(context).cardTheme.color,
+                side: BorderSide(color: scheme.outlineVariant),
+                labelStyle: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: _filterValues[f.key] == o?.value ? scheme.onPrimary : null),
+                onSelected: (_) {
+                  setState(() => _filterValues[f.key] = o?.value);
+                  _load();
+                },
+              ),
+          ]),
+        ),
+      if (dropFilters.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.only(top: 12),
+          child: Wrap(spacing: 10, runSpacing: 10, children: [
+            for (final f in dropFilters)
+              SizedBox(
+                width: 190,
+                child: DropdownButtonFormField<dynamic>(
+                  value: (_filterOpts[f.key] ?? const []).any((o) => o.value == _filterValues[f.key]) ? _filterValues[f.key] : null,
+                  isExpanded: true,
+                  decoration: InputDecoration(labelText: f.label, isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10)),
+                  items: [
+                    const DropdownMenuItem<dynamic>(value: null, child: Text('All')),
+                    for (final o in _filterOpts[f.key] ?? const <Opt>[]) DropdownMenuItem<dynamic>(value: o.value, child: Text(o.label, overflow: TextOverflow.ellipsis)),
+                  ],
+                  onChanged: (v) {
+                    setState(() => _filterValues[f.key] = v);
+                    _load();
+                  },
+                ),
+              ),
+          ]),
+        ),
+      if (c.activeFilterKey != null)
+        Align(
+          alignment: Alignment.centerRight,
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            const Text('Show inactive'),
+            Switch(value: _showInactive, onChanged: (v) { setState(() => _showInactive = v); _load(); }),
+          ]),
+        ),
+    ]);
+  }
+
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
     final canCreate = c.create != null && c.fields.isNotEmpty && _canManage(auth);
+    final ok = _result != null && _result!.ok;
     return AppScaffold(
       title: c.title,
+      subtitle: c.subtitle ?? 'Manage ${c.title.toLowerCase()}',
       drawer: widget.drawer,
-      actions: [IconButton(icon: const Icon(Icons.refresh), onPressed: _load)],
       floatingActionButton: canCreate ? FloatingActionButton.extended(onPressed: () => _openForm(), icon: const Icon(Icons.add), label: Text(c.createLabel)) : null,
-      body: Column(children: [
-        if (c.hasSearch || c.filters.isNotEmpty || c.activeFilterKey != null)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
-            child: Column(children: [
-              if (c.hasSearch)
-                TextField(
-                  controller: _search,
-                  onChanged: (_) {
-                    _debounce?.cancel();
-                    _debounce = Timer(const Duration(milliseconds: 450), _load);
-                  },
-                  decoration: InputDecoration(
-                    hintText: 'Search',
-                    prefixIcon: const Icon(Icons.search),
-                    isDense: true,
-                    suffixIcon: _search.text.isEmpty ? null : IconButton(icon: const Icon(Icons.clear), onPressed: () { _search.clear(); _load(); }),
+      body: RefreshIndicator(
+        onRefresh: _load,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
+          children: [
+            if (ok && !_loading) Padding(padding: const EdgeInsets.only(bottom: 14), child: SummaryStats(stats: _stats())),
+            if (c.hasSearch)
+              Row(children: [
+                Expanded(
+                  child: TextField(
+                    controller: _search,
+                    onChanged: (_) {
+                      _debounce?.cancel();
+                      _debounce = Timer(const Duration(milliseconds: 450), _load);
+                    },
+                    decoration: InputDecoration(
+                      hintText: 'Search ${c.title.toLowerCase()}...',
+                      prefixIcon: Icon(Icons.search, color: Theme.of(context).colorScheme.primary),
+                      suffixIcon: _search.text.isEmpty ? null : IconButton(icon: const Icon(Icons.clear), onPressed: () { _search.clear(); _load(); }),
+                    ),
                   ),
                 ),
-              if (c.filters.isNotEmpty)
-                SizedBox(
-                  height: 56,
-                  child: ListView(scrollDirection: Axis.horizontal, children: [
-                    for (final f in c.filters)
-                      Padding(
-                        padding: const EdgeInsets.only(right: 8, top: 8),
-                        child: SizedBox(
-                          width: 170,
-                          child: DropdownButtonFormField<dynamic>(
-                            value: (_filterOpts[f.key] ?? const []).any((o) => o.value == _filterValues[f.key]) ? _filterValues[f.key] : null,
-                            isExpanded: true,
-                            decoration: InputDecoration(labelText: f.label, isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10)),
-                            items: [
-                              const DropdownMenuItem<dynamic>(value: null, child: Text('All')),
-                              for (final o in _filterOpts[f.key] ?? const <Opt>[]) DropdownMenuItem<dynamic>(value: o.value, child: Text(o.label, overflow: TextOverflow.ellipsis)),
-                            ],
-                            onChanged: (v) {
-                              setState(() => _filterValues[f.key] = v);
-                              _load();
-                            },
-                          ),
-                        ),
-                      ),
-                  ]),
-                ),
-              if (c.activeFilterKey != null)
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    const Text('Show inactive'),
-                    Switch(value: _showInactive, onChanged: (v) { setState(() => _showInactive = v); _load(); }),
-                  ]),
-                ),
-            ]),
-          ),
-        if (c.header != null && _result != null && _result!.ok) c.header!(context, _result!),
-        Expanded(child: _body(auth)),
-      ]),
+                const SizedBox(width: 10),
+                SoftIconButton(icon: Icons.refresh, color: Theme.of(context).colorScheme.primary, tooltip: 'Refresh', onTap: _load, size: 48),
+              ]),
+            if (c.filters.isNotEmpty || c.activeFilterKey != null) _filters(),
+            if (c.header != null && ok) c.header!(context, _result!),
+            const SizedBox(height: 12),
+            _body(auth),
+          ],
+        ),
+      ),
     );
   }
 
+  // ------------------------------------------------------------------ list / table / cards
   Widget _body(AuthProvider auth) {
-    if (_loading) return const LoadingView();
-    if (_result != null && !_result!.ok) return ErrorView(message: _result!.fullMessage, onRetry: _load);
-    if (_items.isEmpty) return RefreshIndicator(onRefresh: _load, child: ListView(children: [SizedBox(height: 320, child: EmptyView(message: c.emptyMessage))]));
-    return RefreshIndicator(
-      onRefresh: _load,
-      child: ListView.builder(
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 90),
-        itemCount: _items.length,
-        itemBuilder: (_, i) => _tile(_items[i], auth),
-      ),
+    if (_loading) return const SizedBox(height: 260, child: LoadingView());
+    if (_result != null && !_result!.ok) return SizedBox(height: 300, child: ErrorView(message: _result!.fullMessage, onRetry: _load));
+    if (_items.isEmpty) return SizedBox(height: 300, child: EmptyView(message: c.emptyMessage));
+    return LayoutBuilder(builder: (context, box) {
+      final w = box.maxWidth;
+      if (w < 860) return Column(children: [for (final i in _items) _tile(i, auth)]);
+      if (c.cards) {
+        final cols = w >= 1200 ? 3 : 2;
+        return GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: _items.length,
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: cols, mainAxisSpacing: 12, crossAxisSpacing: 12, mainAxisExtent: 118),
+          itemBuilder: (_, i) => _tile(_items[i], auth, margin: EdgeInsets.zero),
+        );
+      }
+      return _table(auth);
+    });
+  }
+
+  List<ColumnSpec> get _columns =>
+      c.columns ??
+      [
+        ColumnSpec('Name', (i) => c.titleOf(i), flex: 3, avatar: true),
+        if (c.subtitleOf != null) ColumnSpec('Details', (i) => c.subtitleOf!(i) ?? '', flex: 4),
+        if (c.badgeOf != null) ColumnSpec('Status', (i) => c.badgeOf!(i) ?? '', flex: 2, badge: true),
+        if (c.trailingOf != null) ColumnSpec('Amount', (i) => c.trailingOf!(i) ?? '', flex: 2),
+      ];
+
+  Widget _table(AuthProvider auth) {
+    final cols = _columns;
+    final canManage = _canManage(auth);
+    final scheme = Theme.of(context).colorScheme;
+    final canEdit = canManage && c.update != null && c.fields.isNotEmpty;
+    final canDelete = canManage && c.deactivate != null;
+    final anyActions = c.onTap != null || canEdit || canDelete || c.rowActions.isNotEmpty;
+    final actionsW = ((c.onTap != null ? 1 : 0) + (canEdit ? 1 : 0) + (canDelete ? 1 : 0) + (c.rowActions.isNotEmpty ? 1 : 0)) * 42.0 + 8;
+
+    Widget head() => Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+          child: Row(children: [
+            for (final col in cols) Expanded(flex: col.flex, child: Text(col.label, style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13.5, color: scheme.primary))),
+            if (anyActions) SizedBox(width: actionsW, child: Text('Actions', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13.5, color: scheme.primary))),
+          ]),
+        );
+
+    Widget cell(ColumnSpec col, Item item, bool active) {
+      final v = col.value(item);
+      if (col.badge) {
+        final shown = !active ? 'INACTIVE' : v;
+        return shown.isEmpty ? const Text('—') : Align(alignment: Alignment.centerLeft, child: StatusBadge(shown));
+      }
+      if (col.avatar) {
+        return Row(children: [
+          _avatar(item, radius: 18),
+          const SizedBox(width: 12),
+          Expanded(child: Text(v, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600))),
+        ]);
+      }
+      return Text(v.isEmpty ? '—' : v, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5));
+    }
+
+    Widget actions(Item item, bool active) {
+      final extra = c.rowActions.where((a) => a.visible == null || a.visible!(item)).toList();
+      return SizedBox(
+        width: actionsW,
+        child: Row(children: [
+          if (c.onTap != null) ...[SoftIconButton(icon: Icons.visibility_outlined, color: AppColors.info, tooltip: 'View', onTap: () => c.onTap!(context, item, _load)), const SizedBox(width: 6)],
+          if (canEdit) ...[SoftIconButton(icon: Icons.edit_outlined, color: scheme.primary, tooltip: 'Edit', onTap: () => _openForm(item)), const SizedBox(width: 6)],
+          if (extra.isNotEmpty)
+            PopupMenuButton<int>(
+              tooltip: 'More',
+              onSelected: (i) async {
+                if (await extra[i].run(context, item)) _load();
+              },
+              itemBuilder: (_) => [for (var i = 0; i < extra.length; i++) PopupMenuItem(value: i, child: Row(children: [Icon(extra[i].icon, size: 18), const SizedBox(width: 10), Text(extra[i].label)]))],
+              child: SoftIconButton(icon: Icons.more_horiz, color: AppColors.textMuted, tooltip: 'More'),
+            ),
+          if (extra.isNotEmpty) const SizedBox(width: 6),
+          if (canDelete && active) SoftIconButton(icon: Icons.delete_outline, color: AppColors.danger, tooltip: c.deactivateLabel, onTap: () => _deactivate(item)),
+        ]),
+      );
+    }
+
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: Column(children: [
+        Container(color: scheme.primary.withValues(alpha: 0.05), child: head()),
+        for (final item in _items) ...[
+          const Divider(),
+          InkWell(
+            onTap: c.onTap != null ? () => c.onTap!(context, item, _load) : (canEdit ? () => _openForm(item) : null),
+            child: Opacity(
+              opacity: _isActive(item) ? 1 : 0.55,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+                  for (final col in cols) Expanded(flex: col.flex, child: Padding(padding: const EdgeInsets.only(right: 12), child: cell(col, item, _isActive(item)))),
+                  if (anyActions) actions(item, _isActive(item)),
+                ]),
+              ),
+            ),
+          ),
+        ],
+      ]),
     );
   }
 }

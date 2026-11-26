@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+
+import '../../constants/app_colors.dart';
+import '../../widgets/cards/summary_stat.dart';
 import 'package:provider/provider.dart';
 
 import '../../api/api_response.dart';
@@ -28,7 +31,16 @@ class ClientsScreen extends StatelessWidget {
           deactivate: (i) => BusinessService.clientDeactivate(i['id'] as int),
           managePerms: const ['client.manage'],
           titleOf: (i) => '${i['client_name']}',
+          subtitle: 'Manage your client database and documents',
           subtitleOf: (i) => _j([i['client_code'], i['company_name'], i['mobile'], i['email']]),
+          columns: [
+            ColumnSpec('Code', (i) => '${i['client_code'] ?? ''}', flex: 3),
+            ColumnSpec('Name', (i) => '${i['client_name']}', flex: 3, avatar: true),
+            ColumnSpec('Company', (i) => '${i['company_name'] ?? ''}', flex: 3),
+            ColumnSpec('Mobile', (i) => '${i['mobile'] ?? ''}', flex: 2),
+            ColumnSpec('Email', (i) => '${i['email'] ?? ''}', flex: 3),
+            ColumnSpec('Status', (i) => i['is_active'] == false ? 'INACTIVE' : 'ACTIVE', flex: 2, badge: true),
+          ],
           fields: [
             const FieldSpec('client_name', 'Client name', required: true),
             const FieldSpec('company_name', 'Company name'),
@@ -59,7 +71,16 @@ class VendorsScreen extends StatelessWidget {
           deactivate: (i) => BusinessService.vendorDeactivate(i['id'] as int),
           managePerms: const ['vendor.manage', 'expense.manage'],
           titleOf: (i) => '${i['vendor_name']}',
+          subtitle: 'Manage your vendors and suppliers',
           subtitleOf: (i) => _j([i['vendor_code'], i['company_name'], i['phone'], i['email']]),
+          columns: [
+            ColumnSpec('Code', (i) => '${i['vendor_code'] ?? ''}', flex: 3),
+            ColumnSpec('Name', (i) => '${i['vendor_name']}', flex: 3, avatar: true),
+            ColumnSpec('Company', (i) => '${i['company_name'] ?? ''}', flex: 3),
+            ColumnSpec('Phone', (i) => '${i['phone'] ?? ''}', flex: 2),
+            ColumnSpec('Email', (i) => '${i['email'] ?? ''}', flex: 3),
+            ColumnSpec('Status', (i) => i['is_active'] == false ? 'INACTIVE' : 'ACTIVE', flex: 2, badge: true),
+          ],
           fields: [
             const FieldSpec('vendor_name', 'Vendor name', required: true),
             const FieldSpec('company_name', 'Company name'),
@@ -115,9 +136,26 @@ class ProjectsScreen extends StatelessWidget {
           FilterSpec('client_id', 'Client', loadOptions: Lookups.clients),
         ],
         titleOf: (i) => '${i['project_name']}',
+        subtitle: 'Manage and track all your projects in one place',
         subtitleOf: (i) => _j([i['client_name'], 'Deadline ${Fmt.date(i['deadline'])}', (i['project_head'] as Map?)?['name']]),
         badgeOf: (i) => i['status'] as String?,
         trailingOf: (i) => Fmt.money(i['total_cost']),
+        stats: (items) {
+          int n(String st) => items.where((i) => i['status'] == st).length;
+          return [
+            SummaryStat('Total Projects', '${items.length}', Icons.folder_copy_outlined, AppColors.accent),
+            SummaryStat('In Progress', '${n('in_progress')}', Icons.trending_up, AppColors.highlight),
+            SummaryStat('Completed', '${n('completed')}', Icons.check_circle_outline, AppColors.success),
+            SummaryStat('On Hold', '${n('on_hold')}', Icons.pause_circle_outline, AppColors.textMuted),
+          ];
+        },
+        columns: [
+          ColumnSpec('Project', (i) => '${i['project_name']}', flex: 3, avatar: true),
+          ColumnSpec('Client', (i) => '${i['client_name'] ?? ''}', flex: 3),
+          ColumnSpec('Status', (i) => (i['status'] as String?) ?? '', flex: 2, badge: true),
+          ColumnSpec('Priority', (i) => (i['priority'] as String?) ?? '', flex: 2, badge: true),
+          ColumnSpec('Budget', (i) => Fmt.money(i['total_cost']), flex: 2),
+        ],
         fields: [
           const FieldSpec('project_name', 'Project name', required: true),
           FieldSpec('client', 'Client', type: FieldType.dropdown, required: true, loadOptions: Lookups.clients),
@@ -169,6 +207,8 @@ class TasksScreen extends StatelessWidget {
             FilterSpec('status', 'Status', options: Lookups.strings(AppConstants.taskStatuses)),
             FilterSpec('project_id', 'Project', loadOptions: Lookups.projects),
           ],
+          cards: true,
+          subtitle: 'Track tasks across all projects',
           titleOf: (i) => '${i['title']}',
           subtitleOf: (i) => _j([i['project_name'], (i['assigned_to_details'] as Map?)?['name'], i['due_date'] != null ? 'Due ${Fmt.date(i['due_date'])}' : null]),
           badgeOf: (i) => i['status'] as String?,
@@ -238,9 +278,27 @@ class ExpensesScreen extends StatelessWidget {
             FilterSpec('expense_type', 'Type', options: Lookups.strings(AppConstants.expenseTypes)),
           ],
           titleOf: (i) => '${i['title']}',
+          subtitle: 'Track and manage all office expenses',
           subtitleOf: (i) => _j([i['expense_number'], i['expense_type_display'], Fmt.date(i['expense_date']), i['vendor_name']]),
           badgeOf: (i) => (i['payment_status'] as String?)?.toUpperCase(),
           trailingOf: (i) => Fmt.money(i['amount']),
+          stats: (items) {
+            final paid = items.where((i) => i['payment_status'] == 'paid').length;
+            return [
+              SummaryStat('Total Expenses', '${items.length}', Icons.receipt_long_outlined, AppColors.accent),
+              SummaryStat('Paid', '$paid', Icons.check_circle_outline, AppColors.success),
+              SummaryStat('Unpaid', '${items.length - paid}', Icons.schedule, AppColors.highlight),
+            ];
+          },
+          columns: [
+            ColumnSpec('Number', (i) => '${i['expense_number'] ?? ''}', flex: 2),
+            ColumnSpec('Title', (i) => '${i['title']}', flex: 3, avatar: true),
+            ColumnSpec('Type', (i) => '${i['expense_type_display'] ?? ''}', flex: 2),
+            ColumnSpec('Date', (i) => Fmt.date(i['expense_date']), flex: 2),
+            ColumnSpec('Vendor', (i) => '${i['vendor_name'] ?? ''}', flex: 2),
+            ColumnSpec('Amount', (i) => Fmt.money(i['amount']), flex: 2),
+            ColumnSpec('Payment', (i) => ((i['payment_status'] as String?) ?? '').toUpperCase(), flex: 2, badge: true),
+          ],
           fields: [
             const FieldSpec('title', 'Title', required: true),
             FieldSpec('expense_type', 'Type', type: FieldType.dropdown, required: true, options: Lookups.strings(AppConstants.expenseTypes)),

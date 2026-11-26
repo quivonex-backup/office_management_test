@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../constants/app_colors.dart';
 import '../../constants/app_dimensions.dart';
 import '../../utils/responsive_helper.dart';
 import 'app_drawer.dart';
@@ -12,6 +13,7 @@ import 'app_top_bar.dart';
 /// [hideTitleBar] drops the page title row on desktop (the dashboard shows a greeting instead).
 class AppScaffold extends StatelessWidget {
   final String title;
+  final String? subtitle;
   final Widget body;
   final List<Widget>? actions;
   final Widget? floatingActionButton;
@@ -21,6 +23,7 @@ class AppScaffold extends StatelessWidget {
   const AppScaffold({
     super.key,
     required this.title,
+    this.subtitle,
     required this.body,
     this.actions,
     this.floatingActionButton,
@@ -34,19 +37,33 @@ class AppScaffold extends StatelessWidget {
         final sidebar = drawer && box.maxWidth >= AppDimensions.desktop;
         final page = Scaffold(
           backgroundColor: sidebar ? Colors.transparent : null,
-          appBar: sidebar && hideTitleBar && bottom == null && (actions == null || actions!.isEmpty)
+          appBar: sidebar
               ? null
-              : AppBar(
-                  title: Text(title),
-                  actions: actions,
-                  bottom: bottom,
-                  automaticallyImplyLeading: !sidebar,
-                  backgroundColor: sidebar ? Colors.transparent : null,
-                  scrolledUnderElevation: 0,
-                ),
+              : AppBar(title: Text(title), actions: actions, bottom: bottom, automaticallyImplyLeading: true, scrolledUnderElevation: 0),
           drawer: drawer && !sidebar ? const AppDrawer() : null,
           floatingActionButton: floatingActionButton,
-          body: SafeArea(child: MaxWidth(child: body)),
+          body: SafeArea(
+            child: MaxWidth(
+              child: sidebar && !hideTitleBar
+                  ? Column(children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 20, 20, 4),
+                        child: Row(children: [
+                          Expanded(
+                            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                              Text(title, style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w700)),
+                              if (subtitle != null) Padding(padding: const EdgeInsets.only(top: 2), child: Text(subtitle!, style: const TextStyle(fontSize: 14, color: AppColors.textMuted))),
+                            ]),
+                          ),
+                          if (actions != null) ...actions!,
+                        ]),
+                      ),
+                      if (bottom != null) bottom!,
+                      Expanded(child: body),
+                    ])
+                  : body,
+            ),
+          ),
         );
         if (!sidebar) return page;
         return Scaffold(
