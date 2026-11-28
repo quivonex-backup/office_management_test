@@ -138,6 +138,10 @@ REST_FRAMEWORK = {
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+    "DEFAULT_RENDERER_CLASSES": (
+        "config.renderers.S3JSONRenderer",
+        "rest_framework.renderers.BrowsableAPIRenderer",
+    ),
 }
 
 # Configure token lifetimes here
@@ -164,7 +168,8 @@ AWS_STORAGE_BUCKET_NAME = config("AWS_STORAGE_BUCKET_NAME")
 AWS_S3_REGION_NAME = config("AWS_S3_REGION_NAME", default="ap-south-1")
 AWS_DEFAULT_ACL = None
 AWS_S3_FILE_OVERWRITE = False
-AWS_QUERYSTRING_AUTH = False
+AWS_QUERYSTRING_AUTH = config("AWS_QUERYSTRING_AUTH", default=False, cast=bool)
+S3_RETURN_FULL_URL = config("S3_RETURN_FULL_URL", default=True, cast=bool)
 
 STORAGES = {
     "default": {

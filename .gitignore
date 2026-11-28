@@ -45,6 +45,11 @@ secrets/
 firebase-service-account.json
 
 # ==============================
+# SQL FILE
+# ==============================
+office_manage_db.sql
+
+# ==============================
 # FRONTEND (Entire Folder)
 # ==============================
 frontend/
@@ -95,3 +100,9 @@ dist/
 .eggs/
 wheels/
 pip-wheel-metadata/
+
+
+# ==============================
+# ARCHIVES / COMPRESSED FILES
+# ==============================
+*.zip
