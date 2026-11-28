@@ -22,6 +22,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.throttling import AnonRateThrottle
 
 from .services import is_super_admin, send_user_registration_email, seed_organization_defaults
 from common.s3_utils import (
@@ -69,6 +70,26 @@ logger = logging.getLogger(__name__)
 # AUTHENTICATION
 # ----------------------------------------------------------------------
 
+class LoginRateThrottle(AnonRateThrottle):
+    scope = 'login'
+
+class OTPSendRateThrottle(AnonRateThrottle):
+    scope = 'otp_send'
+
+class OTPVerifyRateThrottle(AnonRateThrottle):
+    scope = 'otp_verify'
+
+class PasswordResetRateThrottle(AnonRateThrottle):
+    scope = 'password_reset'
+
+class RegisterRateThrottle(AnonRateThrottle):
+    scope = 'register'
+
+
+# ----------------------------------------------------------------------
+# AUTHENTICATION
+# ----------------------------------------------------------------------
+
 class RegisterAPIView(APIView):
     """
     API endpoint to register a new user.
@@ -80,6 +101,7 @@ class RegisterAPIView(APIView):
     """
 
     # permission_classes = [IsAuthenticated]
+    # throttle_classes = [RegisterRateThrottle]
 
     def post(self, request):
         data = request.data.copy()
@@ -170,6 +192,7 @@ class RegisterAPIView(APIView):
 
 class LoginAPIView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [LoginRateThrottle]
 
     def post(self, request):
         username_or_email = request.data.get("username")
@@ -409,6 +432,7 @@ class ChangePasswordAPIView(APIView):
 
 class ForgotPasswordAPIView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [PasswordResetRateThrottle]
 
     def post(self, request):
         serializer = ForgotPasswordSerializer(data=request.data)
@@ -671,6 +695,7 @@ class MyProfileUpdateAPIView(APIView):
 
 class SendOTPAPIView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [OTPSendRateThrottle]
 
     def post(self, request):
         serializer = SendOTPSerializer(data=request.data)
@@ -745,6 +770,8 @@ class SendOTPAPIView(APIView):
 
 class VerifyOTPAPIView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [OTPVerifyRateThrottle]
+
     MAX_ATTEMPTS = 5
 
     def post(self, request):

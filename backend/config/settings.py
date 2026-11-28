@@ -142,6 +142,19 @@ REST_FRAMEWORK = {
         "config.renderers.S3JSONRenderer",
         "rest_framework.renderers.BrowsableAPIRenderer",
     ),
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '100/hour',
+        'user': '1000/hour',
+        'login': '5/minute',
+        'otp_send': '5/10minutes',
+        'otp_verify': '5/10minutes',
+        'password_reset': '3/hour',
+        'register': '5/hour',
+    },
 }
 
 # Configure token lifetimes here
